@@ -31,8 +31,8 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (classify, cloud, questions, schema, secrets, summarize,
-                      understand_audio, understand_text, understand_visual)
+from pipeline import (classify, cloud, questions, schema, secrets, select,
+                      summarize, understand_audio, understand_text, understand_visual)
 
 ROOT = Path(__file__).resolve().parent
 PROJECTS = ROOT / "projects"
@@ -298,11 +298,32 @@ def cmd_questions(args) -> None:
     summary, scored = work / "content_summary.json", work / "segments_scored.json"
     if not summary.exists() or not scored.exists():
         die("先跑 score 与 summary")
-    res = questions.run(summary, scored, work / "questions.json")
+    out = work / "questions.json"
+    if out.exists() and not args.force:
+        info("决策问题已存在，跳过（--force 可重新生成，但会让已保存答案失效）")
+        return
+    res = questions.run(summary, scored, out)
     tag = "（兜底）" if res["fallback"] else ""
     ok(f"决策问题 {len(res['questions'])} 个{tag}")
     for q in res["questions"]:
         info(f"  {q['text']} → " + " / ".join(o["label"] for o in q["options"]))
+
+
+def cmd_select(args) -> None:
+    """M3 覆盖式选段：按话题预算挑镜头，输出选段表与时间线。"""
+    pdir = project_dir(args.name)
+    work = pdir / "work"
+    if not (work / "segments_scored.json").exists():
+        die("先跑 score")
+    c = cfg(pdir)
+    res = select.run(work / "segments_scored.json", work / "brief_answers.json", work,
+                     questions_path=work / "questions.json",
+                     title=c.get("title", args.name), material=c["material"])
+    missing = res["missing_must_topics"]
+    msg = f"选段 {res['stats']['shots']} 镜 · {res['total']:.0f}s / 目标 {res['target']:.0f}s"
+    if missing:
+        msg += f" · 未覆盖必留话题 {len(missing)}"
+    ok(msg)
 
 
 def cmd_brief(args) -> None:
@@ -496,7 +517,8 @@ def cmd_prepare(args) -> None:
     else:
         info("跳过 b 路：未配置 DEEPSEEK_API_KEY")
     cmd_junk(args); cmd_scenes(args); cmd_quality(args)
-    cmd_score(args); cmd_summary(args); cmd_questions(args); cmd_brief(args)
+    cmd_score(args); cmd_summary(args); cmd_questions(args); cmd_select(args)
+    cmd_brief(args)
     ok("前期处理完成，可以去挑镜头了")
 
 
@@ -597,7 +619,11 @@ def main() -> None:
     p = sub.add_parser("quality"); p.add_argument("name")
     p.set_defaults(fn=cmd_quality)
 
+    p = sub.add_parser("select"); p.add_argument("name")
+    p.set_defaults(fn=cmd_select)
+
     p = sub.add_parser("questions"); p.add_argument("name")
+    p.add_argument("--force", action="store_true")
     p.set_defaults(fn=cmd_questions)
 
     p = sub.add_parser("summary"); p.add_argument("name")
