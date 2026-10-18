@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import cloud, schema, secrets
+from pipeline import cloud, schema, secrets, understand_audio
 
 ROOT = Path(__file__).resolve().parent
 PROJECTS = ROOT / "projects"
@@ -180,6 +180,19 @@ def cmd_transcribe(args) -> None:
     subprocess.run([sys.executable, str(PIPELINE / "format_transcript.py"),
                     str(raw), "-o", str(work)], check=True, capture_output=True)
     ok("转写完成 → work/transcript.md / work/segments.json")
+
+
+def cmd_analyze(args) -> None:
+    """a 路：给每句算响度/语速/停顿/抢话。"""
+    pdir = project_dir(args.name)
+    work = pdir / "work"
+    wav, segs = work / "audio/asr.wav", work / "segments.json"
+    if not wav.exists() or not segs.exists():
+        die("先跑 transcribe（需要 work/audio/asr.wav 与 work/segments.json）")
+    res = understand_audio.run(wav, segs, work / "segments_audio.json")
+    interrupts = sum(1 for x in res["segments"] if x["signals"]["interrupt"])
+    ok(f"声音特征：{len(res['segments'])} 句 · 中位响度 {res['median_db']} dB · "
+       f"抢话 {interrupts} 处")
 
 
 def cmd_junk(args) -> None:
@@ -383,7 +396,8 @@ def cmd_build(args) -> None:
 
 def cmd_prepare(args) -> None:
     """GUI 用：只做前期（不 build），完成后再由人挑镜头。"""
-    cmd_ingest(args); cmd_transcribe(args); cmd_junk(args); cmd_brief(args)
+    cmd_ingest(args); cmd_transcribe(args); cmd_analyze(args)
+    cmd_junk(args); cmd_brief(args)
     ok("前期处理完成，可以去挑镜头了")
 
 
@@ -464,7 +478,7 @@ def main() -> None:
     p.add_argument("--preset", default="纪实3min"); p.set_defaults(fn=cmd_new)
 
     for name, fn in [("run", cmd_run), ("prepare", cmd_prepare),
-                     ("ingest", cmd_ingest),
+                     ("ingest", cmd_ingest), ("analyze", cmd_analyze),
                      ("transcribe", cmd_transcribe), ("junk", cmd_junk),
                      ("brief", cmd_brief), ("status", cmd_status)]:
         p = sub.add_parser(name); p.add_argument("name"); p.set_defaults(fn=fn)
