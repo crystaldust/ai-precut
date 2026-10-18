@@ -18,6 +18,8 @@ def file_env(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_CUT_CONFIG_DIR", str(tmp_path / "cfg"))
     for var in secrets.ENV_KEYS.values():
         monkeypatch.delenv(var, raising=False)
+    # 隔离历史遗留文件，避免读到本机真实 key
+    monkeypatch.setattr(secrets, "LEGACY_FILES", {}, raising=False)
     return tmp_path / "cfg"
 
 
@@ -38,6 +40,15 @@ def test_env_overrides_store(file_env, monkeypatch):
     monkeypatch.setenv("MEDIAKIT_API_KEY", "from-env")
     assert secrets.get("mediakit") == "from-env"
     assert secrets.status()["mediakit"]["source"] == "env"
+
+
+def test_legacy_mediakit_file_is_read(file_env, monkeypatch, tmp_path):
+    legacy = tmp_path / "legacy" / "api_key"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("AKLTlegacykey123", encoding="utf-8")
+    monkeypatch.setitem(secrets.LEGACY_FILES, "mediakit", legacy)
+    assert secrets.get("mediakit") == "AKLTlegacykey123"
+    assert secrets.status()["mediakit"]["source"] == "legacy"
 
 
 def test_status_masks(file_env):

@@ -23,6 +23,11 @@ ENV_KEYS = {
     "deepseek": "DEEPSEEK_API_KEY",
 }
 
+# 历史遗留位置：老版本把 mediakit key 放在这里，读取时兼容
+LEGACY_FILES = {
+    "mediakit": Path.home() / ".mediakit/api_key",
+}
+
 
 def _config_dir() -> Path:
     if custom := os.environ.get("AI_CUT_CONFIG_DIR"):
@@ -92,7 +97,16 @@ def get(provider: str) -> str | None:
                 return value
         except Exception:  # noqa: BLE001 - 钥匙串被锁/拒绝时继续降级
             pass
-    return _read_file().get(provider)
+    value = _read_file().get(provider)
+    if value:
+        return value
+    legacy = LEGACY_FILES.get(provider)
+    if legacy and legacy.exists():
+        try:
+            return legacy.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+    return None
 
 
 def set(provider: str, value: str) -> str:
@@ -138,6 +152,8 @@ def status() -> dict[str, dict]:
             source = "env"
         elif provider in _read_file():
             source = "file"
+        elif LEGACY_FILES.get(provider) and LEGACY_FILES[provider].exists():
+            source = "legacy"
         else:
             source = "keyring"
         out[provider] = {
