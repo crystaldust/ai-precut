@@ -29,7 +29,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
-from pipeline import review, schema  # noqa: E402
+from pipeline import review, schema, style  # noqa: E402
 PROJECTS = ROOT / "projects"
 PRESETS = ROOT / "presets"
 STATIC = Path(__file__).resolve().parent / "static"
@@ -343,6 +343,15 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, OSError) as exc:
                 return self._json({"error": str(exc)}, 400)
 
+        if p == "/api/calibrate":
+            name = q.get("project", [""])[0]
+            try:
+                cfg = schema.load(project_path(name) / "project.json")
+            except (ValueError, OSError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            return self._json({"calibration": style.normalize(cfg.get("calibration")),
+                               "directive": style.directive(cfg.get("calibration"))})
+
         if p == "/api/confirm":
             name = q.get("project", [""])[0]
             try:
@@ -447,6 +456,17 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, FileNotFoundError) as e:
                 return self._json({"error": str(e)}, 400)
             return self._json({"job_id": job_id})
+
+        if p == "/api/calibrate":
+            try:
+                pdir = project_path(body.get("project", ""))
+                cfg = schema.load(pdir / "project.json")
+            except (ValueError, OSError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            cfg["calibration"] = style.normalize(body.get("calibration") or {})
+            schema.save(pdir / "project.json", cfg)
+            return self._json({"ok": True,
+                               "directive": style.directive(cfg["calibration"])})
 
         if p == "/api/confirm/answers":
             try:

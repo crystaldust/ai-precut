@@ -1,0 +1,104 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>剪辑偏好 · 剪辑台</title>
+<style>
+:root{--bg:#16181d;--panel:#1e2128;--panel2:#252932;--line:#2f3440;--text:#e8eaf0;
+--muted:#9aa2b1;--accent:#4a9eff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.7 -apple-system,"PingFang SC",sans-serif}
+.wrap{max-width:720px;margin:0 auto;padding:32px 20px}
+h1{font-size:19px;margin:0 0 6px}
+.sub{color:var(--muted);font-size:12.5px;margin-bottom:24px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+label{display:block;font-size:13px;margin-bottom:6px;color:#c8d2e0}
+.hint{color:var(--muted);font-size:11.5px;margin:4px 0 10px}
+input[type=text],select,textarea{width:100%;background:var(--panel2);border:1px solid var(--line);
+border-radius:9px;color:var(--text);padding:9px 11px;font:inherit;font-size:13px}
+textarea{resize:vertical;min-height:64px}
+button{font:inherit;cursor:pointer;border:none;border-radius:9px;padding:9px 16px;
+background:var(--panel2);color:var(--text)}
+button.primary{background:var(--accent);color:#06121f;font-weight:600}
+button:hover{filter:brightness(1.12)}
+.preview{background:#12141a;border:1px solid var(--line);border-radius:10px;padding:12px;
+font-size:12.5px;color:#b9c6da;line-height:1.7;word-break:break-all}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2a3344;
+border:1px solid var(--line);padding:9px 16px;border-radius:20px;opacity:0;transition:.25s}
+.toast.on{opacity:1}
+</style></head><body>
+<div class="wrap">
+  <h1>剪辑偏好</h1>
+  <div class="sub">这三个回答会写进提示词，并影响选段打分。改完重新跑一次「分析」即可生效。</div>
+
+  <div class="card">
+    <label>1. 她更想保留「信息」还是「情绪」？</label>
+    <div class="hint">情绪优先：音量、冲突、抢话加权；信息优先：金额、条款、承诺加权。</div>
+    <select id="tone">
+      <option value="balanced">均衡</option>
+      <option value="info">信息优先</option>
+      <option value="emotion">情绪优先</option>
+    </select>
+  </div>
+
+  <div class="card">
+    <label>2. 这条片子主要给谁看？</label>
+    <div class="hint">例如：准备报名的家长 / 同行 / 招商加盟的老板。</div>
+    <input type="text" id="audience" placeholder="准备报名的家长">
+  </div>
+
+  <div class="card">
+    <label>3. 有哪 2–3 句必须保留的原话？</label>
+    <div class="hint">直接贴原话，用逗号分隔。这些句子无论档位如何都会进片。</div>
+    <textarea id="must_lines" placeholder="找不到工作不白学吗，九千八包含所有耗材"></textarea>
+  </div>
+
+  <div class="card">
+    <label>提示词里会变成这样</label>
+    <div class="preview" id="preview">（还没有填写）</div>
+  </div>
+
+  <button class="primary" onclick="save()">保存</button>
+  <button onclick="location.href='/static/browse.html?project='+encodeURIComponent(PROJECT)">去看素材</button>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const PROJECT = new URLSearchParams(location.search).get('project') || '';
+async function load(){
+  const r = await fetch('/api/calibrate?project='+encodeURIComponent(PROJECT));
+  const d = await r.json();
+  if(d.error){ document.getElementById('preview').textContent = d.error; return; }
+  const c = d.calibration || {};
+  document.getElementById('tone').value = c.tone || 'balanced';
+  document.getElementById('audience').value = c.audience || '';
+  document.getElementById('must_lines').value = c.must_lines || '';
+  updatePreview(d.directive);
+}
+function updatePreview(directive){
+  document.getElementById('preview').textContent = directive || '（未填写，使用默认规则）';
+}
+async function save(){
+  const body = {project: PROJECT, calibration: {
+    tone: document.getElementById('tone').value,
+    audience: document.getElementById('audience').value,
+    must_lines: document.getElementById('must_lines').value,
+  }};
+  const r = await fetch('/api/calibrate', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)});
+  const d = await r.json();
+  if(d.ok){ updatePreview(d.directive); toast('已保存，重新跑一次分析后生效'); }
+  else toast(d.error || '保存失败');
+}
+function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('on');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'),1800); }
+['tone','audience','must_lines'].forEach(id=>
+  document.getElementById(id).addEventListener('input', ()=>{
+    const t=document.getElementById('tone').value;
+    const a=document.getElementById('audience').value.trim();
+    const m=document.getElementById('must_lines').value.trim();
+    const parts=[];
+    if(a) parts.push('观众是'+a);
+    if(t==='info') parts.push('优先保留信息与事实，情绪镜头次之');
+    if(t==='emotion') parts.push('优先保留情绪、冲突与细节，事实次之');
+    if(m) parts.push('以下原话必须保留：'+m);
+    updatePreview(parts.length ? '剪辑偏好（来自剪辑员，优先级高于默认规则）：'+parts.join('；')+'。' : '');
+  }));
+load();
+</script></body></html>
