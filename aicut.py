@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import cloud, schema, secrets, understand_audio
+from pipeline import cloud, schema, secrets, understand_audio, understand_visual
 
 ROOT = Path(__file__).resolve().parent
 PROJECTS = ROOT / "projects"
@@ -209,6 +209,19 @@ def cmd_junk(args) -> None:
     subprocess.run([sys.executable, str(PIPELINE / "junk_detect.py"),
                     str(proxy), "-o", str(work), "--scene"], check=True)
     ok("废片检测完成 → work/junk_report.csv")
+
+
+def cmd_scenes(args) -> None:
+    """c 路第一层：在代理片上切镜头。"""
+    pdir = project_dir(args.name)
+    work = pdir / "work"
+    proxy = work / "proxy.mp4"
+    if not proxy.exists():
+        die("先跑 junk（需要 work/proxy.mp4）")
+    info("分析镜头切点（在代理片上跑，长素材要 1–3 分钟）…")
+    res = understand_visual.run(proxy, work / "shots_visual.json",
+                                threshold=args.threshold)
+    ok(f"镜头 {len(res['shots'])} 个（切点 {res['cut_count']}）")
 
 
 def cmd_brief(args) -> None:
@@ -397,7 +410,7 @@ def cmd_build(args) -> None:
 def cmd_prepare(args) -> None:
     """GUI 用：只做前期（不 build），完成后再由人挑镜头。"""
     cmd_ingest(args); cmd_transcribe(args); cmd_analyze(args)
-    cmd_junk(args); cmd_brief(args)
+    cmd_junk(args); cmd_scenes(args); cmd_brief(args)
     ok("前期处理完成，可以去挑镜头了")
 
 
@@ -482,6 +495,10 @@ def main() -> None:
                      ("transcribe", cmd_transcribe), ("junk", cmd_junk),
                      ("brief", cmd_brief), ("status", cmd_status)]:
         p = sub.add_parser(name); p.add_argument("name"); p.set_defaults(fn=fn)
+
+    p = sub.add_parser("scenes"); p.add_argument("name")
+    p.add_argument("--threshold", type=float, default=8.0)
+    p.set_defaults(fn=cmd_scenes)
 
     p = sub.add_parser("build"); p.add_argument("name")
     p.add_argument("--version"); p.add_argument("--no-draft", action="store_true")
