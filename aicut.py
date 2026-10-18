@@ -31,7 +31,8 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import cloud, schema, secrets, understand_audio, understand_visual
+from pipeline import (cloud, schema, secrets, understand_audio,
+                      understand_text, understand_visual)
 
 ROOT = Path(__file__).resolve().parent
 PROJECTS = ROOT / "projects"
@@ -193,6 +194,25 @@ def cmd_analyze(args) -> None:
     interrupts = sum(1 for x in res["segments"] if x["signals"]["interrupt"])
     ok(f"声音特征：{len(res['segments'])} 句 · 中位响度 {res['median_db']} dB · "
        f"抢话 {interrupts} 处")
+
+
+def cmd_text(args) -> None:
+    """b 路：LLM 话题分段 + 信息标注。"""
+    pdir = project_dir(args.name)
+    work = pdir / "work"
+    segs = work / "segments.json"
+    if not segs.exists():
+        die("先跑 transcribe（需要 work/segments.json）")
+    if not secrets.get("deepseek"):
+        die("未配置 DEEPSEEK_API_KEY：运行 `uv run python aicut.py config set deepseek`")
+    info(f"调用 {args.model} 做话题分段与逐句标注（{args.batch} 句/批）…")
+    res = understand_text.run(segs, work / "segments_text.json",
+                              batch=args.batch, model=args.model)
+    key = sum(1 for x in res["segments"] if x["key_info"])
+    msg = f"话题 {len(res['topics'])} 个 · 关键信息 {key} 句"
+    if res["failures"]:
+        msg += f" · {len(res['failures'])} 批失败（详见 segments_text.json）"
+    ok(msg)
 
 
 def cmd_junk(args) -> None:
@@ -410,6 +430,10 @@ def cmd_build(args) -> None:
 def cmd_prepare(args) -> None:
     """GUI 用：只做前期（不 build），完成后再由人挑镜头。"""
     cmd_ingest(args); cmd_transcribe(args); cmd_analyze(args)
+    if secrets.get("deepseek"):
+        cmd_text(args)
+    else:
+        info("跳过 b 路：未配置 DEEPSEEK_API_KEY")
     cmd_junk(args); cmd_scenes(args); cmd_brief(args)
     ok("前期处理完成，可以去挑镜头了")
 
@@ -495,6 +519,11 @@ def main() -> None:
                      ("transcribe", cmd_transcribe), ("junk", cmd_junk),
                      ("brief", cmd_brief), ("status", cmd_status)]:
         p = sub.add_parser(name); p.add_argument("name"); p.set_defaults(fn=fn)
+
+    p = sub.add_parser("text"); p.add_argument("name")
+    p.add_argument("--batch", type=int, default=40)
+    p.add_argument("--model", default="deepseek-chat")
+    p.set_defaults(fn=cmd_text)
 
     p = sub.add_parser("scenes"); p.add_argument("name")
     p.add_argument("--threshold", type=float, default=8.0)
