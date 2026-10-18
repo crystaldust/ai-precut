@@ -31,8 +31,8 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (classify, cloud, schema, secrets, understand_audio,
-                      understand_text, understand_visual)
+from pipeline import (classify, cloud, schema, secrets, summarize,
+                      understand_audio, understand_text, understand_visual)
 
 ROOT = Path(__file__).resolve().parent
 PROJECTS = ROOT / "projects"
@@ -279,6 +279,18 @@ def cmd_quality(args) -> None:
     ok(f"画面质量：{res['samples']} 帧 · {detail}")
 
 
+def cmd_summary(args) -> None:
+    """1.5 内容摘要：一句话 + 3–6 个关键信息。"""
+    pdir = project_dir(args.name)
+    work = pdir / "work"
+    text, scored = work / "segments_text.json", work / "segments_scored.json"
+    if not text.exists() or not scored.exists():
+        die("先跑 text 与 score")
+    info("生成内容摘要…")
+    res = summarize.run(text, scored, work / "content_summary.json")
+    ok(("（兜底）" if res["fallback"] else "") + res["summary"])
+
+
 def cmd_brief(args) -> None:
     pdir = project_dir(args.name)
     c = cfg(pdir)
@@ -470,7 +482,7 @@ def cmd_prepare(args) -> None:
     else:
         info("跳过 b 路：未配置 DEEPSEEK_API_KEY")
     cmd_junk(args); cmd_scenes(args); cmd_quality(args)
-    cmd_score(args); cmd_brief(args)
+    cmd_score(args); cmd_summary(args); cmd_brief(args)
     ok("前期处理完成，可以去挑镜头了")
 
 
@@ -567,6 +579,9 @@ def main() -> None:
 
     p = sub.add_parser("quality"); p.add_argument("name")
     p.set_defaults(fn=cmd_quality)
+
+    p = sub.add_parser("summary"); p.add_argument("name")
+    p.set_defaults(fn=cmd_summary)
 
     p = sub.add_parser("score"); p.add_argument("name")
     p.set_defaults(fn=cmd_score)
