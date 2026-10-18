@@ -31,8 +31,9 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (classify, cloud, questions, schema, secrets, select, style,
-                      summarize, understand_audio, understand_text, understand_visual)
+from pipeline import (classify, cloud, export_draft, questions, schema, secrets,
+                      select, style, summarize, understand_audio, understand_text,
+                      understand_visual)
 
 ROOT = Path(__file__).resolve().parent
 PROJECTS = ROOT / "projects"
@@ -337,6 +338,27 @@ def cmd_select(args) -> None:
     if missing:
         msg += f" · 未覆盖必留话题 {len(missing)}"
     ok(msg)
+
+
+def cmd_export(args) -> None:
+    """M4 导出：时间线 → Windows 可双击导入的剪映包。"""
+    pdir = project_dir(args.name)
+    timeline = Path(args.timeline) if args.timeline else None
+    if timeline is None:
+        candidates = sorted((pdir / "output").glob("*/timeline.json"),
+                            key=lambda x: x.stat().st_mtime, reverse=True)
+        if not candidates:
+            die("找不到时间线，先跑 select 与 build_documentary，或指定 --timeline")
+        timeline = candidates[0]
+        info(f"使用最新时间线：{timeline.relative_to(pdir)}")
+    name = args.package_name or f'{pdir.name.split("_")[0]}_{timeline.parent.name}'
+    out = Path(args.out) / f"{name}.zip"
+    info("生成草稿并打包（媒体要拷一遍，几分钟）…")
+    try:
+        res = export_draft.build_windows_package(timeline, name, out)
+    except (RuntimeError, FileNotFoundError) as exc:
+        die(str(exc))
+    ok(f"已导出：{out}（{res['size'] / 1e6:.0f} MB）")
 
 
 def cmd_brief(args) -> None:
@@ -679,6 +701,12 @@ def main() -> None:
 
     p = sub.add_parser("quality"); p.add_argument("name")
     p.set_defaults(fn=cmd_quality)
+
+    p = sub.add_parser("export"); p.add_argument("name")
+    p.add_argument("--timeline", default=None)
+    p.add_argument("--package-name", dest="package_name", default=None)
+    p.add_argument("-o", "--out", default="dist")
+    p.set_defaults(fn=cmd_export)
 
     p = sub.add_parser("select"); p.add_argument("name")
     p.set_defaults(fn=cmd_select)

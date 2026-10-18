@@ -27,7 +27,8 @@ import time
 import uuid
 from pathlib import Path
 
-DRAFT_ROOT = Path.home() / "Movies/JianyingPro/User Data/Projects/com.lveditor.draft"
+DRAFT_ROOT = Path(os.environ.get("AI_CUT_DRAFT_ROOT")
+                  or (Path.home() / "Movies/JianyingPro/User Data/Projects/com.lveditor.draft"))
 ROOT_META = DRAFT_ROOT / "root_meta_info.json"
 
 
