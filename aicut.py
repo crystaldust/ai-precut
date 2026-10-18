@@ -31,14 +31,15 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (classify, cloud, export_draft, questions, schema, secrets,
-                      select, style, summarize, understand_audio, understand_text,
-                      understand_visual)
+from pipeline import (classify, cloud, export_draft, proc, questions, schema,
+                      secrets, select, style, summarize, understand_audio,
+                      understand_text, understand_visual)
 
-ROOT = Path(__file__).resolve().parent
-PROJECTS = ROOT / "projects"
-PRESETS = ROOT / "presets"
-PIPELINE = ROOT / "pipeline"
+ROOT = proc.app_root()
+PROJECTS = proc.user_data_root()
+PRESETS = proc.resource_path("presets")
+PIPELINE = proc.resource_path("pipeline")
+proc.ensure_bundled_path()
 DRAFT_ROOT = Path.home() / "Movies/JianyingPro/User Data/Projects/com.lveditor.draft"
 JY_VENV = Path.home() / ".aicut/venv"
 
@@ -96,6 +97,8 @@ def probe_duration(path: Path) -> float:
 
 def ensure_jy_python() -> str:
     """剪映草稿生成依赖 pyJianYingDraft；用专用 venv，不污染系统 Python。"""
+    if proc.FROZEN:
+        return sys.executable  # 依赖已打进 App，同进程执行
     py = JY_VENV / "bin/python"
     if py.exists():
         return str(py)
@@ -107,6 +110,34 @@ def ensure_jy_python() -> str:
         die(f"安装 pyJianYingDraft 失败：{r.stderr[-300:]}")
     ok("依赖就绪")
     return str(py)
+
+
+def _run_pipeline(module: str, argv: list[str]) -> None:
+    """跑一个 pipeline 脚本：开发用子进程，打包后同进程导入。"""
+    if proc.FROZEN:
+        code, out = proc.run_inprocess(module, argv)
+        if code != 0:
+            print(out[-600:])
+            die(f"{module} 执行失败")
+        return
+    script = str(PIPELINE / (module.split(".")[-1] + ".py"))
+    r = subprocess.run([sys.executable, script, *argv], capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
+    if r.returncode != 0:
+        print((r.stdout or "")[-600:], (r.stderr or "")[-600:])
+        die(f"{module} 执行失败")
+
+
+def _validate_draft(name: str) -> None:
+    target = DRAFT_ROOT / name
+    if proc.FROZEN:
+        code, out = proc.run_inprocess("research.validate_draft", [str(target)])
+    else:
+        r = subprocess.run([sys.executable, str(ROOT / "research/validate_draft.py"),
+                            str(target)], capture_output=True, text=True)
+        code, out = r.returncode, r.stdout
+    tail = [l for l in out.splitlines() if "结果：" in l]
+    ok(f"校验：{tail[0].strip() if tail else '见输出'}")
 
 
 def mediakit_env() -> dict:
@@ -186,8 +217,7 @@ def cmd_transcribe(args) -> None:
         except cloud.CloudError as exc:
             die(f"转写失败：{exc}")
     info("整理分段文稿…")
-    subprocess.run([sys.executable, str(PIPELINE / "format_transcript.py"),
-                    str(raw), "-o", str(work)], check=True, capture_output=True)
+    _run_pipeline("pipeline.format_transcript", [str(raw), "-o", str(work)])
     ok("转写完成 → work/transcript.md / work/segments.json")
 
 
@@ -213,12 +243,14 @@ def cmd_text(args) -> None:
         die("先跑 transcribe（需要 work/segments.json）")
     if not secrets.get("deepseek"):
         die("未配置 DEEPSEEK_API_KEY：运行 `uv run python aicut.py config set deepseek`")
-    info(f"调用 {args.model} 做话题分段与逐句标注（{args.batch} 句/批）…")
+    batch = getattr(args, "batch", 40)
+    model = getattr(args, "model", "deepseek-chat")
+    info(f"调用 {model} 做话题分段与逐句标注（{batch} 句/批）…")
     pref = style.directive(cfg(pdir).get("calibration"))
     if pref:
         info("已应用剪辑偏好：" + pref)
     res = understand_text.run(segs, work / "segments_text.json",
-                              batch=args.batch, model=args.model, style=pref)
+                              batch=batch, model=model, style=pref)
     key = sum(1 for x in res["segments"] if x["key_info"])
     msg = f"话题 {len(res['topics'])} 个 · 关键信息 {key} 句"
     if res["failures"]:
@@ -255,8 +287,7 @@ def cmd_junk(args) -> None:
              "-vf", "scale=-2:540,fps=30", "-c:v", "libx264", "-preset",
              "veryfast", "-crf", "28", "-c:a", "aac", "-b:a", "64k", str(proxy)],
             check=True)
-    subprocess.run([sys.executable, str(PIPELINE / "junk_detect.py"),
-                    str(proxy), "-o", str(work), "--scene"], check=True)
+    _run_pipeline("pipeline.junk_detect", [str(proxy), "-o", str(work), "--scene"])
     ok("废片检测完成 → work/junk_report.csv")
 
 
@@ -269,7 +300,7 @@ def cmd_scenes(args) -> None:
         die("先跑 junk（需要 work/proxy.mp4）")
     info("分析镜头切点（在代理片上跑，长素材要 1–3 分钟）…")
     res = understand_visual.run(proxy, work / "shots_visual.json",
-                                threshold=args.threshold)
+                                threshold=getattr(args, "threshold", 8.0))
     ok(f"镜头 {len(res['shots'])} 个（切点 {res['cut_count']}）")
 
 
@@ -311,7 +342,7 @@ def cmd_questions(args) -> None:
     if not summary.exists() or not scored.exists():
         die("先跑 score 与 summary")
     out = work / "questions.json"
-    if out.exists() and not args.force:
+    if out.exists() and not getattr(args, "force", False):
         info("决策问题已存在，跳过（--force 可重新生成，但会让已保存答案失效）")
         return
     res = questions.run(summary, scored, out)
@@ -497,6 +528,11 @@ def cmd_build(args) -> None:
     c = cfg(pdir)
     preset = load_json(PRESETS / f"{c['preset']}.json", {})
     shots_file = pdir / "shots.json"
+    if not shots_file.exists():  # 用覆盖式选段的结果直接出片
+        selected = pdir / "work/shots-selected.json"
+        if selected.exists():
+            shots_file = selected
+            info("使用覆盖式选段结果：work/shots-selected.json")
     if not shots_file.exists():
         die(f"缺少分镜表 {shots_file}（先跑 brief，再写 shots.json）")
     spec = load_json(shots_file)
@@ -521,26 +557,30 @@ def cmd_build(args) -> None:
         info("预览片无变化，跳过渲染")
     else:
         info("渲染预览片…")
-        subprocess.run([sys.executable, str(PIPELINE / "render_preview.py"),
-                        str(vdir / "timeline.json"), "-o", str(vdir / "preview.mp4")],
-                       check=True, capture_output=True)
+        _run_pipeline("pipeline.render_preview",
+                      [str(vdir / "timeline.json"), "-o", str(vdir / "preview.mp4")])
         stamp.write_text(tl_hash)
     ok(f"预览片：{vdir / 'preview.mp4'}")
 
     if not args.no_draft:
         info("生成剪映草稿…")
         draft_name = f"{c['title']}_{version}"
-        r = subprocess.run([ensure_jy_python(), str(PIPELINE / "to_jianying.py"),
-                            str(vdir / "timeline.json"), "--name", draft_name],
-                           capture_output=True, text=True)
-        if r.returncode != 0:
-            print(r.stdout[-500:], r.stderr[-500:])
-            die("草稿生成失败")
+        if proc.FROZEN:
+            code, out = proc.run_inprocess(
+                "pipeline.to_jianying",
+                [str(vdir / "timeline.json"), "--name", draft_name])
+            if code != 0:
+                print(out[-600:])
+                die("草稿生成失败")
+        else:
+            r = subprocess.run([ensure_jy_python(), str(PIPELINE / "to_jianying.py"),
+                                str(vdir / "timeline.json"), "--name", draft_name],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                print(r.stdout[-500:], r.stderr[-500:])
+                die("草稿生成失败")
         ok(f"剪映草稿：{draft_name}")
-        v = subprocess.run([sys.executable, str(ROOT / "research/validate_draft.py"),
-                            str(DRAFT_ROOT / draft_name)], capture_output=True, text=True)
-        tail = [l for l in v.stdout.splitlines() if "结果：" in l]
-        ok(f"校验：{tail[0].strip() if tail else '见输出'}")
+        _validate_draft(draft_name)
     ok(f"完成 → {vdir}")
 
 
@@ -662,6 +702,7 @@ def cmd_status(args) -> None:
         ("人工裁决", pdir / "work/overrides.json"),
         ("策划分派单", pdir / "work/brief.md"),
         ("分镜表", pdir / "shots.json"),
+        ("选段时间线", pdir / "work/shots-selected.json"),
     ]
     print(f"\n项目：{c['title']}（{c['name']}）")
     print(f"预设：{c['preset']}　平台：{c['platform']}　目标：{c['target_duration']}s\n")
@@ -680,13 +721,30 @@ def cmd_list(args) -> None:
 
 
 # ------------------------------------------------------------------ 入口
-def main() -> None:
+def run_cli(argv: list[str]) -> int:
+    """执行一条命令并返回退出码（供 GUI 在同一进程里调用）。"""
+    try:
+        main(argv)
+        return 0
+    except SystemExit as exc:
+        return int(exc.code or 0)
+    except Exception:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="aicut 视频剪辑流水线")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("new"); p.add_argument("name")
     p.add_argument("--material", required=True); p.add_argument("--title")
-    p.add_argument("--preset", default="纪实3min"); p.set_defaults(fn=cmd_new)
+    p.add_argument("--preset", default="纪实3min")
+    p.add_argument("--tone", choices=list(style.TONES))
+    p.add_argument("--audience", default=None)
+    p.add_argument("--must-lines", dest="must_lines", default=None)
+    p.set_defaults(fn=cmd_new)
 
     for name, fn in [("run", cmd_run), ("prepare", cmd_prepare),
                      ("ingest", cmd_ingest), ("analyze", cmd_analyze),
@@ -744,7 +802,7 @@ def main() -> None:
 
     p = sub.add_parser("list"); p.set_defaults(fn=cmd_list)
 
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     args.fn(args)
 
 

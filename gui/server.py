@@ -29,10 +29,19 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
-from pipeline import review, schema, style  # noqa: E402
-PROJECTS = ROOT / "projects"
+from pipeline import proc, review, schema, style  # noqa: E402
+
+proc.ensure_bundled_path()  # 打包后优先用 App 自带的 ffmpeg
+PROJECTS = proc.user_data_root()
 PRESETS = ROOT / "presets"
-STATIC = Path(__file__).resolve().parent / "static"
+STATIC = (proc.resource_path("gui", "static") if proc.FROZEN
+          else Path(__file__).resolve().parent / "static")
+PICKER = None  # 由桌面壳注入（pywebview 的文件选择框）
+
+
+def set_picker(fn) -> None:
+    global PICKER
+    PICKER = fn
 AICUT = ROOT / "aicut.py"
 PY = sys.executable
 
@@ -194,6 +203,32 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
     if task not in cmds:
         raise ValueError("未知任务")
 
+    if proc.FROZEN:
+        def worker_frozen():
+            import io
+            import contextlib
+            from aicut import run_cli
+            buf = io.StringIO()
+            old_argv = sys.argv
+            try:
+                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                    code = run_cli([task, name, *(extra or [])])
+            except Exception as exc:  # noqa: BLE001
+                code = -1
+                buf.write(f"[错误] {exc}\n")
+            finally:
+                sys.argv = old_argv
+            for line in buf.getvalue().splitlines():
+                with JOBS_LOCK:
+                    JOBS[job_id]["log"].append(line)
+            with JOBS_LOCK:
+                JOBS[job_id]["status"] = "done" if code == 0 else "failed"
+                JOBS[job_id]["exit"] = code
+                JOBS[job_id]["log"].append(f"[退出码] {code}")
+
+        threading.Thread(target=worker_frozen, daemon=True).start()
+        return job_id
+
     def worker():
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
@@ -316,6 +351,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, f.read_bytes(), ctype)
             return self._json({"error": "not found"}, 404)
 
+        if p == "/api/health":
+            import shutil as _shutil
+            ff = _shutil.which("ffmpeg")
+            ver = ""
+            if ff:
+                try:
+                    ver = subprocess.run([ff, "-version"], capture_output=True, text=True,
+                                         timeout=5).stdout.splitlines()[0][:60]
+                except Exception:  # noqa: BLE001
+                    ver = "?"
+            return self._json({
+                "frozen": proc.FROZEN,
+                "app_root": str(proc.app_root()),
+                "projects_root": str(proc.user_data_root()),
+                "ffmpeg": ff, "ffmpeg_version": ver,
+                "ffprobe": _shutil.which("ffprobe"),
+            })
+
         if p == "/api/projects":
             items = []
             for f in sorted(PROJECTS.glob("*/project.json")):
@@ -414,6 +467,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "name": name})
 
         if p == "/api/pick":
+            if PICKER is not None:
+                try:
+                    picked = PICKER()
+                except Exception:  # noqa: BLE001
+                    picked = []
+                path = picked[0] if picked else ""
+                return self._json({"path": path})
             script = ('POSIX path of (choose file with prompt "选择一条视频素材" '
                       'of type {"public.movie"})')
             r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
@@ -519,6 +579,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
 
         return self._json({"error": "not found"}, 404)
+
+
+def serve_in_background(start_port: int = 8765) -> tuple[ThreadingHTTPServer, str]:
+    """给桌面壳用：起服务并返回 (server, url)，不阻塞。"""
+    port = start_port
+    srv = None
+    for _ in range(8):
+        try:
+            srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            break
+        except OSError:
+            port += 1
+    if srv is None:
+        raise RuntimeError("没有可用端口")
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{port}/"
 
 
 def main() -> None:

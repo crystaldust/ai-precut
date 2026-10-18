@@ -38,6 +38,18 @@
 
 **实测产出 v4**：18 镜 · 172.7 秒 · 剪映草稿 `九月一号_v4` 校验 PASS（65 项全过）。
 
+## M5 产品化（macOS 已完成）
+
+| 计划项 | 状态 | 说明 |
+|---|---|---|
+| 5.1 桌面壳 | ✅ | pywebview + 本地服务，`app/main.py` |
+| 5.2 资源与二进制内嵌 | ✅ | 静态 ffmpeg/ffprobe 7.0、模板 JSON、GUI 静态文件 |
+| 5.3 冻结模式适配 | ✅ | 子任务改为同进程执行，数据目录迁到 `~/Documents/AI粗剪` |
+| 5.4 一条命令构建 | ✅ | `./packaging/build_app.sh` → `dist/AI粗剪.app`（135MB） |
+| 实测 | ✅ | App 内跑通 prepare（退出码 0）与 build（草稿校验 PASS） |
+
+详见 [PACKAGING.md](PACKAGING.md)。
+
 ## M0 外部验证（已完成）
 
 | 项 | 结论 | 日期 |
