@@ -39,6 +39,27 @@ STATIC = (proc.resource_path("gui", "static") if proc.FROZEN
 PICKER = None  # 由桌面壳注入（pywebview 的文件选择框）
 
 
+def run_aicut(args: list[str]) -> tuple[int, str]:
+    """执行一条 aicut 命令；打包后必须同进程，不能再拉起 App 自身。"""
+    if proc.FROZEN:
+        import contextlib
+        import io
+        from aicut import run_cli
+        buf = io.StringIO()
+        old_argv = sys.argv
+        try:
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                code = run_cli(args)
+        except Exception as exc:  # noqa: BLE001
+            code, _ = 1, buf.write(f"[错误] {exc}\n")
+        finally:
+            sys.argv = old_argv
+        return code, buf.getvalue()
+    r = subprocess.run([PY, str(AICUT), *args], cwd=str(ROOT),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
 def set_picker(fn) -> None:
     global PICKER
     PICKER = fn
@@ -197,8 +218,8 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
         JOBS[job_id] = {"status": "running", "log": [], "exit": None,
                         "started": time.time(), "task": task, "project": name}
     cmds = {
-        "prepare": [PY, str(AICUT), "prepare", name],
-        "build": [PY, str(AICUT), "build", name] + (extra or []),
+        "prepare": ["prepare", name],
+        "build": ["build", name] + (extra or []),
     }
     if task not in cmds:
         raise ValueError("未知任务")
@@ -234,8 +255,9 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
         env["PYTHONUNBUFFERED"] = "1"
         env["PATH"] = "/opt/homebrew/bin:" + env.get("PATH", "")
         try:
-            proc = subprocess.Popen(cmds[task], cwd=str(ROOT), stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
+            proc = subprocess.Popen([PY, str(AICUT), *cmds[task]], cwd=str(ROOT),
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1, env=env)
             for line in proc.stdout:
                 with JOBS_LOCK:
                     JOBS[job_id]["log"].append(line.rstrip())
@@ -459,11 +481,10 @@ class Handler(BaseHTTPRequestHandler):
             title = (body.get("title") or name).strip()
             if not material:
                 return self._json({"error": "缺少素材路径"}, 400)
-            args = [PY, str(AICUT), "new", name, "--material", material,
-                    "--preset", preset, "--title", title]
-            r = subprocess.run(args, cwd=str(ROOT), capture_output=True, text=True)
-            if r.returncode != 0:
-                return self._json({"error": (r.stdout + r.stderr)[-500:]}, 400)
+            code, out = run_aicut(["new", name, "--material", material,
+                                   "--preset", preset, "--title", title])
+            if code != 0:
+                return self._json({"error": out[-500:] or "创建失败"}, 400)
             return self._json({"ok": True, "name": name})
 
         if p == "/api/pick":

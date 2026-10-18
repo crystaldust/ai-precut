@@ -27,6 +27,19 @@ open "dist/AI粗剪.app"
 - 在 App 内新建项目并跑完整 `prepare`：抽音轨 → 云端 ASR → 声音/文本/画面三路 → 三档 → 摘要 → 问题 → 选段，**退出码 0**；
 - 在 App 内跑 `build`：切镜头 → 渲染预览 → 生成剪映草稿 → 校验 **PASS**。
 
+## 给后续开发的硬规则
+
+打包后**没有可用的 Python 解释器路径**，所以：
+
+- 任何"再起一个 aicut 进程"的代码路径都必须换成 `server.run_aicut([...])`
+  （冻结时同进程执行，开发时走子进程）；
+- 任何 `sys.executable pipeline/xxx.py` 都必须换成 `aicut._run_pipeline(...)`
+  或 `pipeline.proc.run_inprocess(...)`。
+
+违反这条规则的表现很具体：**点一下创建项目，会弹出第二个 App 窗口，且请求永远不返回**
+（旧代码用 `sys.executable` 调 `aicut.py`，在 .app 里等于又启动了一次 App）。
+这个 bug 在 2026-10-18 出现过并修复，见 `server.run_aicut`。
+
 ## 已知限制
 
 1. **未签名/未公证**：首次打开会被 Gatekeeper 拦，右键 → 打开。
