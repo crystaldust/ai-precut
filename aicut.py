@@ -497,8 +497,12 @@ def cmd_status(args) -> None:
         ("音轨", pdir / "work/audio/asr.wav"),
         ("转写", pdir / "work/transcript_raw.json"),
         ("分段文稿", pdir / "work/transcript.md"),
+        ("声音特征 (a)", pdir / "work/segments_audio.json"),
+        ("文本标注 (b)", pdir / "work/segments_text.json"),
         ("分析代理", pdir / "work/proxy.mp4"),
         ("废片表", pdir / "work/junk_report.csv"),
+        ("镜头切分 (c)", pdir / "work/shots_visual.json"),
+        ("三档判定", pdir / "work/segments_scored.json"),
         ("策划分派单", pdir / "work/brief.md"),
         ("分镜表", pdir / "shots.json"),
     ]
