@@ -1,0 +1,10 @@
+# 统一换行，避免跨平台 diff 噪音
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.command text eol=lf
+*.mp4 binary
+*.wav binary
+*.png binary
+*.jpg binary
+*.zip binary
