@@ -64,18 +64,25 @@ def _level_of(seg: dict, audio: dict | None, must_topic: bool) -> tuple[int, str
 
 def classify(segments: list[dict], audio_by_id: dict | None = None,
              topics: list[dict] | None = None,
-             total_target: float = 175.0) -> dict:
+             total_target: float = 175.0,
+             visual_by_id: dict | None = None) -> dict:
     audio_by_id = audio_by_id or {}
     topic_of = {}
     for t in topics or []:
         for sid in t.get("segment_ids", []):
             topic_of[sid] = t["name"]
 
+    visual_by_id = visual_by_id or {}
     scored = []
     for seg in segments:
         topic = seg.get("topic") or topic_of.get(seg["id"], "")
         lv, why = _level_of(seg, audio_by_id.get(seg["id"]), _topic_must(topic))
-        scored.append({**seg, "topic": topic, "level": lv, "level_reason": why})
+        vis = visual_by_id.get(seg["id"], {})
+        flags = vis.get("flags") or []
+        if "dark" in flags and lv != 3:
+            lv, why = 1, "画面过暗，不可用"
+        scored.append({**seg, "topic": topic, "level": lv, "level_reason": why,
+                       "visual_flags": flags})
 
     # 待定过多时，把"信息最弱"的待定降为废片，保证人的工作量可控
     pending = [s for s in scored if s["level"] == 2]
@@ -156,14 +163,17 @@ def _assemble(scored: list[dict], total_target: float = 175.0) -> dict:
 
 
 def run(text_path: Path, audio_path: Path | None, out_path: Path,
-        total_target: float = 175.0) -> dict:
+        total_target: float = 175.0, visual_path: Path | None = None) -> dict:
     text = json.loads(Path(text_path).read_text(encoding="utf-8"))
     segments = text["segments"]
     audio_by_id: dict[str, dict] = {}
     if audio_path and Path(audio_path).exists():
         audio = json.loads(Path(audio_path).read_text(encoding="utf-8"))
         audio_by_id = {s["id"]: s.get("signals", {}) for s in audio["segments"]}
-    result = classify(segments, audio_by_id, text.get("topics"), total_target)
+    visual_by_id: dict[str, dict] = {}
+    if visual_path and Path(visual_path).exists():
+        visual_by_id = json.loads(Path(visual_path).read_text(encoding="utf-8"))["segments"]
+    result = classify(segments, audio_by_id, text.get("topics"), total_target, visual_by_id)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
