@@ -1,0 +1,139 @@
+# -*- coding: utf-8 -*-
+"""2.4 决策问题：由内容生成 3–5 个「答案会改变剪法」的问题。
+
+不是问卷。每个选项都挂一条 rule，选段阶段（M3）据此调整：
+    {"kind": "must_topics", "value": ["讲解合同退费条款"]}
+    {"kind": "ending", "value": "sign"}
+    {"kind": "focus", "value": "老师"}
+    {"kind": "pacing", "value": "tight"}
+
+模型挂了就用固定三问兜底，保证流程不断。
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from pipeline.llm import DeepSeekClient
+
+KINDS = {"must_topics", "ending", "focus", "pacing", "exclude"}
+
+Q_SYSTEM = "你是纪录片剪辑顾问，只输出 JSON。"
+
+Q_USER = """基于下面的素材摘要与话题，提出 3–5 个**会改变剪法**的问题。只输出 JSON。
+
+要求：
+- 每个问题 2–4 个选项，单选 type=single 或多选 type=multi
+- 每个选项给一句 effect（≤20 字），说明"选了会怎样"
+- 每个选项给 rule，kind 只能是：
+  focus（主角是谁）、must_topics（必须覆盖的话题）、ending（结尾落在哪）、
+  pacing（节奏松紧）、exclude（不能出现什么）
+- must_topics 的 value 必须来自下面的话题名
+- 不要问"风格是什么"这类无法落到剪辑动作上的问题
+
+输出：
+{{"questions":[{{"id":"q1","text":"...","type":"single","options":[{{"label":"...","effect":"...","rule":{{"kind":"focus","value":"..."}}}}]}}]}}
+
+摘要：{summary}
+
+话题：
+{topics}
+
+关键信息：
+{points}"""
+
+
+def _topic_names(topics: list[dict]) -> list[str]:
+    return [t.get("name", "") for t in topics if t.get("name")]
+
+
+def _normalize(data: dict, topics: list[dict]) -> dict:
+    names = set(_topic_names(topics))
+    out = []
+    for i, q in enumerate((data.get("questions") or [])[:5], 1):
+        text = str(q.get("text") or "").strip()[:40]
+        if not text:
+            continue
+        options = []
+        for o in (q.get("options") or [])[:4]:
+            label = str(o.get("label") or "").strip()[:12]
+            if not label:
+                continue
+            rule = o.get("rule") or {}
+            kind = rule.get("kind")
+            if kind not in KINDS:
+                continue
+            value = rule.get("value")
+            if kind == "must_topics":
+                if isinstance(value, str):
+                    value = [value]
+                value = [v for v in (value or []) if v in names]
+                if not value:
+                    continue
+            options.append({"label": label,
+                            "effect": str(o.get("effect") or "")[:20],
+                            "rule": {"kind": kind, "value": value}})
+        if len(options) < 2:
+            continue
+        out.append({"id": f"q{i}", "text": text,
+                    "type": "multi" if q.get("type") == "multi" else "single",
+                    "options": options})
+    if len(out) < 3:
+        raise ValueError("有效问题不足 3 个")
+    return {"questions": out[:5], "fallback": False}
+
+
+def fallback(topics: list[dict], segments: list[dict]) -> dict:
+    names = _topic_names(topics)[:3]
+    key = [s for s in segments if s.get("key_info")][:4]
+    must_opts = [{"label": (n[:10] or "话题"), "effect": f"强制覆盖：{n[:10]}",
+                  "rule": {"kind": "must_topics", "value": [n]}} for n in names]
+    info_opts = [{"label": str(s.get("text", ""))[:10], "effect": "强制进候选",
+                  "rule": {"kind": "must_topics", "value": []}} for s in key[:4]]
+    return {"fallback": True, "questions": [
+        {"id": "q1", "text": "这条片子主角是谁？", "type": "single", "options": [
+            {"label": "出镜最多的人", "effect": "主角镜头占比 ≥40%",
+             "rule": {"kind": "focus", "value": "main"}},
+            {"label": "讲述者", "effect": "以旁白组织",
+             "rule": {"kind": "focus", "value": "narrator"}},
+            {"label": "群像", "effect": "平均分配镜头",
+             "rule": {"kind": "focus", "value": "ensemble"}}]},
+        {"id": "q2", "text": "必须覆盖哪些话题？", "type": "multi",
+         "options": must_opts or info_opts or [
+             {"label": "全部", "effect": "不设限",
+              "rule": {"kind": "must_topics", "value": []}}]},
+        {"id": "q3", "text": "结尾落在哪？", "type": "single", "options": [
+            {"label": "最后一个关键信息", "effect": "信息收尾",
+             "rule": {"kind": "ending", "value": "info"}},
+            {"label": "最有力的句子", "effect": "情绪收尾",
+             "rule": {"kind": "ending", "value": "emotion"}},
+            {"label": "留白", "effect": "空镜收尾",
+             "rule": {"kind": "ending", "value": "silence"}}]},
+    ]}
+
+
+def run(summary_path: Path, scored_path: Path, out_path: Path, *,
+        client=None) -> dict:
+    summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
+    scored = json.loads(Path(scored_path).read_text(encoding="utf-8"))
+    segments = scored["segments"]
+    topics = scored.get("topics") or []
+    client = client or DeepSeekClient()
+
+    points = "\n".join(f'- {p.get("text", "")}' for p in (summary.get("key_points") or [])[:6])
+    try:
+        data = client.chat_json(
+            Q_SYSTEM,
+            Q_USER.format(summary=summary.get("summary", ""),
+                          topics="\n".join(f"- {n}" for n in _topic_names(topics)),
+                          points=points or "（无）"),
+            temperature=0.4, max_tokens=1600)
+        result = _normalize(data, topics)
+    except Exception as exc:  # noqa: BLE001 - 任何失败都兜底
+        result = fallback(topics, segments)
+        result["error"] = str(exc)[:200]
+
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2),
+                              encoding="utf-8")
+    return result
