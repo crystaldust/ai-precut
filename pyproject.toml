@@ -20,3 +20,8 @@ dev = [
 [tool.uv]
 # 这是一个脚本式仓库，不需要把自己打成 wheel
 package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
