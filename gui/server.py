@@ -27,6 +27,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
+
+from pipeline import review, schema  # noqa: E402
 PROJECTS = ROOT / "projects"
 PRESETS = ROOT / "presets"
 STATIC = Path(__file__).resolve().parent / "static"
@@ -105,6 +108,63 @@ def project_state(name: str) -> dict:
         "material_duration": (jload(work / "materials.json", {}).get("items") or [{}])[0].get("duration", 0),
         "has_proxy": (work / "proxy.mp4").exists(),
         "has_transcript": (work / "transcript.md").exists(),
+    }
+
+
+# ------------------------------------------------------------------ 浏览页数据
+def browse_payload(name: str) -> dict:
+    pdir = project_path(name)
+    cfg = jload(pdir / "project.json") or {}
+    try:
+        cfg = schema.load(pdir / "project.json")
+    except Exception:  # noqa: BLE001 - 旧项目读不出来就用原始 json
+        pass
+    work = pdir / "work"
+    scored = jload(work / "segments_scored.json")
+    if not scored:
+        raise FileNotFoundError("还没有三档判定，先跑 analyze/text/score")
+
+    overrides = review.load(work)
+    segments = review.apply(scored["segments"], overrides)
+
+    shots = jload(pdir / "shots.json", {}).get("shots", [])
+
+    def in_cut(s):
+        return any(max(0, min(s["end"], sh["in"] + sh["out"] - sh["in"]) -
+                       max(s["start"], sh["in"])) > 1.0 for sh in shots)
+
+    topics = {t["name"]: dict(t) for t in scored.get("topics", [])}
+    for s in segments:
+        t = topics.setdefault(s.get("topic") or "未归类",
+                             {"name": s.get("topic") or "未归类", "must": False,
+                              "count": 0, "duration": 0.0, "usable_dur": 0.0,
+                              "budget": 0})
+        t["count"] += 1
+        t["duration"] += s["end"] - s["start"]
+        if s["level"] == 3:
+            t["usable_dur"] += s["end"] - s["start"]
+
+    summary = jload(work / "content_summary.json") or {}
+    try:
+        material_duration = jload(work / "materials.json")["items"][0]["duration"]
+    except Exception:  # noqa: BLE001
+        material_duration = 0.0
+
+    for s in segments:
+        s["inCut"] = in_cut(s)
+        s["dur"] = round(s["end"] - s["start"], 2)
+
+    return {
+        "project": {"name": cfg.get("name", name), "title": cfg.get("title", name),
+                    "preset": cfg.get("preset"), "platform": cfg.get("platform"),
+                    "target_duration": cfg.get("target_duration")},
+        "material_duration": material_duration,
+        "summary": summary,
+        "counts": {k: sum(1 for s in segments if s["level"] == v)
+                   for k, v in (("waste", 1), ("pending", 2), ("usable", 3))},
+        "topics": sorted(topics.values(), key=lambda t: -t["duration"]),
+        "segments": segments,
+        "has_overrides": bool(overrides),
     }
 
 
@@ -261,6 +321,15 @@ class Handler(BaseHTTPRequestHandler):
                             "platform": c.get("platform"), "duration": c.get("duration")})
             return self._json({"presets": out})
 
+        if p == "/api/browse":
+            name = q.get("project", [""])[0]
+            try:
+                return self._json(browse_payload(name))
+            except FileNotFoundError as exc:
+                return self._json({"error": str(exc)}, 404)
+            except (ValueError, OSError) as exc:
+                return self._json({"error": str(exc)}, 400)
+
         if p == "/api/state":
             name = q.get("project", [""])[0]
             try:
@@ -358,6 +427,25 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, FileNotFoundError) as e:
                 return self._json({"error": str(e)}, 400)
             return self._json({"job_id": job_id})
+
+        if p in ("/api/browse/level", "/api/browse/must"):
+            name = body.get("project", "")
+            sid = body.get("id", "")
+            try:
+                pdir = project_path(name)
+            except ValueError:
+                return self._json({"error": "bad project"}, 400)
+            if not sid:
+                return self._json({"error": "缺少 id"}, 400)
+            work = pdir / "work"
+            try:
+                if p.endswith("level"):
+                    review.set_level(work, sid, int(body.get("level")))
+                else:
+                    review.set_must(work, sid, bool(body.get("must")))
+            except (ValueError, TypeError) as exc:
+                return self._json({"error": str(exc)}, 400)
+            return self._json({"ok": True})
 
         if p == "/api/open":
             name = body.get("project", "")
