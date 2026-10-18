@@ -222,10 +222,15 @@ def cmd_score(args) -> None:
     text = work / "segments_text.json"
     if not text.exists():
         die("先跑 text（需要 work/segments_text.json）")
+    c = cfg(pdir)
     res = classify.run(text, work / "segments_audio.json",
-                       work / "segments_scored.json")
+                       work / "segments_scored.json",
+                       total_target=float(c.get("target_duration") or 175),
+                       visual_path=work / "visual_quality.json")
     s = res["summary"]
-    ok(f"废片 {s['waste']} · 待定 {s['pending']} · 可用 {s['usable']}")
+    flagged = sum(1 for x in res["segments"] if x.get("visual_flags"))
+    ok(f"废片 {s['waste']} · 待定 {s['pending']} · 可用 {s['usable']}"
+       + (f" · 画面异常 {flagged}" if flagged else ""))
 
 
 def cmd_junk(args) -> None:
@@ -255,6 +260,23 @@ def cmd_scenes(args) -> None:
     res = understand_visual.run(proxy, work / "shots_visual.json",
                                 threshold=args.threshold)
     ok(f"镜头 {len(res['shots'])} 个（切点 {res['cut_count']}）")
+
+
+def cmd_quality(args) -> None:
+    """画面质量：亮度/运动/清晰度，按句聚合。"""
+    pdir = project_dir(args.name)
+    work = pdir / "work"
+    proxy, segs = work / "proxy.mp4", work / "segments.json"
+    if not proxy.exists() or not segs.exists():
+        die("先跑 junk 与 transcribe（需要 proxy.mp4 与 segments.json）")
+    info("抽帧分析画面质量（1 fps，长素材约 30–90 秒）…")
+    res = understand_visual.run_quality(proxy, segs, work / "visual_quality.json")
+    counts: dict[str, int] = {}
+    for v in res["segments"].values():
+        for f in v.get("flags", []):
+            counts[f] = counts.get(f, 0) + 1
+    detail = " · ".join(f"{k} {n}" for k, n in sorted(counts.items())) or "无明显异常"
+    ok(f"画面质量：{res['samples']} 帧 · {detail}")
 
 
 def cmd_brief(args) -> None:
@@ -447,7 +469,8 @@ def cmd_prepare(args) -> None:
         cmd_text(args)
     else:
         info("跳过 b 路：未配置 DEEPSEEK_API_KEY")
-    cmd_junk(args); cmd_scenes(args); cmd_score(args); cmd_brief(args)
+    cmd_junk(args); cmd_scenes(args); cmd_quality(args)
+    cmd_score(args); cmd_brief(args)
     ok("前期处理完成，可以去挑镜头了")
 
 
@@ -541,6 +564,9 @@ def main() -> None:
     p.add_argument("--batch", type=int, default=40)
     p.add_argument("--model", default="deepseek-chat")
     p.set_defaults(fn=cmd_text)
+
+    p = sub.add_parser("quality"); p.add_argument("name")
+    p.set_defaults(fn=cmd_quality)
 
     p = sub.add_parser("score"); p.add_argument("name")
     p.set_defaults(fn=cmd_score)
