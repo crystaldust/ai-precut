@@ -210,7 +210,7 @@ def cmd_transcribe(args) -> None:
     if not raw.exists():
         if not secrets.get("mediakit"):
             die("未配置 MEDIAKIT_API_KEY：运行 `uv run python aicut.py config set mediakit`")
-        info("提交云端转写（长素材要几分钟）…")
+        info("获取云端转写结果（长素材要几分钟，中断后重跑会接着查）…")
         client = cloud.CloudClient(env=mediakit_env())
         try:
             client.transcribe(wav, work, duration_s=probe_duration(wav))
@@ -285,7 +285,7 @@ def cmd_junk(args) -> None:
         info("生成 540p 分析代理…")
         run(["ffmpeg", "-y", "-loglevel", "error", "-i", c["material"],
              "-vf", "scale=-2:540,fps=30", "-c:v", "libx264", "-preset",
-             "veryfast", "-crf", "28", "-c:a", "aac", "-b:a", "64k", str(proxy)],
+             "ultrafast", "-crf", "30", "-c:a", "aac", "-b:a", "64k", str(proxy)],
             check=True)
     _run_pipeline("pipeline.junk_detect", [str(proxy), "-o", str(work), "--scene"])
     ok("废片检测完成 → work/junk_report.csv")
@@ -363,7 +363,8 @@ def cmd_select(args) -> None:
                      questions_path=work / "questions.json",
                      title=c.get("title", args.name), material=c["material"],
                      weights=style.weights(c.get("calibration")),
-                     calibration=c.get("calibration"))
+                     calibration=c.get("calibration"),
+                     target=float(c.get("target_duration") or 175))
     missing = res["missing_must_topics"]
     msg = f"选段 {res['stats']['shots']} 镜 · {res['total']:.0f}s / 目标 {res['target']:.0f}s"
     if missing:

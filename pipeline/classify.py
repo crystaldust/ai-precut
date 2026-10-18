@@ -159,7 +159,8 @@ def _assemble(scored: list[dict], total_target: float = 175.0) -> dict:
 
     summary = {name: sum(1 for s in scored if s["level"] == lv)
                for name, lv in (("waste", 1), ("pending", 2), ("usable", 3))}
-    return {"summary": summary, "topics": topic_list, "segments": scored}
+    return {"summary": summary, "topics": topic_list, "segments": scored,
+            "target": total_target}
 
 
 def run(text_path: Path, audio_path: Path | None, out_path: Path,

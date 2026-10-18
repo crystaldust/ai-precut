@@ -165,3 +165,13 @@ def test_forced_shot_survives_trim():
     res = select.select(segs, topics, {"must_lines": ["不白学吗"]}, 30)
     assert any(s.get("forced") for s in res["shots"])
     assert res["total"] <= 30 * 1.10 + 0.01
+
+
+def test_target_comes_from_scored_result(tmp_path):
+    scored = {"target": 30, "topics": TOPICS, "segments": [seg(1, 0, 6, "讲合同")]}
+    sp = tmp_path / "s.json"
+    sp.write_text(json.dumps(scored, ensure_ascii=False), encoding="utf-8")
+    ap = tmp_path / "a.json"
+    ap.write_text(json.dumps({"answers": {}}), encoding="utf-8")
+    res = select.run(sp, ap, tmp_path)
+    assert res["target"] == 30

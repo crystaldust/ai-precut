@@ -225,23 +225,43 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
         raise ValueError("未知任务")
 
     if proc.FROZEN:
+        class _JobLog:
+            """把 stdout 逐行灌进任务日志，界面才能实时看到进度。"""
+            def __init__(self, jid: str) -> None:
+                self.jid = jid
+                self.buf = ""
+                self.encoding = "utf-8"
+
+            def write(self, chunk: str) -> int:
+                if not chunk:
+                    return 0
+                self.buf += chunk
+                *lines, self.buf = self.buf.split("\n")
+                if lines:
+                    with JOBS_LOCK:
+                        JOBS[self.jid]["log"].extend(lines)
+                return len(chunk)
+
+            def flush(self) -> None:
+                if self.buf:
+                    with JOBS_LOCK:
+                        JOBS[self.jid]["log"].append(self.buf)
+                    self.buf = ""
+
         def worker_frozen():
-            import io
             import contextlib
             from aicut import run_cli
-            buf = io.StringIO()
+            sink = _JobLog(job_id)
             old_argv = sys.argv
             try:
-                with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
                     code = run_cli([task, name, *(extra or [])])
             except Exception as exc:  # noqa: BLE001
                 code = -1
-                buf.write(f"[错误] {exc}\n")
+                sink.write(f"[错误] {exc}\n")
             finally:
+                sink.flush()
                 sys.argv = old_argv
-            for line in buf.getvalue().splitlines():
-                with JOBS_LOCK:
-                    JOBS[job_id]["log"].append(line)
             with JOBS_LOCK:
                 JOBS[job_id]["status"] = "done" if code == 0 else "failed"
                 JOBS[job_id]["exit"] = code

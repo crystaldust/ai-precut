@@ -376,7 +376,7 @@ def markdown(selection: dict) -> str:
 def run(scored_path: Path, answers_path: Path, out_dir: Path,
         *, questions_path: Path | None = None, title: str = "",
         material: str = "", weights: dict | None = None,
-        calibration: dict | None = None) -> dict:
+        calibration: dict | None = None, target: float | None = None) -> dict:
     scored = json.loads(Path(scored_path).read_text(encoding="utf-8"))
     answers, stored_rules = {}, None
     if Path(answers_path).exists():
@@ -390,7 +390,7 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
     out_dir = Path(out_dir)
     overrides = review.load(out_dir)
     segments = review.apply(scored["segments"], overrides)
-    target = float(scored.get("target") or 175)
+    target = float(target or scored.get("target") or 175)
     rules = stored_rules or _rules(answers, questions)
     lines = [x.strip() for x in str((calibration or {}).get("must_lines") or "")
              .replace("，", ",").replace("；", ",").split(",") if x.strip()]
