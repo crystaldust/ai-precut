@@ -31,11 +31,12 @@ import sys
 import time
 from pathlib import Path
 
+from pipeline import cloud, schema, secrets
+
 ROOT = Path(__file__).resolve().parent
 PROJECTS = ROOT / "projects"
 PRESETS = ROOT / "presets"
 PIPELINE = ROOT / "pipeline"
-KEY_FILE = Path.home() / ".mediakit/api_key"
 DRAFT_ROOT = Path.home() / "Movies/JianyingPro/User Data/Projects/com.lveditor.draft"
 JY_VENV = Path.home() / ".aicut/venv"
 
@@ -79,7 +80,7 @@ def project_dir(name: str) -> Path:
 
 
 def cfg(pdir: Path) -> dict:
-    return load_json(pdir / "project.json")
+    return schema.load(pdir / "project.json")
 
 
 def probe_duration(path: Path) -> float:
@@ -107,9 +108,7 @@ def ensure_jy_python() -> str:
 
 
 def mediakit_env() -> dict:
-    env = os.environ.copy()
-    if KEY_FILE.exists():
-        env["MEDIAKIT_API_KEY"] = KEY_FILE.read_text(encoding="utf-8").strip()
+    env = secrets.env_with_secret()
     env["MEDIAKIT_SURFACE"] = "skill"
     env["MEDIAKIT_RUNTIME"] = "aicut"
     return env
@@ -127,15 +126,15 @@ def cmd_new(args) -> None:
     if preset is None:
         die(f"找不到预设 {args.preset}，可用：{[p.stem for p in PRESETS.glob('*.json')]}")
     pdir.mkdir(parents=True)
-    save_json(pdir / "project.json", {
-        "name": args.name,
-        "title": args.title or args.name,
-        "material": str(src),
-        "preset": args.preset,
-        "platform": preset.get("platform", "douyin"),
-        "target_duration": preset.get("duration"),
-        "created": time.strftime("%Y-%m-%d %H:%M:%S"),
-    })
+    project = schema.default_project(
+        args.name, str(src),
+        title=args.title or args.name,
+        preset=args.preset,
+        platform=preset.get("platform", "douyin"),
+        target_duration=preset.get("duration"),
+        created=time.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    schema.save(pdir / "project.json", project)
     ok(f"项目已创建：{pdir}")
     info(f"下一步：python3 aicut.py run {args.name}")
 
@@ -169,21 +168,14 @@ def cmd_transcribe(args) -> None:
         run(["ffmpeg", "-y", "-loglevel", "error", "-i", c["material"],
              "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], check=True)
     if not raw.exists():
-        if not KEY_FILE.exists():
-            die(f"缺少 key：{KEY_FILE}")
+        if not secrets.get("mediakit"):
+            die("未配置 MEDIAKIT_API_KEY：运行 `uv run python aicut.py config set mediakit`")
         info("提交云端转写（长素材要几分钟）…")
-        r = run(["mediakit-cli", "video", "asr-subtitles",
-                 "--audio-url", str(wav), "--language", "cmn-Hans-CN",
-                 "--enable-speaker-info=true", "--enable-confidence=true"],
-                env=mediakit_env())
+        client = cloud.CloudClient(env=mediakit_env())
         try:
-            task_id = json.loads(r.stdout)["task_id"]
-        except Exception:
-            die(f"提交失败：{r.stdout[:300]} {r.stderr[:300]}")
-        info(f"task_id={task_id}，等待结果…")
-        r2 = run(["mediakit-cli", "shared", "query-task",
-                  "--task-id", task_id, "--poll-complete"], env=mediakit_env(), timeout=3600)
-        raw.write_text(r2.stdout, encoding="utf-8")
+            client.transcribe(wav, work, duration_s=probe_duration(wav))
+        except cloud.CloudError as exc:
+            die(f"转写失败：{exc}")
     info("整理分段文稿…")
     subprocess.run([sys.executable, str(PIPELINE / "format_transcript.py"),
                     str(raw), "-o", str(work)], check=True, capture_output=True)
@@ -404,6 +396,35 @@ def cmd_run(args) -> None:
         info("还没有 shots.json —— 让 AI 按 work/brief.md 写一版，或手动写，然后跑 build")
 
 
+def cmd_config(args) -> None:
+    """凭证管理：查看（掩码）/ 设置 / 删除。"""
+    if not args.action:
+        st = secrets.status()
+        for name, item in st.items():
+            mark = "✓" if item["configured"] else "·"
+            src = f"（来源 {item['source']}）" if item["source"] else ""
+            print(f"[{mark}] {name:9s} {item['masked'] or '未配置'} {src}")
+        if not st["mediakit"]["configured"]:
+            info("设置：uv run python aicut.py config set mediakit")
+        return
+    provider = args.provider
+    if args.action == "set":
+        if sys.stdin.isatty():
+            import getpass
+            value = getpass.getpass(f"粘贴 {provider} 的 Key（输入不回显）：").strip()
+        else:
+            value = sys.stdin.readline().strip()
+        if not value:
+            die("Key 为空，已取消")
+        backend = secrets.set(provider, value)
+        ok(f"已保存到 {backend}：{secrets.mask(value)}")
+    elif args.action == "unset":
+        secrets.delete(provider)
+        ok(f"已删除 {provider}")
+    else:
+        die(f"未知操作：{args.action}")
+
+
 def cmd_status(args) -> None:
     pdir = project_dir(args.name)
     c = cfg(pdir)
@@ -451,6 +472,11 @@ def main() -> None:
     p = sub.add_parser("build"); p.add_argument("name")
     p.add_argument("--version"); p.add_argument("--no-draft", action="store_true")
     p.set_defaults(fn=cmd_build)
+
+    p = sub.add_parser("config"); p.set_defaults(fn=cmd_config)
+    p.add_argument("action", nargs="?", choices=["set", "unset"])
+    p.add_argument("provider", nargs="?", default="mediakit",
+                   choices=list(secrets.PROVIDERS))
 
     p = sub.add_parser("list"); p.set_defaults(fn=cmd_list)
 
