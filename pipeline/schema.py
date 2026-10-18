@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-CURRENT_SCHEMA = 1
+CURRENT_SCHEMA = 2
 
 
 class SchemaTooNew(Exception):
@@ -29,6 +29,7 @@ DEFAULTS: dict[str, Any] = {
     "target_duration": 175,
     "created": "",
     "brief": {},
+    "calibration": {},
 }
 
 REQUIRED = ("name", "material")
@@ -62,6 +63,11 @@ def migrate(cfg: dict) -> tuple[dict, list[str]]:
         out.pop("brief_v0", None)
         out["schema_version"] = 1
         changes.append("v0→v1")
+
+    if out.get("schema_version", 1) < 2:
+        out.setdefault("calibration", {})
+        out["schema_version"] = 2
+        changes.append("v1→v2")
 
     for key, value in DEFAULTS.items():
         if key not in out:
