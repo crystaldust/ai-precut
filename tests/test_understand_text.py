@@ -123,3 +123,20 @@ def test_large_topic_split_by_time():
     assert parts[0]["name"].endswith("(1/3)")
     flat = [i for p in parts for i in p["segment_ids"]]
     assert flat == [f"S{i:03d}" for i in range(1, 31)]
+
+
+def test_style_is_injected_into_annotate_prompt(tmp_path):
+    class Recorder(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.prompts = []
+
+        def chat_json(self, system, user, **kw):
+            self.prompts.append(user)
+            return super().chat_json(system, user, **kw)
+
+    sp = tmp_path / "segments.json"
+    sp.write_text(json.dumps({"segments": make_segments(5)}), encoding="utf-8")
+    client = Recorder()
+    ut.run(sp, tmp_path / "o.json", client=client, style="剪辑偏好：观众是准备报名的家长")
+    assert any("准备报名的家长" in p for p in client.prompts)

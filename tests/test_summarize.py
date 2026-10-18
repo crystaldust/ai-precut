@@ -70,3 +70,19 @@ def test_empty_summary_triggers_fallback(tmp_path):
     res = summarize.run(tp, sp, tmp_path / "o.json",
                         client=Fake({"summary": "", "key_points": []}))
     assert res["fallback"] is True
+
+
+def test_style_injected(tmp_path):
+    class Rec(Fake):
+        def __init__(self):
+            super().__init__({"summary": "x", "key_points": [], "cast": []})
+            self.users = []
+
+        def chat_json(self, system, user, **kw):
+            self.users.append(user)
+            return super().chat_json(system, user, **kw)
+
+    tp, sp = write_inputs(tmp_path)
+    c = Rec()
+    summarize.run(tp, sp, tmp_path / "o.json", client=c, style="剪辑偏好：情绪优先")
+    assert "情绪优先" in c.users[0]

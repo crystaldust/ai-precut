@@ -92,7 +92,7 @@ def _normalize(data: dict, segments: list[dict]) -> dict:
 
 
 def run(text_path: Path, scored_path: Path, out_path: Path,
-        *, client=None, model: str | None = None) -> dict:
+        *, client=None, model: str | None = None, style: str = "") -> dict:
     text = json.loads(Path(text_path).read_text(encoding="utf-8"))
     scored = json.loads(Path(scored_path).read_text(encoding="utf-8"))
     segments = scored["segments"]
@@ -101,10 +101,10 @@ def run(text_path: Path, scored_path: Path, out_path: Path,
     client = client or DeepSeekClient()
     t_list, p_list = _listing(topics, segments)
     try:
-        data = client.chat_json(
-            SUMMARY_SYSTEM,
-            SUMMARY_USER.format(topics=t_list or "（无）", points=p_list or "（无）"),
-            temperature=0.2, max_tokens=1200)
+        prompt = SUMMARY_USER.format(topics=t_list or "（无）", points=p_list or "（无）")
+        if style:
+            prompt = f"{prompt}\n\n{style}"
+        data = client.chat_json(SUMMARY_SYSTEM, prompt, temperature=0.2, max_tokens=1200)
         result = _normalize(data, segments)
         if not result["summary"]:
             raise LLMError("摘要为空")

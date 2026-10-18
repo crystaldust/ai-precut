@@ -156,11 +156,14 @@ def segment_topics(client, segments: list[dict]) -> list[dict]:
     return _split_large(out)
 
 
-def annotate(client, segments: list[dict], *, batch: int = 40) -> tuple[dict, list[dict]]:
+def annotate(client, segments: list[dict], *, batch: int = 40,
+             style: str = "") -> tuple[dict, list[dict]]:
     result: dict[str, dict] = {}
     failures: list[dict] = []
     for chunk in _chunks(segments, batch):
         prompt = ANNOTATE_USER.format(listing=_listing(chunk))
+        if style:
+            prompt = f"{prompt}\n\n{style}"
         try:
             data = client.chat_json(ANNOTATE_SYSTEM, prompt, temperature=0.1, max_tokens=4000)
         except LLMError as exc:
@@ -179,13 +182,13 @@ def annotate(client, segments: list[dict], *, batch: int = 40) -> tuple[dict, li
 
 
 def run(segments_path: Path, out_path: Path, *, client=None,
-        batch: int = 40, model: str | None = None) -> dict:
+        batch: int = 40, model: str | None = None, style: str = "") -> dict:
     segments = json.loads(Path(segments_path).read_text(encoding="utf-8"))["segments"]
     # 只把有文本的句子送进模型
     usable = [s for s in segments if (s.get("text") or "").strip()]
     client = client or DeepSeekClient()
     topics = segment_topics(client, usable)
-    annotations, failures = annotate(client, usable, batch=batch)
+    annotations, failures = annotate(client, usable, batch=batch, style=style)
 
     topic_of: dict[str, str] = {}
     for topic in topics:
