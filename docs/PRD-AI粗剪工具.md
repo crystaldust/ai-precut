@@ -266,6 +266,8 @@ Version   { name, timeline_path, preview_path, draft_name, created }
 | 依赖 | 用户无需安装 Python/ffmpeg；交付形态见 §8 |
 | 可靠性 | 任一阶段失败可重试且不产生半成品；草稿操作前必备份 |
 | 可维护性 | 预设、阈值、分类名外置为配置；核心流程有单测与校验器 |
+| 可复现构建 | 依赖由 `uv.lock` 锁定；换机器 `uv sync` 即得一致环境；产物带校验和 |
+| 许可合规 | 随包附第三方许可声明；ffmpeg 采用 LGPL 构建，不引入 GPL 组件 |
 | 可用性 | 全流程中文文案；每个 AI 判断都可展开看依据 |
 
 ---

@@ -1,0 +1,22 @@
+[project]
+name = "ai-cut"
+version = "0.1.0"
+description = "AI 粗剪工具：素材 → 三路分析 → 片段浏览 → 覆盖式选段 → 剪映工程"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+
+dependencies = [
+  "pywebview>=5.0",
+  "pyJianYingDraft==0.3.*",
+  "keyring>=24",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pyinstaller>=6.10",
+]
+
+[tool.uv]
+# 这是一个脚本式仓库，不需要把自己打成 wheel
+package = false

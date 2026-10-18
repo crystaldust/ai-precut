@@ -10,6 +10,7 @@
 | 层 | 选型 | 版本 | 理由 |
 |---|---|---|---|
 | 语言 | Python | **3.11 – 3.12**（打包固定 3.12） | 生态最稳；3.13+ 的打包/原生扩展支持还不齐 |
+| 环境管理 | **uv** | 0.10+ | 一条命令装 Python、锁依赖、建隔离环境；打包就在该环境内进行 |
 | HTTP 服务 | 标准库 `http.server` | — | 无依赖、可打包；单机单用户，不需要并发框架 |
 | 前端 | 原生 HTML/CSS/JS | — | 无构建步骤，改完刷新即生效；打包体积最小 |
 | 桌面壳 | `pywebview` | ≥5 | 用系统 WebView（macOS WKWebView / Win WebView2），不背 Chromium |
@@ -37,22 +38,49 @@
 
 ---
 
-## 3. 开发依赖
+## 3. 开发环境（uv）
+
+### 3.1 为什么是 uv
+
+- **自带 Python 版本**：`uv python install 3.12` 一条命令（实测 120ms），不依赖 Homebrew；
+- **锁文件**：`uv.lock` 固定 48 个包的确切版本，换机器/换人结果一致；
+- **隔离干净**：`.venv` 由 uv 管理，不进库；
+- **能打包**：PyInstaller 在 uv 的 venv 里正常工作（已实测，见 §3.3）。
+
+### 3.2 常用命令
 
 ```bash
-# 建议用 3.12（与打包目标一致）
-python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+# 首次
+uv python install 3.12          # 装托管 Python（不需要 brew）
+uv sync --group dev             # 按 uv.lock 建 .venv 并装依赖
+
+# 日常
+uv run python aicut.py status 2026-09-01_活动
+uv run python gui/server.py --open
+
+# 改依赖
+uv add <包名>                   # 或直接改 pyproject.toml 后 uv lock
+uv lock --upgrade-package <包名>  # 只升某个包
+
+# 打包（M5）
+uv run pyinstaller packaging/app.spec
 ```
 
-`requirements.txt`（保持最小）
+### 3.3 打包可行性（已实测）
 
-```
-pywebview>=5.0
-pyJianYingDraft==0.3.*
-keyring>=24        # API Key 存 Keychain / Credential Manager
-pytest>=8          # 仅开发
-```
+| 步骤 | 结果 |
+|---|---|
+| `uv python install 3.12` | 3.12.13，120ms |
+| `uv venv --python 3.12` | 创建成功 |
+| `uv pip install pyJianYingDraft pyinstaller pywebview` | 10 秒装完（含 pyobjc 一整套） |
+| `pyinstaller --onefile hello.py` | 10 秒产出 8.6MB 可执行文件，**运行正常** |
+
+结论：**uv 隔离环境完全支持 PyInstaller 打包**，不需要额外处理，也不需要系统 Python。
+
+### 3.4 依赖清单（pyproject.toml）
+
+运行时只 3 个：`pywebview`、`pyJianYingDraft`（锁 0.3.x）、`keyring`；开发期加 `pytest`、`pyinstaller`。
+`ffmpeg` 不走 pip——开发用系统 `ffmpeg`，打包换静态二进制。
 
 > `ffmpeg` 不进 pip：开发时用系统 `ffmpeg`（已在 PATH），打包时替换为静态二进制。
 
@@ -72,9 +100,10 @@ pytest>=8          # 仅开发
 
 ## 5. 版本约束
 
-- 代码必须兼容 **Python 3.11+**（不用 3.12 独有的语法糖，避免 3.11 用户装不上）
+- 代码兼容 **Python 3.11+**（不用 3.12 独有语法糖）
 - 打包固定 **3.12**：`pywebview` / `pyobjc` / PyInstaller 的 wheel 最齐
-- 开发机当前是 3.14：**M1–M4 用 3.14 跑没问题，M5 打包前切 3.12 venv 复验一遍**
+- 开发环境由 `uv.lock` 固定为 3.12.13，**不再依赖 Homebrew 的 3.14**
+- 换机器复现：`git clone && uv sync --group dev` 即可
 
 ---
 
@@ -110,7 +139,23 @@ default-workspace/          ← 代码根目录（git 仓库）
 
 ---
 
-## 8. DeepSeek Harness 插件对照
+## 8. 第三方许可
+
+| 组件 | 许可 | 分发义务 |
+|---|---|---|
+| ffmpeg / ffprobe | LGPL 2.1+（建议选 LGPL 构建） | 附许可文本，提供源码获取方式；**不用 GPL 构建**除非确认接受传染性 |
+| PyInstaller | GPL + 启动器例外 | 打包产物不受 GPL 约束（有例外条款），附声明即可 |
+| pywebview | BSD-3 | 附声明 |
+| pyJianYingDraft | 见其仓库许可 | 附声明 |
+| Python 运行时 | PSF | 附声明 |
+
+随包交付 `THIRD-PARTY-NOTICES.md`，列全上述组件与版本。
+
+## 9. 缺口与待办
+
+技术因素的系统性审查见 **[TECH-GAPS.md](TECH-GAPS.md)**（12 项，4 项需在 M1 前定）。
+
+## 10. DeepSeek Harness 插件对照
 
 本机已装且**够用**的只有 mediakit 系列（`~/.agents/skills`）：
 

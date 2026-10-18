@@ -139,6 +139,18 @@ source ~/.zshrc
 
 然后 `new` 的时候 `--preset 我的风格`，或在 `project.json` 里改 `preset` 字段。
 
+## 八点五、开发环境（维护者）
+
+环境由 **uv** 管理，不要用系统 Python：
+
+```bash
+uv sync --group dev        # 首次 / 拉代码后
+uv run python aicut.py status <项目>
+uv run python gui/server.py --open
+```
+
+`uv.lock` 必须提交；改依赖后跑 `uv lock` 并一起提交。
+
 ## 九、这套东西的边界
 
 - **它不做创意判断**。分镜表谁写？你写，或让 AI 按 `work/brief.md` 写初稿。脚本只负责"按表施工"。

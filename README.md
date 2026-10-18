@@ -21,6 +21,16 @@
 | 成片长什么样 | [projects/2026-09-01_活动/output/v2/preview.mp4](projects/2026-09-01_活动/output/v2/preview.mp4) |
 | 这条片子的剪辑思路 | [projects/2026-09-01_活动/README.md](projects/2026-09-01_活动/README.md) |
 
+## 开发环境（uv）
+
+```bash
+uv python install 3.12     # 一条命令，不依赖 brew
+uv sync --group dev        # 按 uv.lock 建 .venv
+uv run python aicut.py list
+```
+
+打包（M5）：`uv run pyinstaller packaging/app.spec`。详见 [docs/TECH-STACK.md](docs/TECH-STACK.md)。
+
 ## 四条命令
 
 ```bash

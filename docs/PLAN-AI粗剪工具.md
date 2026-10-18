@@ -9,7 +9,7 @@
 
 完整清单见 **[TECH-STACK.md](TECH-STACK.md)**，关键约束三条：
 
-- Python **3.11–3.12**（开发机 3.14 可跑，打包固定 3.12），标准库 `http.server` + 原生 JS，不引框架；
+- Python **3.11–3.12**，用 **uv** 隔离（`uv sync` 即得 3.12 环境，`uv.lock` 锁死 48 个包）；标准库 `http.server` + 原生 JS，不引框架；
 - 媒体处理用 **ffmpeg 静态二进制**，剪映草稿用 **pyJianYingDraft**，桌面壳用 **pywebview**；
 - 外部只依赖两个服务：**MediaKit（ASR/理解）+ DeepSeek API（LLM）**，Key 存 Keychain。
 
@@ -53,9 +53,20 @@
 
 ---
 
-### M1 · 分析内核（5 人天）
+### M1 · 分析内核（6.5 人天，含 1.5 天工程前置）
 
 目标：把"素材"变成"带三档判断的内容单元表"。
+
+**M1.0 工程前置（1.5 天，先做，否则后面返工）**
+
+| # | 任务 | 依据 | 人天 |
+|---|---|---|---|
+| 1.0.1 | 环境：`pyproject.toml` + `uv.lock` + `.venv`（已完成，待写入 README/SOP） | TECH-GAPS #1 | 0.2 |
+| 1.0.2 | 密钥：`keyring` 封装 + 首次向导 + 掩码显示 | TECH-GAPS #3 | 0.5 |
+| 1.0.3 | schema：`project.json` 加 `schema_version` + 迁移函数 | TECH-GAPS #4 | 0.3 |
+| 1.0.4 | 云端 client：超时/重试/幂等/失败落盘 | TECH-GAPS #5 | 0.5 |
+
+**M1.1 分析实现（5 天）**
 
 | # | 任务 | 对应 FR | 人天 | 依赖 |
 |---|---|---|---|---|
@@ -127,6 +138,9 @@
 | 5.1 | 断点续做（阶段状态落盘） | FR-12 | 1 |
 | 5.2 | 日志 + 一键诊断包 | FR-13 | 1 |
 | 5.3 | PyInstaller 打包（macOS .app / Windows .exe）+ 静态 ffmpeg 内嵌 | §8 | 2 |
+| 5.4 | 打包细节：`--collect-all webview`、`sys._MEIPASS` 资源解析、WebView2 检测、子进程组清理 | TECH-GAPS #10 | 1 |
+| 5.5 | 许可与合规：`THIRD-PARTY-NOTICES.md`、选 LGPL 版 ffmpeg | TECH-GAPS #2 | 0.3 |
+| 5.6 | 构建矩阵 + `SHA256SUMS` + `CHANGELOG.md` | TECH-GAPS #11 #12 | 0.7 |
 
 **验收**
 - 在一台"没装过 Python/ffmpeg"的机器上双击可用
@@ -177,6 +191,17 @@
 | 剪映升级改格式 | 中 | 中 | 校验器门禁；锁版本；降级路径 |
 
 ---
+
+## 5.1 技术缺口归位
+
+完整清单见 **[TECH-GAPS.md](TECH-GAPS.md)**，与里程碑的对应关系：
+
+| 缺口 | 归位 |
+|---|---|
+| 环境锁定（uv）、密钥、schema、云端重试 | **M1.0**（先做） |
+| Windows 路径/编码、单实例、磁盘清理 | M4 |
+| 测试与回归样本 | M1 起持续 |
+| 打包细节、许可、构建矩阵、版本回滚 | M5 |
 
 ## 6. 明确延后（不做）
 
