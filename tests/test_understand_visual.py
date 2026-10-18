@@ -57,3 +57,57 @@ def test_run_writes_json(clip, tmp_path):
     uv.run(clip, out, threshold=6)
     data = json.loads(out.read_text(encoding="utf-8"))
     assert data["shots"] and data["cut_count"] >= 2
+
+
+@pytest.fixture(scope="module")
+def mixclip(tmp_path_factory):
+    """灰底 2s + 动态测试图 2s，用于质量指标。"""
+    path = tmp_path_factory.mktemp("q") / "mix.mp4"
+    subprocess.run([
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-f", "lavfi", "-i", "color=gray:duration=2:size=160x90:rate=10",
+        "-f", "lavfi", "-i", "testsrc2=duration=2:size=160x90:rate=10",
+        "-filter_complex", "[0][1]concat=n=2:v=1:a=0[v]", "-map", "[v]",
+        "-pix_fmt", "yuv420p", str(path)], check=True)
+    return path
+
+
+def test_still_has_no_motion(mixclip):
+    samples = uv.sample_frames(mixclip)
+    assert len(samples) >= 3
+    assert samples[0]["motion"] == 0
+    assert samples[0]["blur"] == 0  # 纯色，拉普拉斯方差为 0
+
+
+def test_moving_content_has_motion_and_detail(mixclip):
+    samples = uv.sample_frames(mixclip)
+    moving = [s for s in samples if s["t"] >= 2]
+    assert moving and max(s["motion"] for s in moving) > 1.0
+    assert max(s["blur"] for s in moving) > 100
+
+
+def test_aggregate_by_segment(mixclip):
+    samples = uv.sample_frames(mixclip)
+    segs = [{"id": "S001", "start": 0, "end": 2}, {"id": "S002", "start": 2, "end": 4}]
+    agg = uv.aggregate_by_segment(samples, segs)
+    assert agg["S001"]["motion"] == 0
+    assert agg["S002"]["motion"] > 0
+    assert agg["S002"]["blur"] > agg["S001"]["blur"]
+
+
+def test_quality_writes_json(mixclip, tmp_path):
+    sp = tmp_path / "segments.json"
+    sp.write_text(json.dumps({"segments": [{"id": "S001", "start": 0, "end": 2}]}),
+                  encoding="utf-8")
+    out = tmp_path / "q.json"
+    uv.run_quality(mixclip, sp, out)
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["samples"] >= 3 and "S001" in data["segments"]
+
+
+def test_quality_flags_relative(mixclip):
+    segs = [{"id": "S001", "start": 0, "end": 2}, {"id": "S002", "start": 2, "end": 4}]
+    res = uv.quality(mixclip, segs)
+    assert "soft" in res["segments"]["S001"]["flags"]      # 纯色：无细节
+    assert "still" in res["segments"]["S001"]["flags"]     # 纯色：无运动
+    assert "soft" not in res["segments"]["S002"]["flags"]
