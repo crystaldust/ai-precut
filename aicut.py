@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (classify, cloud, schema, secrets, summarize,
+from pipeline import (classify, cloud, questions, schema, secrets, summarize,
                       understand_audio, understand_text, understand_visual)
 
 ROOT = Path(__file__).resolve().parent
@@ -291,6 +291,20 @@ def cmd_summary(args) -> None:
     ok(("（兜底）" if res["fallback"] else "") + res["summary"])
 
 
+def cmd_questions(args) -> None:
+    """2.4 由内容生成 3–5 个决策问题。"""
+    pdir = project_dir(args.name)
+    work = pdir / "work"
+    summary, scored = work / "content_summary.json", work / "segments_scored.json"
+    if not summary.exists() or not scored.exists():
+        die("先跑 score 与 summary")
+    res = questions.run(summary, scored, work / "questions.json")
+    tag = "（兜底）" if res["fallback"] else ""
+    ok(f"决策问题 {len(res['questions'])} 个{tag}")
+    for q in res["questions"]:
+        info(f"  {q['text']} → " + " / ".join(o["label"] for o in q["options"]))
+
+
 def cmd_brief(args) -> None:
     pdir = project_dir(args.name)
     c = cfg(pdir)
@@ -482,7 +496,7 @@ def cmd_prepare(args) -> None:
     else:
         info("跳过 b 路：未配置 DEEPSEEK_API_KEY")
     cmd_junk(args); cmd_scenes(args); cmd_quality(args)
-    cmd_score(args); cmd_summary(args); cmd_brief(args)
+    cmd_score(args); cmd_summary(args); cmd_questions(args); cmd_brief(args)
     ok("前期处理完成，可以去挑镜头了")
 
 
@@ -579,6 +593,9 @@ def main() -> None:
 
     p = sub.add_parser("quality"); p.add_argument("name")
     p.set_defaults(fn=cmd_quality)
+
+    p = sub.add_parser("questions"); p.add_argument("name")
+    p.set_defaults(fn=cmd_questions)
 
     p = sub.add_parser("summary"); p.add_argument("name")
     p.set_defaults(fn=cmd_summary)

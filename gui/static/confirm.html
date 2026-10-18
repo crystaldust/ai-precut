@@ -1,0 +1,120 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>确认与提问 · 剪辑台</title>
+<style>
+:root{--bg:#16181d;--panel:#1e2128;--panel2:#252932;--line:#2f3440;--text:#e8eaf0;
+--muted:#9aa2b1;--accent:#4a9eff;--ok:#3ddc84;--warn:#f59e0b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFang SC",sans-serif}
+.wrap{max-width:1000px;margin:0 auto;padding:24px 20px 80px}
+h1{margin:0 0 4px;font-size:19px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:16px}
+.card h2{font-size:13px;margin:0 0 10px;color:#b9c6da;letter-spacing:.4px}
+.summary{font-size:14px;line-height:1.8}
+.kp{font-size:12.5px;color:#c8d2e0;margin:4px 0}
+.kp b{color:var(--accent);margin-right:8px;font-variant-numeric:tabular-nums}
+.q{margin:18px 0;padding-bottom:16px;border-bottom:1px solid #23262e}
+.q:last-child{border-bottom:none}
+.q p{margin:0 0 10px;font-size:14px}
+.q .n{color:var(--muted);margin-right:6px}
+.opt{display:block;background:var(--panel2);border:1px solid transparent;border-radius:10px;
+padding:9px 12px;margin:7px 0;cursor:pointer;font-size:13px}
+.opt:hover{border-color:#33405a}
+.opt.sel{border-color:var(--accent);background:#1b2740}
+.opt small{display:block;color:var(--muted);font-size:11px;margin-top:3px}
+.opt input{margin-right:8px}
+.actions{display:flex;gap:10px;align-items:center;margin-top:18px}
+button{font:inherit;cursor:pointer;border:none;border-radius:9px;padding:9px 16px;background:var(--panel2);color:var(--text)}
+button.primary{background:var(--accent);color:#06121f;font-weight:600}
+button:hover{filter:brightness(1.12)}
+.hint{color:var(--muted);font-size:12px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2a3344;
+border:1px solid var(--line);padding:9px 16px;border-radius:20px;opacity:0;transition:.25s}
+.toast.on{opacity:1;bottom:34px}
+</style></head><body>
+<div class="wrap">
+  <h1 id="title">确认与提问</h1>
+  <div class="sub" id="sub">这一步决定后面怎么剪。答完点「保存并确认」。</div>
+
+  <div class="card">
+    <h2>素材讲了什么（AI 的理解）</h2>
+    <div class="summary" id="summary">加载中…</div>
+    <div id="keypoints" style="margin-top:10px"></div>
+    <div class="hint" id="cast" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card">
+    <h2>需要你定的事</h2>
+    <div id="questions">加载中…</div>
+    <div class="actions">
+      <button class="primary" onclick="save(true)">保存并确认</button>
+      <button onclick="save(false)">只保存</button>
+      <span class="hint" id="status"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>下一步</h2>
+    <div class="hint">确认后进入「选段」：系统按你的选择挑镜头、出分镜表与预览片。</div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const PROJECT = new URLSearchParams(location.search).get('project') || '';
+let DATA = null, ANSWERS = {};
+
+async function load(){
+  const r = await fetch('/api/confirm?project='+encodeURIComponent(PROJECT));
+  if(!r.ok){ const e = await r.json().catch(()=>({}));
+    document.getElementById('summary').textContent = e.error || '加载失败'; return; }
+  DATA = await r.json(); ANSWERS = DATA.answers || {};
+  document.getElementById('title').textContent = '确认与提问';
+  document.getElementById('sub').textContent =
+    DATA.fallback ? '（问题由兜底模板生成）这一步决定后面怎么剪。' : '这一步决定后面怎么剪。答完点「保存并确认」。';
+  const s = DATA.summary || {};
+  document.getElementById('summary').textContent = s.summary || '（暂无摘要）';
+  document.getElementById('keypoints').innerHTML = (s.key_points||[]).map(p=>
+    `<div class="kp"><b>${fmt(p.at)}</b>${escapeHtml(p.text)} <span style="color:#6b7c93">· ${escapeHtml(p.why||'')}</span></div>`).join('');
+  document.getElementById('cast').textContent = (s.cast||[]).length
+    ? '主要角色：' + (s.cast||[]).map(c=>`${c.name}（${c.desc}）`).join('、') : '';
+  renderQuestions();
+}
+function fmt(sec){ return String(Math.floor(sec/60)).padStart(2,'0')+':'+(sec%60).toFixed(1).padStart(4,'0'); }
+function escapeHtml(t){ return (t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderQuestions(){
+  const box = document.getElementById('questions');
+  box.innerHTML = (DATA.questions||[]).map((q,qi)=>{
+    const chosen = ANSWERS[q.id];
+    return `<div class="q"><p><span class="n">${qi+1}.</span>${escapeHtml(q.text)}</p>`
+      + q.options.map((o,oi)=>{
+          const sel = q.type==='multi' ? (chosen||[]).includes(o.label) : chosen===o.label;
+          return `<label class="opt ${sel?'sel':''}" onclick="pick('${q.id}','${q.type}','${escapeAttr(o.label)}')">
+            <input type="${q.type==='multi'?'checkbox':'radio'}" ${sel?'checked':''} onclick="event.preventDefault()">
+            ${escapeHtml(o.label)}<small>选了会怎样：${escapeHtml(o.effect||'')}</small></label>`;
+        }).join('')
+      + `</div>`;
+  }).join('');
+}
+function escapeAttr(t){ return String(t||'').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+function pick(qid, type, label){
+  if(type==='multi'){
+    const arr = ANSWERS[qid] || [];
+    const i = arr.indexOf(label);
+    i>=0 ? arr.splice(i,1) : arr.push(label);
+    ANSWERS[qid] = arr;
+  } else {
+    ANSWERS[qid] = label;
+  }
+  renderQuestions();
+}
+async function save(confirmed){
+  const r = await fetch('/api/confirm/answers', {method:'POST',headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({project:PROJECT, answers:ANSWERS, confirmed})});
+  if(r.ok){ toast(confirmed?'已确认，可以进入选段':'已保存'); document.getElementById('status').textContent = confirmed?'已确认':'已保存'; }
+  else toast('保存失败');
+}
+function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('on');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'),1600); }
+load();
+</script></body></html>

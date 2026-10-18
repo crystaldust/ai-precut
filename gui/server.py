@@ -168,6 +168,19 @@ def browse_payload(name: str) -> dict:
     }
 
 
+def confirm_payload(name: str) -> dict:
+    pdir = project_path(name)
+    work = pdir / "work"
+    q = jload(work / "questions.json")
+    summary = jload(work / "content_summary.json") or {}
+    answers = jload(work / "brief_answers.json") or {}
+    if q is None:
+        raise FileNotFoundError("还没有决策问题，先跑 questions")
+    return {"questions": q["questions"], "fallback": q.get("fallback", False),
+            "summary": summary, "answers": answers.get("answers", {}),
+            "confirmed": answers.get("confirmed", False)}
+
+
 # ------------------------------------------------------------------ 任务
 def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
     job_id = uuid.uuid4().hex[:8]
@@ -330,6 +343,13 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, OSError) as exc:
                 return self._json({"error": str(exc)}, 400)
 
+        if p == "/api/confirm":
+            name = q.get("project", [""])[0]
+            try:
+                return self._json(confirm_payload(name))
+            except FileNotFoundError as exc:
+                return self._json({"error": str(exc)}, 404)
+
         if p == "/api/state":
             name = q.get("project", [""])[0]
             try:
@@ -427,6 +447,17 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, FileNotFoundError) as e:
                 return self._json({"error": str(e)}, 400)
             return self._json({"job_id": job_id})
+
+        if p == "/api/confirm/answers":
+            try:
+                pdir = project_path(body.get("project", ""))
+            except ValueError:
+                return self._json({"error": "bad project"}, 400)
+            data = {"answers": body.get("answers") or {},
+                    "confirmed": bool(body.get("confirmed", False)),
+                    "at": __import__("datetime").datetime.now().isoformat(timespec="seconds")}
+            jdump(pdir / "work/brief_answers.json", data)
+            return self._json({"ok": True})
 
         if p in ("/api/browse/level", "/api/browse/must"):
             name = body.get("project", "")
