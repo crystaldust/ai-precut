@@ -117,27 +117,63 @@ class CloudClient:
             raise CloudError(f"未返回 task_id：{str(data)[:200]}")
         return task_id
 
-    def wait_task(self, task_id: str, total_timeout: float) -> dict:
+    def wait_task(self, task_id: str, total_timeout: float,
+                  interval: float = 10.0) -> dict:
+        """单次查询 + 自己轮询。不用 --poll-complete：那是阻塞调用，
+        长音频（几十分钟）会被子进程超时误杀，而且没法显示进度。"""
         deadline = time.monotonic() + total_timeout
+        last_status = ""
         while True:
             data = self._json(self._run(
-                ["shared", "query-task", "--task-id", task_id, "--poll-complete"],
+                ["shared", "query-task", "--task-id", task_id,
+                 "--max-poll-attempts", "0"],
                 self.timeout_poll))
             status = (data.get("status") or "").lower()
+            last_status = status or last_status
             if status in ("completed", "success", "succeeded"):
                 return data
             if status in ("failed", "error", "canceled", "cancelled"):
                 raise CloudError(f"任务失败：{data.get('message') or status}")
             if time.monotonic() > deadline:
-                raise CloudError(f"任务超时：{task_id}")
-            self.sleep(2.0)
+                raise CloudError(
+                    f"任务超时（已等待 {total_timeout / 60:.0f} 分钟，最后状态 {last_status}）："
+                    f"{task_id}。任务没有丢，重跑会接着查这个任务，不会重新提交。")
+            self.sleep(interval)
+
+    # -- 任务续跑：避免超时/崩溃后重复提交、重复付费 --------------
+    @staticmethod
+    def _task_file(workdir: Path) -> Path:
+        return Path(workdir) / "asr_task.json"
+
+    def _load_task(self, workdir: Path) -> str | None:
+        path = self._task_file(workdir)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            tid = data.get("task_id")
+            age = time.time() - float(data.get("at", 0))
+            if tid and age < 86400 * 3:
+                return tid
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+        return None
+
+    def _save_task(self, workdir: Path, task_id: str) -> None:
+        path = self._task_file(workdir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"task_id": task_id, "at": time.time()},
+                                   ensure_ascii=False, indent=2), encoding="utf-8")
 
     def transcribe(self, audio: Path, workdir: Path,
                    *, duration_s: float = 0.0) -> dict:
-        """提交 + 等待，返回字幕 JSON；失败落盘。"""
-        total_timeout = max(600.0, duration_s * 3 + 300)
+        """提交 + 等待，返回字幕 JSON；失败落盘。断点续跑复用已有 task_id。"""
+        total_timeout = max(900.0, duration_s * 3 + 600)
+        task_id = self._load_task(workdir)
         try:
-            task_id = self.submit_asr(audio)
+            if task_id is None:
+                task_id = self.submit_asr(audio)
+                self._save_task(workdir, task_id)
+            else:
+                print(f"[·] 续查上次的子任务：{task_id}")
             data = self.wait_task(task_id, total_timeout)
         except CloudError as exc:
             record_failure(workdir, "asr", str(exc), {"audio": str(audio)})

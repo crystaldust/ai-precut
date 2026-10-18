@@ -84,3 +84,47 @@ def test_missing_cli_raises_helpful_error():
     with pytest.raises(cloud.CloudError) as ei:
         c.submit_asr(Path("/tmp/a.wav"))
     assert "mediakit-cli" in str(ei.value)
+
+
+def test_wait_polls_until_completed():
+    seq = [FakeProc(out=json.dumps({"status": "running"})),
+           FakeProc(out=json.dumps({"status": "running"})),
+           FakeProc(out=json.dumps({"status": "completed", "subtitles": []}))]
+    c, calls = client(seq)
+    data = c.wait_task("t1", total_timeout=60)
+    assert data["status"] == "completed"
+    assert len(calls) == 3
+    assert "--poll-complete" not in calls[0]      # 不能再用阻塞轮询
+    assert "--max-poll-attempts" in calls[0]
+
+
+def test_wait_raises_on_failed_task():
+    c, _ = client([FakeProc(out=json.dumps({"status": "failed", "message": "boom"}))])
+    with pytest.raises(cloud.CloudError) as ei:
+        c.wait_task("t1", total_timeout=10)
+    assert "boom" in str(ei.value)
+
+
+def test_wait_times_out_with_actionable_message(monkeypatch):
+    c, _ = client([FakeProc(out=json.dumps({"status": "running"}))])
+    t = [0.0]
+
+    def fake_mono():
+        t[0] += 30
+        return t[0]
+
+    monkeypatch.setattr(cloud.time, "monotonic", fake_mono)
+    with pytest.raises(cloud.CloudError) as ei:
+        c.wait_task("t1", total_timeout=5, interval=0)
+    msg = str(ei.value)
+    assert "不会重新提交" in msg
+
+
+def test_transcribe_resumes_from_saved_task(tmp_path):
+    (tmp_path / "asr_task.json").write_text(
+        json.dumps({"task_id": "saved-task", "at": 9e9}), encoding="utf-8")
+    c, calls = client([FakeProc(out=json.dumps({"status": "completed"}))])
+    c.transcribe(tmp_path / "a.wav", tmp_path)
+    # 只查了一次，没有重新提交
+    assert len(calls) == 1
+    assert "--task-id" in calls[0] and "saved-task" in calls[0]
