@@ -65,16 +65,17 @@ def _match_topics(values: list[str], names: list[str]) -> list[str]:
     return out
 
 
-def _score(seg: dict) -> float:
+def _score(seg: dict, weights: dict | None = None) -> float:
+    w = weights or {"info": 1.0, "emotion": 1.0}
     s = 0.0
     if seg.get("key_info"):
-        s += 5
+        s += 5 * w.get("info", 1.0)
     if seg.get("info_type") in HARD_TYPES:
-        s += 2
+        s += 2 * w.get("info", 1.0)
     if seg.get("must_keep"):
         s += 10
     signals = seg.get("signals") or {}
-    s += min(2.0, max(0.0, signals.get("rel_db", 0) / 3))
+    s += min(2.0, max(0.0, signals.get("rel_db", 0) / 3)) * w.get("emotion", 1.0)
     dur = float(seg["end"]) - float(seg["start"])
     if 4 <= dur <= 15:
         s += 1
@@ -122,8 +123,45 @@ def _clip(seg: dict, budget: float | None) -> tuple[float, float]:
     return round(start, 2), round(end, 2)
 
 
+def _trim(shots: list[dict], target: float) -> tuple[list[dict], float]:
+    """超时长时整条丢弃低分镜头（保留 hook / 强制 / 必留），不要把镜头剪碎。"""
+    total = sum(x["dur"] for x in shots)
+    while total > target * 1.05:
+        pool = [x for x in shots
+                if not x.get("forced") and x.get("role") != "hook"
+                and "指定" not in (x.get("reason") or "")]
+        if len(pool) <= 1:
+            break
+        worst = min(pool, key=lambda x: (x["score"], -x["dur"]))
+        shots.remove(worst)
+        total -= worst["dur"]
+    return shots, total
+
+
+def _force_lines(segments: list[dict], shots: list[dict], lines: list[str],
+                 target: float, weights: dict | None) -> list[dict]:
+    """剪辑员指定必须保留的原话：无论档位/预算，一律强制进片。"""
+    used = {s["segment_id"] for s in shots}
+    for line in lines:
+        for seg in segments:
+            if seg["id"] in used or line not in (seg.get("text") or ""):
+                continue
+            start, end = _clip(seg, MAX_SHOT)
+            if end - start < MIN_SHOT:
+                continue
+            shots.append({"segment_id": seg["id"], "topic": seg.get("topic") or "未归类",
+                          "start": start, "end": end, "dur": round(end - start, 2),
+                          "sub": (seg.get("text") or "")[:28],
+                          "reason": "剪辑员指定必须保留", "score": _score(seg, weights),
+                          "forced": True})
+            used.add(seg["id"])
+    shots.sort(key=lambda x: x["start"])
+    shots, _ = _trim(shots, target)
+    return shots
+
+
 def select(segments: list[dict], topics: list[dict], rules: dict,
-           target: float) -> dict:
+           target: float, weights: dict | None = None) -> dict:
     names = [t.get("name", "") for t in topics]
     must_topics = set(_match_topics(rules.get("must_topics") or [], names))
     exclude = set(_match_topics(rules.get("exclude_topics") or [], names))
@@ -143,88 +181,82 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
     shots: list[dict] = []
     covered: list[str] = []
     for topic in sorted(by_topic, key=lambda t: -budget_of.get(t, 0)):
-        pool = sorted(by_topic[topic], key=lambda s: (-_score(s), s["start"]))
+        pool = sorted(by_topic[topic], key=lambda s: (-_score(s, weights), s["start"]))
         budget = budget_of.get(topic, 0)
         if budget <= 0:
             continue
         used = 0.0
         picked = []
         for seg in pool:
+            start0, end0 = float(seg["start"]), float(seg["end"])
+            dur = end0 - start0
             remaining = budget - used
-            if picked and remaining < MIN_SHOT and not seg.get("must_keep"):
-                break
-            cap = budget if not picked else max(MIN_SHOT, remaining)
-            start, end = _clip(seg, cap)
+            if not picked:
+                start = start0
+                end = min(end0, start0 + max(MIN_SHOT, budget))
+            else:
+                if remaining < 3.0:      # 剩太少就停，不切碎镜
+                    break
+                if dur > remaining * 1.15 and dur > 4:  # 放不下就跳过
+                    continue
+                start, end = start0, min(end0, start0 + MAX_SHOT)
+            end = min(end, start0 + MAX_SHOT)
             if end - start < MIN_SHOT:
                 continue
             picked.append((start, end, seg))
             used += end - start
         if not picked:
             continue
-        picked.sort(key=lambda x: x[0])  # 话题内按时间
+        picked.sort(key=lambda x: x[0])
         for start, end, seg in picked:
             shots.append({"segment_id": seg["id"], "topic": topic,
                           "start": start, "end": end,
                           "dur": round(end - start, 2),
                           "sub": (seg.get("text") or "")[:28],
                           "reason": seg.get("level_reason") or "",
-                          "score": _score(seg)})
+                          "score": _score(seg, weights)})
         covered.append(topic)
 
     shots.sort(key=lambda x: x["start"])
     total = sum(s["dur"] for s in shots)
 
-    # 超预算：从分数最低、非必留的镜头开始砍
-    if total > target * 1.10:
-        for s in sorted(shots, key=lambda x: x["score"]):
-            if total <= target * 1.05:
-                break
-            if s["dur"] <= MIN_SHOT:
-                continue
-            cut = min(s["dur"] - MIN_SHOT, total - target)
-            s["end"] = round(s["end"] - cut, 2)
-            s["dur"] = round(s["end"] - s["start"], 2)
-            total -= cut
-
-    # 时长不够：用未入选的高分片段补齐（最多补到目标的 97%）
+    # 时长不够：先用未入选片段补齐（不切碎、尊重话题额度）
     used_ids = {x["segment_id"] for x in shots}
     topic_used: dict[str, float] = {}
     for x in shots:
         topic_used[x["topic"]] = topic_used.get(x["topic"], 0.0) + x["dur"]
-    pool = [x for x in segments
-            if x.get("level") == 3 and x["id"] not in used_ids]
-    for seg in sorted(pool, key=lambda x: -_score(x)):
+    pool = [x for x in segments if x.get("level") == 3 and x["id"] not in used_ids]
+    for seg in sorted(pool, key=lambda x: -_score(x, weights)):
         if total >= target * 0.97:
             break
         room = target - total
-        if room < MIN_SHOT:
+        if room < 3.0:
             break
         topic = seg.get("topic") or "未归类"
         if topic in exclude:
             continue
-        cap = max(8.0, budget_of.get(topic, 0)) * 1.1
         dur = float(seg["end"]) - float(seg["start"])
+        cap = max(8.0, budget_of.get(topic, 0)) * 1.1
         if topic_used.get(topic, 0.0) + min(dur, room) > cap:
             continue
-        start, end = _clip(seg, room)
+        if dur > room + 3:
+            continue
+        start, end = float(seg["start"]), min(float(seg["end"]),
+                                              float(seg["start"]) + MAX_SHOT)
         if end - start < MIN_SHOT:
             continue
-        shots.append({"segment_id": seg["id"], "topic": seg.get("topic") or "未归类",
+        shots.append({"segment_id": seg["id"], "topic": topic,
                       "start": start, "end": end, "dur": round(end - start, 2),
                       "sub": (seg.get("text") or "")[:28],
                       "reason": seg.get("level_reason") or "",
-                      "score": _score(seg)})
+                      "score": _score(seg, weights)})
         total += end - start
         topic_used[topic] = topic_used.get(topic, 0.0) + end - start
-    shots.sort(key=lambda x: x["start"])
 
-    # 仍然不够：把已有镜头延伸到该片段自身的结尾，而不是硬塞新镜头
+    # 仍然不够：延伸已有镜头到该片段自己的结尾
     by_id = {x["id"]: x for x in segments}
-    topic_used = {}
-    for shot in shots:
-        topic_used[shot["topic"]] = topic_used.get(shot["topic"], 0.0) + shot["dur"]
-    topic_extra = {t: max(0.0, max(8.0, budget_of.get(t, 0)) * 1.1 - used)
-                   for t, used in topic_used.items()}
+    topic_extra = {t: max(0.0, max(8.0, budget_of.get(t, 0)) * 1.1 - u)
+                   for t, u in topic_used.items()}
     for shot in sorted(shots, key=lambda x: -x["score"]):
         if total >= target * 0.98:
             break
@@ -241,6 +273,11 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
         total += room
         topic_extra[shot["topic"]] = topic_extra.get(shot["topic"], 0.0) - room
 
+    shots.sort(key=lambda x: x["start"])
+
+    shots, total = _trim(shots, target)
+    shots = _force_lines(segments, shots, rules.get("must_lines") or [], target, weights)
+    total = sum(x["dur"] for x in shots)
     shots = _build_hook(shots, segments)
     shots = _fix_ending(shots, segments, rules.get("ending"))
     for i, s in enumerate(shots, 1):
@@ -269,7 +306,7 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
 
 def _build_hook(shots: list[dict], segments: list[dict]) -> list[dict]:
     """把最有信息量的一镜提到最前当开场（冷开场），其余保持时间顺序。"""
-    if len(shots) < 4:
+    if len(shots) < 3:
         return shots
     key_ids = {seg["id"] for seg in segments if seg.get("key_info")}
     cands = [s for s in shots if s["dur"] >= 4
@@ -338,7 +375,8 @@ def markdown(selection: dict) -> str:
 
 def run(scored_path: Path, answers_path: Path, out_dir: Path,
         *, questions_path: Path | None = None, title: str = "",
-        material: str = "") -> dict:
+        material: str = "", weights: dict | None = None,
+        calibration: dict | None = None) -> dict:
     scored = json.loads(Path(scored_path).read_text(encoding="utf-8"))
     answers, stored_rules = {}, None
     if Path(answers_path).exists():
@@ -354,7 +392,11 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
     segments = review.apply(scored["segments"], overrides)
     target = float(scored.get("target") or 175)
     rules = stored_rules or _rules(answers, questions)
-    result = select(segments, scored.get("topics", []), rules, target)
+    lines = [x.strip() for x in str((calibration or {}).get("must_lines") or "")
+             .replace("，", ",").replace("；", ",").split(",") if x.strip()]
+    if lines:
+        rules["must_lines"] = lines
+    result = select(segments, scored.get("topics", []), rules, target, weights)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "selection.json").write_text(

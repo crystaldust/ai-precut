@@ -132,3 +132,36 @@ def test_exclude_label_matches_topic_by_similarity():
     names = ["询问学员籍贯年龄", "讲解合同退费条款"]
     assert select._match_topics(["学员具体籍贯年龄"], names) == ["询问学员籍贯年龄"]
     assert select._match_topics(["完全无关的内容"], names) == []
+
+
+def test_must_lines_force_segment_into_cut(tmp_path):
+    segs = [seg(1, 0, 6, "讲合同", text="普通一句"),
+            seg(2, 10, 6, "聊吃饭", text="找不到工作不白学吗", level=1),
+            seg(3, 20, 6, "讲合同", text="另一句")]
+    scored = {"target": 30, "topics": TOPICS, "segments": segs}
+    sp = tmp_path / "scored.json"
+    sp.write_text(json.dumps(scored, ensure_ascii=False), encoding="utf-8")
+    ap = tmp_path / "answers.json"
+    ap.write_text(json.dumps({"answers": {}}), encoding="utf-8")
+    res = select.run(sp, ap, tmp_path, calibration={"must_lines": "不白学吗"})
+    ids = [s["segment_id"] for s in res["shots"]]
+    assert "S002" in ids  # 档位是废片、话题也未入选，仍被强制保留
+    forced = next(s for s in res["shots"] if s["segment_id"] == "S002")
+    assert forced["reason"] == "剪辑员指定必须保留"
+
+
+def test_over_target_drops_whole_shots_not_shrink():
+    segs = [seg(i, i * 10, 6, "讲合同") for i in range(1, 9)]  # 8 × 6s = 48s
+    topics = [{"name": "讲合同", "budget": 100, "must": True}]
+    res = select.select(segs, topics, {}, 24)
+    assert res["total"] <= 24 * 1.05 + 0.01
+    assert all(abs(s["dur"] - 6.0) < 0.01 for s in res["shots"])  # 没有碎镜
+
+
+def test_forced_shot_survives_trim():
+    segs = [seg(i, i * 10, 6, "讲合同") for i in range(1, 9)]
+    segs.append(seg(20, 200, 6, "聊吃饭", text="不白学吗", level=1))
+    topics = [{"name": "讲合同", "budget": 100, "must": True}]
+    res = select.select(segs, topics, {"must_lines": ["不白学吗"]}, 30)
+    assert any(s.get("forced") for s in res["shots"])
+    assert res["total"] <= 30 * 1.10 + 0.01
