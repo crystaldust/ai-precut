@@ -1,0 +1,17 @@
+# 数据与产物（体积大、可重建）
+projects/
+dist/
+demo/
+*.mp4
+*.wav
+*.MOV
+
+# 生成物
+gui/static/prototype.html
+__pycache__/
+*.pyc
+.venv/
+.aicut/
+
+# 系统
+.DS_Store

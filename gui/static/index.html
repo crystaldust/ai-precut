@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>剪辑台</title>
+<style>
+  :root{
+    --bg:#16181d; --panel:#1e2128; --panel2:#252932; --line:#2f3440;
+    --text:#e8eaf0; --muted:#9aa2b1; --accent:#4a9eff; --ok:#3ddc84; --warn:#ffb020; --danger:#ff5c5c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.6 -apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+       -webkit-font-smoothing:antialiased}
+  button{font:inherit;cursor:pointer;border:none;border-radius:8px;padding:8px 14px;
+         background:var(--panel2);color:var(--text);transition:.15s}
+  button:hover{filter:brightness(1.15)}
+  button.primary{background:var(--accent);color:#06121f;font-weight:600}
+  button.ghost{background:transparent;border:1px solid var(--line)}
+  button.danger{background:transparent;color:var(--danger);border:1px solid #4a2b2b}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  input,textarea,select{font:inherit;background:#12141a;color:var(--text);
+        border:1px solid var(--line);border-radius:6px;padding:6px 8px;outline:none}
+  input:focus,textarea:focus,select:focus{border-color:var(--accent)}
+  #app{display:grid;grid-template-columns:230px 1fr;height:100vh}
+  /* 侧栏 */
+  aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:14px}
+  .brand{font-size:15px;font-weight:700;margin:2px 0 14px;letter-spacing:.5px}
+  .brand small{display:block;font-weight:400;color:var(--muted);font-size:11px;letter-spacing:0}
+  #projects{list-style:none;margin:10px 0 0;padding:0;overflow:auto;flex:1}
+  #projects li{padding:9px 10px;border-radius:8px;cursor:pointer;margin-bottom:4px}
+  #projects li:hover{background:var(--panel2)}
+  #projects li.on{background:#22304a;border:1px solid #2f4b74}
+  #projects li b{display:block;font-size:13px}
+  #projects li span{font-size:11px;color:var(--muted)}
+  /* 主区 */
+  main{display:flex;flex-direction:column;overflow:hidden}
+  header{padding:16px 20px 10px;border-bottom:1px solid var(--line)}
+  header h1{margin:0;font-size:19px}
+  header .meta{color:var(--muted);font-size:12px;margin-top:3px}
+  .steps{display:flex;gap:8px;padding:12px 20px;flex-wrap:wrap}
+  .step{font-size:12px;padding:5px 10px;border-radius:20px;background:var(--panel2);
+        color:var(--muted);border:1px solid transparent}
+  .step.done{color:var(--ok);border-color:#1f4a34;background:#16281f}
+  .actions{display:flex;gap:10px;padding:0 20px 12px;flex-wrap:wrap;align-items:center}
+  .tabs{display:flex;gap:4px;padding:0 20px;border-bottom:1px solid var(--line)}
+  .tab{padding:9px 14px;border-radius:8px 8px 0 0;color:var(--muted);cursor:pointer;font-size:13px}
+  .tab.on{background:var(--panel);color:var(--text);border:1px solid var(--line);border-bottom-color:var(--panel)}
+  .body{flex:1;overflow:auto;padding:16px 20px 170px}
+  .empty{color:var(--muted);text-align:center;padding:60px 20px;line-height:2}
+  /* 预览 */
+  .player{display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:18px;align-items:start}
+  video{width:100%;background:#000;border-radius:10px;max-height:64vh}
+  .timebar{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--muted);font-size:13px}
+  .timebar b{color:var(--accent);font-variant-numeric:tabular-nums;font-size:15px}
+  /* 表 */
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{color:var(--muted);text-align:left;font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line);font-size:12px}
+  td{padding:6px 8px;border-bottom:1px solid #23262e;vertical-align:top}
+  tr.sel td{background:#1b2740}
+  tr:hover td{background:#1a1d24}
+  .tc{font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+  .row-btns{display:flex;gap:4px;opacity:.5}
+  tr:hover .row-btns,tr.sel .row-btns{opacity:1}
+  .row-btns button{padding:2px 7px;font-size:12px;border-radius:5px}
+  .sub-edit{width:100%;min-height:38px;resize:vertical}
+  /* 文稿 */
+  .seg{display:grid;grid-template-columns:86px 1fr auto;gap:10px;padding:9px 6px;
+       border-bottom:1px solid #23262e;align-items:start}
+  .seg:hover{background:#1a1d24}
+  .seg .t{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;padding-top:2px}
+  .seg .x{line-height:1.75;cursor:pointer}
+  .seg .x:hover{color:#fff}
+  /* 版本 */
+  .ver{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  .ver h3{margin:0 0 4px;font-size:15px}
+  .ver .m{color:var(--muted);font-size:12px;margin-bottom:10px}
+  .ver video{max-height:52vh;max-width:340px}
+  /* 弹窗 */
+  .mask{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:20}
+  .mask.on{display:flex}
+  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(760px,92vw);max-height:86vh;display:flex;flex-direction:column}
+  .modal h2{margin:0;padding:16px 20px 8px;font-size:16px}
+  .modal .c{padding:0 20px 16px;overflow:auto}
+  .log{background:#0e1014;border:1px solid var(--line);border-radius:8px;padding:12px;
+       height:320px;overflow:auto;font:12px/1.7 ui-monospace,Menlo,monospace;color:#b9c2d0;white-space:pre-wrap}
+  .field{margin-bottom:12px}
+  .field label{display:block;color:var(--muted);font-size:12px;margin-bottom:4px}
+  .field input,.field select{width:100%}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);
+         background:#2a3344;padding:9px 16px;border-radius:20px;
+         font-size:13px;opacity:0;transition:.3s;pointer-events:none;z-index:30;border:1px solid var(--line)}
+  .toast.on{opacity:1;bottom:32px}
+  .hint{color:var(--muted);font-size:12px}
+  #shotbar{border-top:1px solid var(--line);background:var(--panel);padding:10px 20px;
+           display:flex;gap:16px;align-items:center;flex-shrink:0}
+  #shotbar video{width:150px;max-height:90px;border-radius:8px;background:#000}
+  .sticky{display:none;
+          background:var(--panel);border:1px solid var(--line);border-radius:12px;
+          display:flex;gap:16px;align-items:center}
+  .sticky video{width:200px;max-height:120px;border-radius:8px}
+  .sub-edit{min-height:30px;font-size:12.5px}
+  td{padding:4px 8px}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <div class="brand">剪辑台<small>素材 → 粗剪 → 剪映</small></div>
+    <button class="primary" onclick="openNew()">＋ 新建项目</button>
+    <ul id="projects"></ul>
+  </aside>
+
+  <main>
+    <header>
+      <h1 id="title">还没有选择项目</h1>
+      <div class="meta" id="meta">先在左边新建一个项目，或者选一个已有项目</div>
+    </header>
+    <div class="steps" id="steps"></div>
+    <div class="actions" id="actions" style="display:none">
+      <button class="primary" id="btnPrepare" onclick="startJob('prepare')">① 处理素材</button>
+      <button class="primary" id="btnBuild" onclick="openBuild()">② 生成成片</button>
+      <button class="ghost" onclick="openFolder()">打开文件夹</button>
+      <button class="ghost" onclick="openJianying()">打开剪映</button>
+    </div>
+    <div class="tabs" id="tabs" style="display:none">
+      <div class="tab on" data-tab="preview">预览</div>
+      <div class="tab" data-tab="script">文稿</div>
+      <div class="tab" data-tab="shots">分镜表 <span id="shotCount"></span></div>
+      <div class="tab" data-tab="junk">废片</div>
+      <div class="tab" data-tab="versions">版本</div>
+    </div>
+    <div id="shotbar" style="display:none"></div>
+    <div class="body" id="body">
+      <div class="empty">选择或新建一个项目开始</div>
+    </div>
+  </main>
+</div>
+
+<div class="mask" id="mask">
+  <div class="modal" id="modal">
+    <h2 id="modalTitle">处理中</h2>
+    <div class="c">
+      <div id="modalBody"></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const state = { project:null, data:null, tab:'preview', sel:null, shots:[], dirty:false };
+let proxyVideo = null;
+
+/* ---------------- 基础 ---------------- */
+function toast(msg, ms=1800){
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('on'), ms);
+}
+async function api(path, opt){
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(j.error || ('请求失败 '+r.status));
+  return j;
+}
+function fmt(sec){
+  sec = Math.max(0, sec||0);
+  const m = Math.floor(sec/60), s = sec%60;
+  return `${String(m).padStart(2,'0')}:${s.toFixed(1).padStart(4,'0')}`;
+}
+function fmtLong(sec){
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.floor(sec%60);
+  return h? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+          : `${m}:${String(s).padStart(2,'0')}`;
+}
+
+/* ---------------- 项目 ---------------- */
+async function loadProjects(){
+  const {projects} = await api('/api/projects');
+  const ul = $('#projects'); ul.innerHTML='';
+  if(!projects.length){ ul.innerHTML = '<li><span>还没有项目</span></li>'; return; }
+  projects.forEach(p=>{
+    const li = document.createElement('li');
+    li.innerHTML = `<b>${p.title||p.name}</b><span>${p.versions.length? '已出片 '+p.versions.join(' / ') : '未出片'}</span>`;
+    li.onclick = ()=>selectProject(p.name);
+    if(p.name===state.project) li.classList.add('on');
+    ul.appendChild(li);
+  });
+}
+
+async function selectProject(name){
+  state.project = name; state.sel = null;
+  await refresh();
+  document.querySelectorAll('#projects li').forEach(li=>li.classList.remove('on'));
+  [...document.querySelectorAll('#projects li')].forEach(li=>{
+    if(li.querySelector('b')?.textContent === (state.data?.project?.title||name)) li.classList.add('on');
+  });
+}
+
+async function refresh(){
+  if(!state.project) return;
+  state.data = await api('/api/state?project='+encodeURIComponent(state.project));
+  const d = state.data, c = d.project;
+  $('#title').textContent = c.title || c.name;
+  const md = d.material_duration ? `素材 ${fmtLong(d.material_duration)} · ` : '';
+  $('#meta').textContent = `${md}预设 ${c.preset} · 平台 ${c.platform} · 目标 ${c.target_duration||'—'} 秒`;
+  $('#steps').innerHTML = d.stages.map(s=>`<div class="step ${s.done?'done':''}">${s.done?'✓':'○'} ${s.label}</div>`).join('');
+  $('#actions').style.display='flex';
+  $('#tabs').style.display='flex';
+  state.shots = (d.shots||[]).map(s=>({...s}));
+  $('#shotCount').textContent = state.shots.length? `(${state.shots.length})` : '';
+  $('#btnPrepare').textContent = d.stages.filter(s=>s.done).length>=4 ? '① 重新处理（会跳过已完成）' : '① 处理素材';
+  renderTab();
+}
+
+/* ---------------- Tab ---------------- */
+function switchTab(name){
+  state.tab = name;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x.dataset.tab===name));
+  renderTab();
+}
+document.querySelectorAll('.tab').forEach(t=>{ t.onclick = ()=>switchTab(t.dataset.tab); });
+
+function renderShotBar(){
+  const bar = $('#shotbar');
+  if(state.tab!=='shots' || !state.shots.length){ bar.style.display='none'; bar.innerHTML=''; return; }
+  bar.style.display='flex';
+  const src = `/media/${encodeURIComponent(state.project)}/proxy`;
+  bar.innerHTML = `
+    <video id="pv2" src="${src}" preload="metadata" controls></video>
+    <div>
+      <div class="timebar" style="margin:0 0 8px">当前位置 <b id="cur2">00:00.0</b></div>
+      <div style="display:flex;gap:8px">
+        <button class="ghost" onclick="mark('in')">设为入点</button>
+        <button class="ghost" onclick="mark('out')">设为出点</button>
+        <button class="ghost" onclick="playSel()">试听这一镜</button>
+      </div>
+    </div>
+    <span class="hint" style="margin-left:auto">选中一行 → 定位 → 设为入/出点。改动自动保存。</span>`;
+}
+
+function renderTab(){
+  const b = $('#body');
+  if(!state.data){ return; }
+  if(state.tab==='preview') b.innerHTML = viewPreview();
+  if(state.tab==='script') b.innerHTML = viewScript();
+  if(state.tab==='shots') b.innerHTML = viewShots();
+  if(state.tab==='junk') b.innerHTML = viewJunk();
+  if(state.tab==='versions') b.innerHTML = viewVersions();
+  afterRender();
+  renderShotBar();
+}
+
+/* ---------------- 预览 ---------------- */
+function viewPreview(){
+  const d = state.data;
+  if(!d.has_proxy) return `<div class="empty">还没处理素材<br><br>
+    <button class="primary" onclick="startJob('prepare')">开始处理</button><br>
+    <span class="hint">大约 5–15 分钟，取决于素材时长</span></div>`;
+  const src = `/media/${encodeURIComponent(state.project)}/proxy`;
+  return `<div class="player">
+    <div>
+      <video id="pv" src="${src}" controls preload="metadata"></video>
+      <div class="timebar">当前位置 <b id="cur">00:00.0</b>
+        <button class="ghost" onclick="mark('in')">设为入点</button>
+        <button class="ghost" onclick="mark('out')">设为出点</button>
+      </div>
+      <div class="hint" style="margin-top:8px">在「分镜表」里选中一行，再用这两个按钮把当前位置填进该镜头。</div>
+    </div>
+    <div>
+      <h3 style="margin-top:0">怎么用</h3>
+      <ol style="color:var(--muted);padding-left:18px;line-height:2">
+        <li>点「① 处理素材」：抽音轨、转写、找废片。</li>
+        <li>去「文稿」里挑要的句子，点 <b>＋</b> 加进分镜表。</li>
+        <li>去「分镜表」里排序、改出入点、改字幕。</li>
+        <li>点「② 生成成片」，等它跑完，去剪映里精修。</li>
+      </ol>
+      <p class="hint">这段代理视频是 540p 的，只用来挑素材和定位，不影响成片画质。</p>
+    </div>
+  </div>`;
+}
+
+function afterRender(){
+  ['#pv','#pv2'].forEach(sel=>{
+    const v = $(sel);
+    if(!v) return;
+    v.addEventListener('timeupdate', ()=>{
+      const c = sel==='#pv' ? $('#cur') : $('#cur2');
+      if(c) c.textContent = fmt(v.currentTime);
+    });
+  });
+}
+function activeVideo(){ return $('#pv2') || $('#pv') || null; }
+function playSel(){
+  const v = activeVideo(); if(!v || state.sel==null) return;
+  const s = state.shots[state.sel];
+  v.currentTime = s.in; v.play();
+  clearTimeout(playSel._t);
+  playSel._t = setInterval(()=>{ if(v.currentTime >= s.out){ v.pause(); clearInterval(playSel._t); } }, 120);
+}
+
+function currentTime(){ const v=activeVideo(); return v ? v.currentTime : 0; }
+function mark(which){
+  if(state.sel==null){ toast('先在分镜表里选中一行'); return; }
+  const s = state.shots[state.sel];
+  if(which==='in'){ s.in = +currentTime().toFixed(2); if(s.out <= s.in) s.out = +(s.in+3).toFixed(2); }
+  else { s.out = +currentTime().toFixed(2); if(s.out <= s.in) s.in = Math.max(0, s.out-3); }
+  saveShots().then(()=>{ toast(which==='in'?'已设为入点':'已设为出点'); });
+}
+
+/* ---------------- 文稿 ---------------- */
+function viewScript(){
+  const segs = state.data.segments || [];
+  if(!segs.length) return `<div class="empty">还没有文稿<br><br>
+    <button class="primary" onclick="startJob('prepare')">开始处理</button></div>`;
+  return `<p class="hint">点句子可以跳到视频对应位置；点 <b>＋</b> 把它加进分镜表。</p>` +
+    segs.map((s,i)=>`<div class="seg">
+      <div class="t">${fmt(s.start)}</div>
+      <div class="x" onclick="seek(${s.start})">${escapeHtml(s.text)}</div>
+      <div><button class="ghost" title="加入分镜表" onclick="addFromSeg(${i})">＋</button></div>
+    </div>`).join('');
+}
+function escapeHtml(t){ return (t||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function seek(t){
+  if(state.tab!=='preview'){ state.tab='preview'; document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x.dataset.tab==='preview')); renderTab(); }
+  setTimeout(()=>{ const v=$('#pv')||activeVideo(); if(v){ v.currentTime=t; v.play(); } }, 60);
+}
+function addFromSeg(i){
+  const s = state.data.segments[i];
+  state.shots.push({id:'', in:+s.start.toFixed(2), out:+s.end.toFixed(2), sub:s.text, note:''});
+  renumber();
+  saveShots().then(()=>{ toast('已加入分镜表'); state.tab='shots';
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x.dataset.tab==='shots'));
+    renderTab(); });
+}
+
+/* ---------------- 分镜表 ---------------- */
+function viewShots(){
+  if(!state.shots.length) return `<div class="empty">分镜表还是空的<br><br>
+    <button class="primary" onclick="goScript()">去文稿里挑句子</button>
+    <button class="ghost" onclick="addBlank()">加一个空镜（用当前位置）</button></div>`;
+  const rows = state.shots.map((s,i)=>`
+    <tr class="${state.sel===i?'sel':''}" onclick="pick(${i})">
+      <td class="tc">${String(i+1).padStart(2,'0')}</td>
+      <td class="tc">${fmt(s.in)}</td>
+      <td class="tc">${fmt(s.out)}</td>
+      <td class="tc">${(s.out-s.in).toFixed(1)}s</td>
+      <td><textarea class="sub-edit" oninput="edit(${i},'sub',this.value)" placeholder="字幕（留空=无字幕空镜）">${escapeHtml(s.sub)}</textarea></td>
+      <td class="row-btns">
+        <button title="上移" onclick="event.stopPropagation();move(${i},-1)">↑</button>
+        <button title="下移" onclick="event.stopPropagation();move(${i},1)">↓</button>
+        <button title="复制" onclick="event.stopPropagation();dup(${i})">⧉</button>
+        <button class="danger" title="删除" onclick="event.stopPropagation();del(${i})">✕</button>
+      </td>
+    </tr>`).join('');
+  const total = state.shots.reduce((a,s)=>a+(s.out-s.in),0);
+  return `<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+      <button class="primary" onclick="startJob('build')">生成成片</button>
+      <button class="ghost" onclick="addBlank()">＋ 空镜（当前位置）</button>
+      <button class="ghost" onclick="sortShots()">按时间排序</button>
+      <span class="hint">共 ${state.shots.length} 镜 · 总时长 ${fmt(total)}</span>
+    </div>
+    <table><thead><tr><th>#</th><th>入点</th><th>出点</th><th>时长</th><th>字幕</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <p class="hint">选中一行 → 用上面的播放器定位 → 点「设为入点/出点」。改动会自动保存。</p>`;
+}
+function goScript(){ state.tab='script'; document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x.dataset.tab==='script')); renderTab(); }
+function pick(i){ state.sel = i; renderTab(); if(state.shots[i]) seekNoSwitch(state.shots[i].in); }
+function seekNoSwitch(t){ ['#pv','#pv2'].forEach(s=>{ const v=$(s); if(v) v.currentTime = t; }); }
+let saveTimer=null;
+function edit(i, key, val){ state.shots[i][key]=val; scheduleSave(); }
+function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(()=>saveShots(true), 700); }
+async function saveShots(silent){
+  renumber();
+  try{
+    await api('/api/shots?project='+encodeURIComponent(state.project), {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({shots: state.shots})
+    });
+    if(silent!==true && silent!==undefined) return true;
+    const c=$('#shotCount'); if(c) c.textContent = `(${state.shots.length})`;
+    if(state.tab==='shots'){ /* 不重绘，避免输入框失焦 */ }
+    return true;
+  }catch(e){ toast('保存失败：'+e.message); return false; }
+}
+function renumber(){ state.shots.forEach((s,i)=>{ if(!s.id) s.id = 'sh'+String(i+1).padStart(2,'0'); }); }
+function move(i,d){
+  const j=i+d; if(j<0||j>=state.shots.length) return;
+  [state.shots[i],state.shots[j]]=[state.shots[j],state.shots[i]];
+  state.sel=j; saveShots(true); renderTab();
+}
+function dup(i){
+  const s={...state.shots[i], id:''};
+  state.shots.splice(i+1,0,s); state.sel=i+1; saveShots(true); renderTab();
+}
+function del(i){
+  state.shots.splice(i,1); state.sel=null; saveShots(true); renderTab(); toast('已删除');
+}
+function addBlank(){
+  const t = +currentTime().toFixed(2);
+  state.shots.push({id:'', in:t, out:+(t+3).toFixed(2), sub:'', note:''});
+  state.sel = state.shots.length-1;
+  saveShots(true).then(()=>{ toast('已加一个 3 秒空镜'); renderTab(); });
+}
+function sortShots(){
+  state.shots.sort((a,b)=>a.in-b.in); state.sel=null; saveShots(true); renderTab(); toast('已按时间排序');
+}
+
+/* ---------------- 废片 ---------------- */
+function viewJunk(){
+  const items = state.data.junk || [];
+  if(!items.length) return `<div class="empty">没有检测到技术废片<br><span class="hint">这类"一镜到底"素材，废片主要在内容层，去文稿里判断更准</span></div>`;
+  return `<table><thead><tr><th>起</th><th>止</th><th>时长</th><th>原因</th><th>建议</th></tr></thead>
+    <tbody>${items.map(j=>`<tr>
+      <td class="tc">${j.start_tc}</td><td class="tc">${j.end_tc}</td>
+      <td class="tc">${j.duration}s</td><td>${escapeHtml(j.reason)}</td>
+      <td>${j.suggest}</td></tr>`).join('')}</tbody></table>`;
+}
+
+/* ---------------- 版本 ---------------- */
+function viewVersions(){
+  const vs = state.data.versions || [];
+  if(!vs.length) return `<div class="empty">还没有出过片<br><br>
+    <button class="primary" onclick="startJob('build')">生成第一版</button></div>`;
+  return vs.map(v=>`<div class="ver">
+    <h3>${v.name} <span class="hint">${v.shots} 镜 · ${fmtLong(v.duration)} · ${v.mtime}</span></h3>
+    <div class="m">剪映草稿名：<b>${v.draft}</b></div>
+    ${v.preview? `<video src="/media/${encodeURIComponent(state.project)}/preview/${v.name}" controls preload="metadata"></video>` : '<p class="hint">这一版只有工程，没有预览片</p>'}
+  </div>`).join('');
+}
+
+/* ---------------- 任务 ---------------- */
+function startJob(task, extra){
+  if(!state.project){ toast('先选项目'); return; }
+  if(task==='build' && !state.shots.length){ toast('分镜表是空的，先生成镜头'); return; }
+  const body = {project: state.project, task, ...(extra||{})};
+  showModal(task==='prepare'?'正在处理素材':'正在生成成片', '<div class="log" id="log">准备中…</div>');
+  api('/api/job', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+    .then(({job_id})=> pollJob(job_id, task))
+    .catch(e=>{ logLine('[错误] '+e.message); });
+}
+function pollJob(id, task){
+  const tick = async ()=>{
+    try{
+      const j = await api('/api/job/'+id);
+      const el = $('#log');
+      if(el) el.textContent = j.log.join('\n') || '…';
+      el && (el.scrollTop = el.scrollHeight);
+      if(j.status==='running'){ setTimeout(tick, 900); return; }
+      if(j.status==='done'){
+        logLine('\n[完成]');
+        setTimeout(async ()=>{ closeModal(); await refresh(); toast(task==='build'?'新版本已生成':'处理完成'); }, 700);
+      } else {
+        logLine('\n[失败] 看上面的报错；也可以把这段日志发给开发者');
+      }
+    }catch(e){ logLine('[连接中断] '+e.message); }
+  };
+  setTimeout(tick, 500);
+}
+function logLine(t){ const el=$('#log'); if(el){ el.textContent += (el.textContent?'\n':'')+t; el.scrollTop=el.scrollHeight; } }
+function showModal(title, html){
+  $('#modalTitle').textContent = title;
+  $('#modalBody').innerHTML = html;
+  $('#mask').classList.add('on');
+}
+function closeModal(){ $('#mask').classList.remove('on'); }
+
+/* ---------------- 生成成片弹窗 ---------------- */
+function openBuild(){
+  showModal('生成成片', `
+    <p class="hint">会按分镜表切镜头、渲染预览，并生成剪映工程（版本号自动 +1，不会覆盖旧版）。</p>
+    <label style="display:flex;gap:8px;align-items:center;margin:10px 0">
+      <input type="checkbox" id="noDraft"> 只出预览（剪映正开着的时候选这个）
+    </label>
+    <button class="primary" onclick="doBuild()">开始</button>
+    <button class="ghost" onclick="closeModal()">取消</button>`);
+}
+function doBuild(){
+  const noDraft = $('#noDraft')?.checked;
+  closeModal();
+  startJob('build', {no_draft: noDraft});
+}
+
+/* ---------------- 新建项目 ---------------- */
+async function openNew(){
+  const {presets} = await api('/api/presets');
+  showModal('新建项目', `
+    <div class="field"><label>素材文件</label>
+      <div style="display:flex;gap:8px">
+        <input id="npPath" placeholder="点右边选择…" readonly>
+        <button class="ghost" onclick="pickFile()">选择</button>
+      </div></div>
+    <div class="field"><label>项目名（文件夹名，别用斜杠）</label><input id="npName" placeholder="例如 2026-09-15_探店"></div>
+    <div class="field"><label>片名（会显示在剪映草稿上）</label><input id="npTitle" placeholder="例如 九月一号"></div>
+    <div class="field"><label>风格预设</label>
+      <select id="npPreset">${presets.map(p=>`<option value="${p.key}">${p.name}（${p.duration}s·${p.platform}）</option>`).join('')}</select>
+    </div>
+    <button class="primary" onclick="createProject()">创建</button>
+    <button class="ghost" onclick="closeModal()">取消</button>`);
+}
+async function pickFile(){
+  const {path} = await api('/api/pick', {method:'POST'});
+  if(path){ $('#npPath').value = path; if(!$('#npName').value){
+    $('#npName').value = path.split('/').pop().replace(/\.[^.]+$/,'');
+    $('#npTitle').value = $('#npName').value; } }
+}
+async function createProject(){
+  const material=$('#npPath').value, name=$('#npName').value.trim(), title=$('#npTitle').value.trim();
+  const preset=$('#npPreset').value;
+  if(!material) return toast('先选素材');
+  if(!name) return toast('填个项目名');
+  try{
+    await api('/api/new', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({material, name, title, preset})});
+    closeModal(); await loadProjects().then(()=>{
+  const h = new URLSearchParams(location.hash.slice(1));
+  const p = h.get('project');
+  if(p) selectProject(p).then(()=>{ const t=h.get('tab'); if(t) switchTab(t); });
+}); await selectProject(name);
+    toast('项目已创建');
+  }catch(e){ toast(e.message); }
+}
+
+/* ---------------- 其它 ---------------- */
+async function openFolder(){ await api('/api/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project:state.project, target:'project'})}); }
+async function openJianying(){ await api('/api/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project:state.project, target:'jianying'})}); }
+
+loadProjects().then(()=>{
+  const h = new URLSearchParams(location.hash.slice(1));
+  const p = h.get('project');
+  if(p) selectProject(p).then(()=>{ const t=h.get('tab'); if(t) switchTab(t); });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# 运行时依赖（保持最小）
+pywebview>=5.0
+pyJianYingDraft==0.3.*
+keyring>=24
+
+# 开发/测试
+pytest>=8

@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="1000" viewBox="0 0 1520 1000">
+<defs><marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3b6ea5"/></marker></defs>
+<rect width="1520" height="1000" fill="#ffffff"/>
+<text x="40" y="46" font-size="25" font-weight="700" fill="#12243a" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">AI 粗剪工具 · 模块与调用关系</text>
+<text x="40" y="74" font-size="13" fill="#6b7c93" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">蓝＝本地执行　橙＝云端调用　灰＝第三方软件　绿＝产物；图上每个云端框都对应代码里真实的一条调用</text>
+<rect x="24" y="96" width="1472" height="96" rx="14" fill="#fbfcff" stroke="#d7dfee" stroke-width="1.2" stroke-dasharray="8 6"/>
+<text x="44" y="120" font-size="13" font-weight="600" fill="#4a5a7a" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">① 界面层（本地）</text>
+<rect x="56" y="130" width="110" height="52" rx="10" fill="#eef0f3" stroke="#b9c0cb" stroke-width="1.6"/>
+<text x="72" y="154" font-size="15" font-weight="600" fill="#3b424e" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">剪辑师</text>
+<text x="72" y="174" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">选片 / 改表 / 出片</text>
+<rect x="196" y="130" width="260" height="52" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="212" y="154" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">剪辑台界面</text>
+<text x="212" y="174" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">pywebview 窗口 · HTML/JS</text>
+<rect x="486" y="130" width="260" height="52" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="502" y="154" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">本地服务</text>
+<text x="502" y="174" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">gui/server.py · 127.0.0.1</text>
+<line x1="166" y1="156" x2="194" y2="156" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<line x1="456" y1="156" x2="484" y2="156" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<text x="790" y="152" font-size="12" fill="#4c8a6a" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">素材永远不进浏览器：界面只拿到文件路径</text>
+<text x="790" y="172" font-size="12" fill="#6b7c93" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">本机 HTTP，不监听外网，不经过任何服务器</text>
+<path d="M 516,182 L 516,206 L 330,206 L 330,266" fill="none" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<text x="430" y="196" font-size="11" fill="#6b7c93" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">调用 aicut.py</text>
+<rect x="24" y="220" width="1472" height="570" rx="14" fill="#fbfcff" stroke="#d7dfee" stroke-width="1.2" stroke-dasharray="8 6"/>
+<text x="44" y="244" font-size="13" font-weight="600" fill="#4a5a7a" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">② 本地处理管线（aicut.py 编排，全部在本机执行）</text>
+<rect x="60" y="264" width="380" height="56" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="76" y="288" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">① 素材入库</text>
+<text x="76" y="308" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">ffprobe · 生成 materials.json</text>
+<rect x="60" y="328" width="380" height="56" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="76" y="352" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">② 抽音轨</text>
+<text x="76" y="372" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">ffmpeg · 16k 单声道 wav（素材不上传）</text>
+<rect x="60" y="392" width="380" height="56" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="76" y="416" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">③ 转写文稿</text>
+<text x="76" y="436" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">云端返回 · transcript / segments</text>
+<rect x="60" y="456" width="380" height="56" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="76" y="480" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">④ 废片检测</text>
+<text x="76" y="500" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">ffmpeg 滤镜 + 规则 · junk_report.csv</text>
+<rect x="60" y="520" width="380" height="56" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="76" y="544" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">⑤ 分镜编排</text>
+<text x="76" y="564" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">人 / AI 写 shots.json · 脚本校验</text>
+<rect x="60" y="584" width="380" height="56" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="76" y="608" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">⑥ 切片</text>
+<text x="76" y="628" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">ffmpeg 按入出点切 · clips/（带缓存）</text>
+<rect x="60" y="648" width="380" height="56" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="76" y="672" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">⑦ 预览渲染</text>
+<text x="76" y="692" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">ffmpeg 拼接 + 字幕 · preview.mp4</text>
+<rect x="60" y="712" width="380" height="56" rx="10" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.6"/>
+<text x="76" y="736" font-size="15" font-weight="600" fill="#16324f" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">⑧ 剪映草稿</text>
+<text x="76" y="756" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">pyJianYingDraft · 写入草稿库</text>
+<line x1="250" y1="320" x2="250" y2="326" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<line x1="250" y1="384" x2="250" y2="390" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<line x1="250" y1="448" x2="250" y2="454" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<line x1="250" y1="512" x2="250" y2="518" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<line x1="250" y1="576" x2="250" y2="582" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<line x1="250" y1="640" x2="250" y2="646" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<line x1="250" y1="704" x2="250" y2="710" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<rect x="1020" y="220" width="476" height="570" rx="14" fill="#fffaf3" stroke="#ead6b8" stroke-width="1.2" stroke-dasharray="8 6"/>
+<text x="1040" y="244" font-size="13" font-weight="600" fill="#8a6a3a" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">③ 云端 AI（火山引擎 MediaKit · 按量计费）</text>
+<rect x="1050" y="316" width="416" height="80" rx="10" fill="#fff3e2" stroke="#e8a33d" stroke-width="1.6"/>
+<text x="1066" y="340" font-size="15" font-weight="600" fill="#7a4a12" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">ASR 语音转字幕（当前唯一启用的云端调用）</text>
+<text x="1066" y="360" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">上传 16k 单声道 wav · 返回带时间戳字幕 JSON</text>
+<line x1="440" y1="356" x2="1046" y2="356" stroke="#e08a2e" stroke-width="1.8" marker-end="url(#arw)"/>
+<text x="760" y="348" font-size="11" fill="#6b7c93" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">上传音轨（不含画面）</text>
+<path d="M 1250,396 L 1250,420 L 442,420" fill="none" stroke="#e08a2e" stroke-width="1.8" marker-end="url(#arw)"/>
+<text x="900" y="414" font-size="11" fill="#6b7c93" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">返回字幕 JSON（几 KB）</text>
+<rect x="1050" y="452" width="416" height="150" rx="10" fill="#fff3e2" stroke="#e8a33d" stroke-width="1.6" stroke-dasharray="6 5"/>
+<text x="1066" y="476" font-size="15" font-weight="600" fill="#7a4a12" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">可选云端能力（已接入命令行，当前未启用）</text>
+<text x="1066" y="490" font-size="12" fill="#7a4a12" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">· 语义切片 semantic-segment（改用本地句群切分）</text>
+<text x="1066" y="512" font-size="12" fill="#7a4a12" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">· 视频理解 video-understand --scene editing</text>
+<text x="1066" y="534" font-size="12" fill="#7a4a12" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">· OCR video-ocr / 高光拆条 / 画质增强</text>
+<line x1="440" y1="484" x2="1046" y2="484" stroke="#e08a2e" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#arw)"/>
+<text x="760" y="476" font-size="11" fill="#6b7c93" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">按需启用</text>
+<text x="1050" y="632" font-size="11" fill="#8a6a3a" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">原则：只有"必须靠大模型"的事才上云；能本地算的（切、拼、检）一律不上传</text>
+<rect x="1050" y="650" width="416" height="96" rx="10" fill="#fff3e2" stroke="#e8a33d" stroke-width="1.6" stroke-dasharray="6 5"/>
+<text x="1066" y="674" font-size="15" font-weight="600" fill="#7a4a12" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">大模型（LLM）· 未接入</text>
+<text x="1066" y="694" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">用于把一句话想法写成分镜脚本</text>
+<text x="1066" y="716" font-size="11" fill="#8a6a3a" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">当前由 AI 助手在会话中完成，产出仍是本地文件 shots.json</text>
+<rect x="24" y="806" width="1472" height="104" rx="14" fill="#fbfcff" stroke="#d7dfee" stroke-width="1.2" stroke-dasharray="8 6"/>
+<text x="44" y="830" font-size="13" font-weight="600" fill="#4a5a7a" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">④ 交付物</text>
+<rect x="60" y="832" width="220" height="56" rx="10" fill="#eef0f3" stroke="#b9c0cb" stroke-width="1.6"/>
+<text x="76" y="856" font-size="15" font-weight="600" fill="#3b424e" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">剪映专业版</text>
+<text x="76" y="876" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">调色 / 音效 / 转场 / 字幕样式</text>
+<rect x="320" y="832" width="160" height="56" rx="10" fill="#e9f8ef" stroke="#4caf7d" stroke-width="1.6"/>
+<text x="336" y="856" font-size="15" font-weight="600" fill="#1f5137" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">成片</text>
+<text x="336" y="876" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">导出发布</text>
+<line x1="250" y1="768" x2="250" y2="830" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<text x="346" y="796" font-size="11" fill="#6b7c93" text-anchor="middle" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">写入本机草稿库</text>
+<line x1="280" y1="860" x2="318" y2="860" stroke="#3b6ea5" stroke-width="1.8" marker-end="url(#arw)"/>
+<text x="520" y="854" font-size="12" fill="#3b556e" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">中间产物：materials.json · asr.wav · transcript.json · segments.json</text>
+<text x="520" y="874" font-size="12" fill="#3b556e" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">　　　　　junk_report.csv · shots.json · clips/ · preview.mp4 · 剪映草稿</text>
+<rect x="40" y="950" width="16" height="12" rx="3" fill="#eaf2ff" stroke="#7aa7e0" stroke-width="1.4"/>
+<text x="64" y="961" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">本地执行（ffmpeg / Python）</text>
+<rect x="338" y="950" width="16" height="12" rx="3" fill="#fff3e2" stroke="#e8a33d" stroke-width="1.4"/>
+<text x="362" y="961" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">云端调用（MediaKit）</text>
+<rect x="552" y="950" width="16" height="12" rx="3" fill="#eef0f3" stroke="#b9c0cb" stroke-width="1.4"/>
+<text x="576" y="961" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">第三方软件</text>
+<rect x="658" y="950" width="16" height="12" rx="3" fill="#e9f8ef" stroke="#4caf7d" stroke-width="1.4"/>
+<text x="682" y="961" font-size="12" fill="#5b6b82" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">产物文件</text>
+<text x="1480" y="961" text-anchor="end" font-size="11" fill="#8a97a8" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif">虚线 = 可选 / 未启用　｜　素材原片全程不出本机</text>
+</svg>
