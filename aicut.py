@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (cloud, schema, secrets, understand_audio,
+from pipeline import (classify, cloud, schema, secrets, understand_audio,
                       understand_text, understand_visual)
 
 ROOT = Path(__file__).resolve().parent
@@ -213,6 +213,19 @@ def cmd_text(args) -> None:
     if res["failures"]:
         msg += f" · {len(res['failures'])} 批失败（详见 segments_text.json）"
     ok(msg)
+
+
+def cmd_score(args) -> None:
+    """合成三档：废片 / 待定 / 可用。"""
+    pdir = project_dir(args.name)
+    work = pdir / "work"
+    text = work / "segments_text.json"
+    if not text.exists():
+        die("先跑 text（需要 work/segments_text.json）")
+    res = classify.run(text, work / "segments_audio.json",
+                       work / "segments_scored.json")
+    s = res["summary"]
+    ok(f"废片 {s['waste']} · 待定 {s['pending']} · 可用 {s['usable']}")
 
 
 def cmd_junk(args) -> None:
@@ -434,7 +447,7 @@ def cmd_prepare(args) -> None:
         cmd_text(args)
     else:
         info("跳过 b 路：未配置 DEEPSEEK_API_KEY")
-    cmd_junk(args); cmd_scenes(args); cmd_brief(args)
+    cmd_junk(args); cmd_scenes(args); cmd_score(args); cmd_brief(args)
     ok("前期处理完成，可以去挑镜头了")
 
 
@@ -524,6 +537,9 @@ def main() -> None:
     p.add_argument("--batch", type=int, default=40)
     p.add_argument("--model", default="deepseek-chat")
     p.set_defaults(fn=cmd_text)
+
+    p = sub.add_parser("score"); p.add_argument("name")
+    p.set_defaults(fn=cmd_score)
 
     p = sub.add_parser("scenes"); p.add_argument("name")
     p.add_argument("--threshold", type=float, default=8.0)
