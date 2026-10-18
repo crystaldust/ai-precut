@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (classify, cloud, questions, schema, secrets, select,
+from pipeline import (classify, cloud, questions, schema, secrets, select, style,
                       summarize, understand_audio, understand_text, understand_visual)
 
 ROOT = Path(__file__).resolve().parent
@@ -127,6 +127,12 @@ def cmd_new(args) -> None:
     if preset is None:
         die(f"找不到预设 {args.preset}，可用：{[p.stem for p in PRESETS.glob('*.json')]}")
     pdir.mkdir(parents=True)
+    calibration = {"tone": args.tone, "audience": args.audience,
+                   "must_lines": args.must_lines}
+    if not any(v is not None for v in calibration.values()):
+        calibration = ask_calibration({})
+    else:
+        calibration = style.normalize({k: v for k, v in calibration.items() if v is not None})
     project = schema.default_project(
         args.name, str(src),
         title=args.title or args.name,
@@ -134,6 +140,7 @@ def cmd_new(args) -> None:
         platform=preset.get("platform", "douyin"),
         target_duration=preset.get("duration"),
         created=time.strftime("%Y-%m-%d %H:%M:%S"),
+        calibration=calibration,
     )
     schema.save(pdir / "project.json", project)
     ok(f"项目已创建：{pdir}")
@@ -206,8 +213,11 @@ def cmd_text(args) -> None:
     if not secrets.get("deepseek"):
         die("未配置 DEEPSEEK_API_KEY：运行 `uv run python aicut.py config set deepseek`")
     info(f"调用 {args.model} 做话题分段与逐句标注（{args.batch} 句/批）…")
+    pref = style.directive(cfg(pdir).get("calibration"))
+    if pref:
+        info("已应用剪辑偏好：" + pref)
     res = understand_text.run(segs, work / "segments_text.json",
-                              batch=args.batch, model=args.model)
+                              batch=args.batch, model=args.model, style=pref)
     key = sum(1 for x in res["segments"] if x["key_info"])
     msg = f"话题 {len(res['topics'])} 个 · 关键信息 {key} 句"
     if res["failures"]:
@@ -287,7 +297,8 @@ def cmd_summary(args) -> None:
     if not text.exists() or not scored.exists():
         die("先跑 text 与 score")
     info("生成内容摘要…")
-    res = summarize.run(text, scored, work / "content_summary.json")
+    pref = style.directive(cfg(pdir).get("calibration"))
+    res = summarize.run(text, scored, work / "content_summary.json", style=pref)
     ok(("（兜底）" if res["fallback"] else "") + res["summary"])
 
 
@@ -318,7 +329,9 @@ def cmd_select(args) -> None:
     c = cfg(pdir)
     res = select.run(work / "segments_scored.json", work / "brief_answers.json", work,
                      questions_path=work / "questions.json",
-                     title=c.get("title", args.name), material=c["material"])
+                     title=c.get("title", args.name), material=c["material"],
+                     weights=style.weights(c.get("calibration")),
+                     calibration=c.get("calibration"))
     missing = res["missing_must_topics"]
     msg = f"选段 {res['stats']['shots']} 镜 · {res['total']:.0f}s / 目标 {res['target']:.0f}s"
     if missing:
@@ -531,6 +544,54 @@ def cmd_run(args) -> None:
         info("还没有 shots.json —— 让 AI 按 work/brief.md 写一版，或手动写，然后跑 build")
 
 
+def ask_calibration(existing: dict) -> dict:
+    """在终端里问剪辑员三个问题（非交互环境直接返回原值）。"""
+    cur = style.normalize(existing)
+    if not sys.stdin.isatty():
+        return cur
+    print("\n先问三个问题，答案会写进提示词（回车沿用当前值）：")
+    for key, question in style.QUESTIONS:
+        default = cur.get(key, "")
+        suffix = f" [{default}]" if default else ""
+        raw = input(f"  {question}{suffix}\n  > ").strip()
+        if raw:
+            cur[key] = raw
+    cur = style.normalize(cur)
+    print(f"  已记录：{style.TONES[cur['tone']]}"
+          + (f" · 观众 {cur['audience']}" if cur["audience"] else "")
+          + (" · 含指定原话" if cur["must_lines"] else ""))
+    return cur
+
+
+def cmd_calibrate(args) -> None:
+    """运行时校准剪辑偏好；不传参数则交互式问答。"""
+    pdir = project_dir(args.name)
+    c = cfg(pdir)
+    current = c.get("calibration") or {}
+    if args.show:
+        cur = style.normalize(current)
+        print(f"tone      : {cur['tone']}（{style.TONES[cur['tone']]}）")
+        print(f"audience  : {cur['audience'] or '（未填）'}")
+        print(f"must_lines: {cur['must_lines'] or '（未填）'}")
+        print(f"提示词效果: {style.directive(cur) or '（无，使用默认）'}")
+        return
+    if args.reset:
+        c["calibration"] = {}
+        schema.save(pdir / "project.json", c)
+        ok("已清除剪辑偏好")
+        return
+    updated = dict(current)
+    for key in ("tone", "audience", "must_lines"):
+        value = getattr(args, key, None)
+        if value is not None:
+            updated[key] = value
+    if not any(getattr(args, k, None) is not None for k in ("tone", "audience", "must_lines")):
+        updated = ask_calibration(current)
+    c["calibration"] = style.normalize(updated)
+    schema.save(pdir / "project.json", c)
+    ok("剪辑偏好已保存：" + (style.directive(c["calibration"]) or "（空）"))
+
+
 def cmd_config(args) -> None:
     """凭证管理：查看（掩码）/ 设置 / 删除。"""
     if not args.action:
@@ -639,6 +700,14 @@ def main() -> None:
     p = sub.add_parser("build"); p.add_argument("name")
     p.add_argument("--version"); p.add_argument("--no-draft", action="store_true")
     p.set_defaults(fn=cmd_build)
+
+    p = sub.add_parser("calibrate"); p.add_argument("name")
+    p.add_argument("--tone", choices=list(style.TONES))
+    p.add_argument("--audience")
+    p.add_argument("--must-lines", dest="must_lines")
+    p.add_argument("--show", action="store_true")
+    p.add_argument("--reset", action="store_true")
+    p.set_defaults(fn=cmd_calibrate)
 
     p = sub.add_parser("config"); p.set_defaults(fn=cmd_config)
     p.add_argument("action", nargs="?", choices=["set", "unset"])
