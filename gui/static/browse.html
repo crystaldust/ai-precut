@@ -1,0 +1,225 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>素材浏览 · 剪辑台</title>
+<style>
+:root{--bg:#16181d;--panel:#1e2128;--panel2:#252932;--line:#2f3440;--text:#e8eaf0;
+--muted:#9aa2b1;--accent:#4a9eff;--waste:#4b5563;--pending:#f59e0b;--usable:#3ddc84}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"PingFang SC",sans-serif}
+button{font:inherit;cursor:pointer;border:none;border-radius:8px;padding:6px 12px;background:var(--panel2);color:var(--text)}
+button:hover{filter:brightness(1.15)}
+button.on{background:var(--accent);color:#06121f;font-weight:600}
+#app{display:grid;grid-template-columns:1fr 320px;height:100vh}
+main{display:flex;flex-direction:column;overflow:hidden}
+header{padding:14px 20px 8px;border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:17px}
+.sub{color:var(--muted);font-size:12px;margin-top:2px}
+.bar{display:flex;gap:8px;align-items:center;padding:10px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.badge{font-size:11px;color:#2a1c02;background:var(--pending);border-radius:10px;padding:2px 8px;font-weight:700;cursor:pointer}
+.density{height:14px;background:#12141a;border-radius:7px;overflow:hidden;display:flex;margin:0 20px 8px;cursor:pointer}
+.density div{height:100%}
+.list{flex:1;overflow:auto;padding:0 20px 130px}
+.row{display:grid;grid-template-columns:88px 120px 44px 1fr 50px 30px;gap:8px;align-items:center;
+padding:7px 8px;border-bottom:1px solid #23262e;cursor:pointer}
+.row:hover{background:#1a1d24}
+.row.active{background:#1b2740}
+.tc{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.cat{font-size:11px;color:#9fb4d8;background:#1d2735;border-radius:6px;padding:2px 6px;text-align:center;
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lv{font-size:11px;font-weight:700;text-align:center;border-radius:5px;padding:2px 0}
+.lv1{background:#252a33;color:#8b94a3}.lv2{background:#4a3108;color:#ffc45c}.lv3{background:#123a28;color:#5ce0a0}
+.sum{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sum small{color:var(--muted);font-size:11px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dur{color:var(--muted);font-size:12px;text-align:right}
+.star{font-size:15px;background:none;padding:0;color:#4b5563}
+.star.on{color:#f5c542}
+.used{color:var(--usable);font-size:10px;margin-left:4px}
+.group{margin:14px 0 6px;font-weight:600;font-size:13px;color:#b9c6da;display:flex;gap:8px;flex-wrap:wrap;align-items:baseline}
+.group span{font-weight:400;color:var(--muted);font-size:11px}
+.group .num{color:#9fb4d8}
+aside{border-left:1px solid var(--line);background:var(--panel);padding:14px;overflow:auto}
+aside h2{font-size:12px;margin:0 0 6px;color:#b9c6da;letter-spacing:.5px}
+.summary{background:var(--panel2);border-radius:10px;padding:12px;font-size:13px;line-height:1.75}
+.kp{margin:6px 0;font-size:12px;color:#c8d2e0;cursor:pointer}
+.kp:hover{color:#fff}
+.kp b{color:var(--accent);font-variant-numeric:tabular-nums;font-weight:600;margin-right:6px}
+.cast{font-size:12px;color:var(--muted);margin-top:8px}
+footer{position:fixed;left:0;right:320px;bottom:0;background:var(--panel);border-top:1px solid var(--line);
+padding:10px 20px;display:flex;gap:14px;align-items:center}
+footer video{width:190px;border-radius:8px;background:#000}
+footer .t{font-size:12.5px}
+footer .t b{color:var(--accent)}
+footer .keys{font-size:11px;color:#6b7c93;margin-top:4px}
+.stat{display:flex;gap:12px;font-size:12px;color:var(--muted);flex-wrap:wrap;margin-top:10px}
+.stat b{color:var(--text)}
+.empty{color:var(--muted);text-align:center;padding:60px}
+</style></head><body>
+<div id="app">
+<main>
+  <header>
+    <h1 id="title">素材浏览</h1>
+    <div class="sub" id="sub">加载中…</div>
+  </header>
+  <div class="bar">
+    <button id="vTime" class="on" onclick="setView('time')">按时间</button>
+    <button id="vCat" onclick="setView('cat')">按分类</button>
+    <span style="width:10px"></span>
+    <button id="fAll" class="on" onclick="setFilter(0)">全部</button>
+    <button id="f2" onclick="setFilter(2)">待判断</button>
+    <button id="f3" onclick="setFilter(3)">可用</button>
+    <button id="f1" onclick="setFilter(1)">废片</button>
+    <button id="fUn" onclick="setFilter(9)">未用</button>
+    <span class="badge" id="pendBadge" title="只看待判断" onclick="setFilter(2)">待判断 0</span>
+    <span style="margin-left:auto;color:var(--muted);font-size:12px" id="count"></span>
+  </div>
+  <div class="density" id="density"></div>
+  <div class="list" id="list"><div class="empty">加载中…</div></div>
+</main>
+<aside>
+  <h2>内容摘要</h2>
+  <div class="summary" id="summary">…</div>
+  <h2 style="margin-top:16px">关键信息（点击试听）</h2>
+  <div id="keypoints"></div>
+  <div class="stat">
+    <span>可用 <b id="n3">0</b></span><span>待定 <b id="n2">0</b></span>
+    <span>废片 <b id="n1">0</b></span><span>必留 <b id="nM">0</b></span>
+  </div>
+  <div class="stat" style="margin-top:8px" id="castBox"></div>
+</aside>
+</div>
+<footer>
+  <video id="pv" controls preload="metadata"></video>
+  <div>
+    <div class="t" id="now">点任意一行试听</div>
+    <div class="keys">空格 播放/暂停　←/→ 5 秒　A 标可用　D 标废片　S 标必留</div>
+  </div>
+</footer>
+<script>
+const PROJECT = new URLSearchParams(location.search).get('project') || '';
+const LV = {1:'废片',2:'待定',3:'可用'};
+const COLOR = {1:'var(--waste)',2:'var(--pending)',3:'var(--usable)'};
+const pv = document.getElementById('pv');
+let DATA = null, view='time', filter=0, cur=null;
+const fmt = s => String(Math.floor(s/60)).padStart(2,'0')+':'+(s%60).toFixed(1).padStart(4,'0');
+
+async function load(){
+  const r = await fetch('/api/browse?project='+encodeURIComponent(PROJECT));
+  if(!r.ok){ const e = await r.json().catch(()=>({}));
+    document.getElementById('list').innerHTML =
+      `<div class="empty">${e.error || '还没有分析结果'}<br><br>先在剪辑台里跑「处理素材」</div>`; return; }
+  DATA = await r.json();
+  pv.src = '/media/'+encodeURIComponent(PROJECT)+'/proxy';
+  document.getElementById('title').textContent = DATA.project.title || PROJECT;
+  document.getElementById('sub').textContent =
+    `素材 ${(DATA.material_duration/60).toFixed(1)} 分钟 · ${DATA.segments.length} 段 · 目标 ${DATA.project.target_duration}s`;
+  renderSummary(); density(); render();
+}
+function renderSummary(){
+  const s = DATA.summary || {};
+  document.getElementById('summary').innerHTML =
+    (s.summary || '（暂无摘要）') + (s.fallback ? '<div style="color:#8a6a3a;font-size:11px;margin-top:6px">（兜底摘要）</div>' : '');
+  const box = document.getElementById('keypoints');
+  box.innerHTML = (s.key_points||[]).map(p=>
+    `<div class="kp" onclick="jump(${p.at}, null, ${p.at+4})"><b>${fmt(p.at)}</b>${p.text}
+       <span style="color:#6b7c93">· ${p.why||''}</span></div>`).join('') || '<div class="kp">—</div>';
+  document.getElementById('castBox').innerHTML =
+    (s.cast||[]).map(c=>`<span>${c.name}<span style="color:#6b7c93"> · ${c.desc}</span></span>`).join('');
+}
+function density(){
+  const d = document.getElementById('density'); d.innerHTML='';
+  const total = DATA.material_duration || 1;
+  DATA.segments.forEach(s=>{
+    const el = document.createElement('div');
+    el.style.width = ((s.dur/total)*100).toFixed(3)+'%';
+    el.style.background = COLOR[s.level];
+    el.title = fmt(s.start)+' '+LV[s.level]+' · '+(s.topic||'');
+    el.onclick = e=>{e.stopPropagation(); jump(s.start, s.id, s.end);};
+    d.appendChild(el);
+  });
+}
+function setView(v){ view=v;
+  document.getElementById('vTime').classList.toggle('on',v==='time');
+  document.getElementById('vCat').classList.toggle('on',v==='cat'); render(); }
+function setFilter(f){ filter=f;
+  [['fAll',0],['f2',2],['f3',3],['f1',1],['fUn',9]].forEach(([id,v])=>
+    document.getElementById(id).classList.toggle('on', v===f)); render(); }
+function pass(s){
+  if(filter===9) return !s.inCut;
+  if(filter===0) return true;
+  return s.level===filter;
+}
+function row(s){
+  return `<div class="row" data-id="${s.id}" onclick="jump(${s.start},'${s.id}',${s.end})">
+    <div class="tc">${fmt(s.start)}</div>
+    <div class="cat" title="${s.topic||''}">${s.topic||'—'}</div>
+    <div class="lv lv${s.level}" title="${(s.level_reason||'').replace(/"/g,'')}">${LV[s.level]}</div>
+    <div class="sum">${escapeHtml(s.text).slice(0,60)}${s.inCut?'<span class="used">已用</span>':''}
+      <small>${escapeHtml(s.level_reason||'')}${s.visual_flags?.length?' · 画面:'+s.visual_flags.join('/'):''}</small></div>
+    <div class="dur">${s.dur.toFixed(1)}s</div>
+    <button class="star ${s.must_keep?'on':''}" onclick="event.stopPropagation();toggleMust('${s.id}')">★</button>
+  </div>`;
+}
+function escapeHtml(t){ return (t||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function render(){
+  if(!DATA) return;
+  const list = document.getElementById('list');
+  const items = DATA.segments.filter(pass);
+  document.getElementById('count').textContent = `显示 ${items.length} / ${DATA.segments.length} 段`;
+  if(view==='time'){ list.innerHTML = items.map(row).join(''); }
+  else{
+    const groups = {};
+    items.forEach(s=>{ (groups[s.topic||'未归类'] ||= []).push(s); });
+    list.innerHTML = Object.entries(groups).map(([name, arr])=>{
+      const t = (DATA.topics||[]).find(x=>x.name===name) || {};
+      const usable = arr.filter(s=>s.level===3).length;
+      return `<div class="group">${name}${t.must?' · <span style="color:#ffc45c">必留</span>':''}
+        <span>${arr.length} 句 · 可用 <span class="num">${usable}</span> ·
+        可用时长 ${(t.usable_dur||0).toFixed(0)}s · 预算 ${t.budget||0}s</span></div>`
+        + arr.map(row).join('');
+    }).join('');
+  }
+  const n = {1:0,2:0,3:0};
+  DATA.segments.forEach(s=>n[s.level]++);
+  document.getElementById('n1').textContent=n[1];
+  document.getElementById('n2').textContent=n[2];
+  document.getElementById('n3').textContent=n[3];
+  document.getElementById('nM').textContent=DATA.segments.filter(s=>s.must_keep).length;
+  document.getElementById('pendBadge').textContent=`待判断 ${n[2]}`;
+}
+
+function jump(start, id, end){
+  pv.currentTime = Math.max(0, start-0.3); pv.play();
+  cur = id || null;
+  const s = DATA.segments.find(x=>x.id===cur);
+  document.getElementById('now').innerHTML = `<b>${fmt(start)}–${fmt(end||start+1)}</b>　${s?escapeHtml(s.text).slice(0,40):''}<br>
+    <span style="color:var(--muted)">${s?escapeHtml(s.level_reason||''):''}</span>`;
+  document.querySelectorAll('.row').forEach(r=>r.classList.toggle('active', r.dataset.id===cur));
+  clearInterval(window._t);
+  window._t = setInterval(()=>{ if(pv.currentTime>=(end||start+999)){pv.pause();clearInterval(window._t);} },120);
+}
+async function setLevel(id, level){
+  const s = DATA.segments.find(x=>x.id===id); if(!s) return;
+  s.level = level; s.level_reason = `人工改为${LV[level]}`; s.override = true;
+  await fetch('/api/browse/level', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({project:PROJECT, id, level})});
+  render();
+}
+async function toggleMust(id){
+  const s = DATA.segments.find(x=>x.id===id); if(!s) return;
+  s.must_keep = !s.must_keep;
+  await fetch('/api/browse/must', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({project:PROJECT, id, must:s.must_keep})});
+  render();
+}
+document.addEventListener('keydown', e=>{
+  if(e.target.tagName==='INPUT') return;
+  if(e.code==='Space'){ e.preventDefault(); pv.paused?pv.play():pv.pause(); }
+  if(e.code==='ArrowRight') pv.currentTime+=5;
+  if(e.code==='ArrowLeft') pv.currentTime-=5;
+  if(!cur) return;
+  if(e.key==='a'||e.key==='A') setLevel(cur,3);
+  if(e.key==='d'||e.key==='D') setLevel(cur,1);
+  if(e.key==='s'||e.key==='S') toggleMust(cur);
+});
+load();
+</script></body></html>

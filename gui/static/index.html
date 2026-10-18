@@ -120,6 +120,7 @@
     <div class="actions" id="actions" style="display:none">
       <button class="primary" id="btnPrepare" onclick="startJob('prepare')">① 处理素材</button>
       <button class="primary" id="btnBuild" onclick="openBuild()">② 生成成片</button>
+      <button class="ghost" onclick="openBrowse()">浏览素材</button>
       <button class="ghost" onclick="openFolder()">打开文件夹</button>
       <button class="ghost" onclick="openJianying()">打开剪映</button>
     </div>
@@ -522,6 +523,10 @@ async function createProject(){
 }
 
 /* ---------------- 其它 ---------------- */
+function openBrowse(){
+  if(!state.project) return toast('先选项目');
+  window.open('/static/browse.html?project=' + encodeURIComponent(state.project), '_blank');
+}
 async function openFolder(){ await api('/api/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project:state.project, target:'project'})}); }
 async function openJianying(){ await api('/api/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project:state.project, target:'jianying'})}); }
 
