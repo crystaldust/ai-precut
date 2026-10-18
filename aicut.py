@@ -552,6 +552,9 @@ def cmd_status(args) -> None:
         ("废片表", pdir / "work/junk_report.csv"),
         ("镜头切分 (c)", pdir / "work/shots_visual.json"),
         ("三档判定", pdir / "work/segments_scored.json"),
+        ("内容摘要", pdir / "work/content_summary.json"),
+        ("决策问题", pdir / "work/questions.json"),
+        ("人工裁决", pdir / "work/overrides.json"),
         ("策划分派单", pdir / "work/brief.md"),
         ("分镜表", pdir / "shots.json"),
     ]
