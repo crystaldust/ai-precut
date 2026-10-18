@@ -453,7 +453,13 @@ class Handler(BaseHTTPRequestHandler):
                 pdir = project_path(body.get("project", ""))
             except ValueError:
                 return self._json({"error": "bad project"}, 400)
-            data = {"answers": body.get("answers") or {},
+            work = pdir / "work"
+            questions = jload(work / "questions.json")
+            answers = body.get("answers") or {}
+            from pipeline import select as selector
+            rules = selector._rules(answers, questions)
+            data = {"answers": answers,
+                    "rules": rules,
                     "confirmed": bool(body.get("confirmed", False)),
                     "at": __import__("datetime").datetime.now().isoformat(timespec="seconds")}
             jdump(pdir / "work/brief_answers.json", data)
