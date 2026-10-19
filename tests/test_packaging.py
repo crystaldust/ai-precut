@@ -148,3 +148,25 @@ def test_prototype_generator_writes_outside_static():  # KI-52 / D11
     src = _read("prototype/make_prototype.py")
     assert 'ROOT / "gui/static/prototype.html"' not in src and "prototype/prototype.html" in src
     assert "prototype/prototype.html" in _read(".gitignore")
+
+
+# ---------------------------------------------------------------- KI-38：覆盖率门槛
+COVERAGE_FLOOR = 80  # PRD Success Metrics：测试覆盖率 ≥ 80%
+
+
+def test_coverage_gate_is_configured():
+    cfg = tomllib.loads(_read("pyproject.toml"))
+    dev = cfg["dependency-groups"]["dev"]
+    assert any(d.startswith("pytest-cov") for d in dev)
+    cov = cfg["tool"]["coverage"]
+    assert cov["report"]["fail_under"] >= COVERAGE_FLOOR
+    # aicut.py 必须在统计里（KI-38：登记时它没被统计，真实覆盖率被高估）
+    assert {"aicut", "pipeline", "gui", "app"} <= set(cov["run"]["source"])
+    assert "research.validate_draft" in cov["run"]["source_pkgs"]
+    # 门槛只在 --cov 时判定：不能写进 addopts（单文件调试会因总量不足被判失败）
+    assert "--cov" not in cfg["tool"]["pytest"]["ini_options"].get("addopts", "")
+
+
+def test_coverage_artifacts_are_ignored():
+    ignored = _read(".gitignore").splitlines()
+    assert {".coverage", ".coverage.*", "htmlcov/"} <= set(ignored)

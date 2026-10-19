@@ -15,6 +15,7 @@ dependencies = [
 dev = [
   "pytest>=8",
   "pyinstaller>=6.10",
+  "pytest-cov>=6",
 ]
 
 [tool.uv]
@@ -25,3 +26,14 @@ package = false
 pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.coverage.run]
+# 产品代码：CLI、流水线、剪辑台、桌面入口，以及随包分发的草稿校验器（ai-cut.spec hiddenimports）
+source = ["aicut", "app", "gui", "pipeline"]
+source_pkgs = ["research.validate_draft"]
+# packaging/build_package.py 不列：仓库根 packaging/ 与 PyPI 的 packaging 同名，按名解析会串
+
+[tool.coverage.report]
+fail_under = 80          # PRD：测试覆盖率 ≥ 80%（KI-38）；只在 `uv run pytest --cov` 时判定
+skip_covered = true
+show_missing = true

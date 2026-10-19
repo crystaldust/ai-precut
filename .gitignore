@@ -13,6 +13,9 @@ __pycache__/
 *.pyc
 .venv/
 .aicut/
+.coverage
+.coverage.*
+htmlcov/
 
 # 系统
 .DS_Store

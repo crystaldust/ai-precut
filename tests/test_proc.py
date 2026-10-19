@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import textwrap
@@ -18,9 +19,17 @@ def test_user_data_root_env_override(monkeypatch, tmp_path):
     assert proc.user_data_root() == tmp_path
 
 
-def test_user_data_root_default_is_writable():
-    root = proc.user_data_root()
-    assert root.is_absolute()
+def test_user_data_root_dev_default_is_repo_projects(monkeypatch):
+    monkeypatch.delenv("AI_CUT_PROJECTS", raising=False)
+    monkeypatch.setattr(proc, "FROZEN", False)
+    assert proc.user_data_root() == proc.app_root() / "projects"
+
+
+def test_user_data_root_frozen_default_is_documents(monkeypatch, tmp_path):
+    monkeypatch.delenv("AI_CUT_PROJECTS", raising=False)
+    monkeypatch.setattr(proc, "FROZEN", True)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert proc.user_data_root() == tmp_path / "Documents" / "AI粗剪"  # 不能写进 .app
 
 
 def test_run_inprocess_captures_system_exit():
@@ -29,9 +38,34 @@ def test_run_inprocess_captures_system_exit():
     assert "main" in out
 
 
-def test_bundled_bin_none_when_missing():
-    # 开发环境没有 App 内置目录时不应报错
-    assert proc.bundled_bin() is None or isinstance(proc.bundled_bin(), Path)
+def test_app_root_frozen_is_meipass(monkeypatch, tmp_path):
+    monkeypatch.setattr(proc, "MEIPASS", str(tmp_path))
+    assert proc.app_root() == tmp_path
+    assert proc.resource_path("presets", "a.json") == tmp_path / "presets" / "a.json"
+
+
+def test_bundled_bin_none_without_ffmpeg(monkeypatch, tmp_path):
+    monkeypatch.setattr(proc, "MEIPASS", str(tmp_path))  # app_root() 指向假的 App 资源目录
+    (tmp_path / "bin").mkdir()                           # 目录在、但没有 ffmpeg 也不算
+    assert proc.bundled_bin() is None
+
+
+def test_bundled_bin_found_and_prepended_once(monkeypatch, tmp_path):
+    monkeypatch.setattr(proc, "MEIPASS", str(tmp_path))
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "ffmpeg").write_bytes(b"")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    assert proc.bundled_bin() == tmp_path / "bin"
+    proc.ensure_bundled_path()
+    proc.ensure_bundled_path()  # 幂等：不重复插入
+    assert os.environ["PATH"].split(os.pathsep) == [str(tmp_path / "bin"), "/usr/bin"]
+
+
+def test_ensure_bundled_path_noop_without_bin(monkeypatch, tmp_path):
+    monkeypatch.setattr(proc, "MEIPASS", str(tmp_path))
+    monkeypatch.setenv("PATH", "/usr/bin")
+    proc.ensure_bundled_path()
+    assert os.environ["PATH"] == "/usr/bin"
 
 
 # ---------------------------------------------------------------- GL-11 / GL-12

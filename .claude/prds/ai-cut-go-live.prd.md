@@ -63,7 +63,7 @@
 ## Open Questions
 
 - [ ] App 本身是否需要在 Windows 上运行？当前理解：只需导出的草稿能在 Windows 剪映打开（GL-14 覆盖）；若需要，另增 Windows 打包类阻断项。
-- [ ] KI-41：c 路画面的景别/人脸/OCR/道具是实现，还是在 PRD 中降为 P1/P2？（产品决策）
+- [x] KI-41：已决定降为 P2，将来本地实现（PRD v1.2）。
 - [x] KI-40：样本与测量方法、FR-5 验收已在 PRD v1.2 修订。
 
 ## Risks
