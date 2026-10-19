@@ -35,15 +35,15 @@
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-19 | ffmpeg/ffprobe 不查返回码：废片检测、抽帧、切点失败后得到「看起来成功」的空结果；`duration==0` 除零 | `pipeline/junk_detect.py:68-69, 104, 174`；`pipeline/understand_visual.py:35-38, 96-125`；`aicut.py:186-194` | open |
-| KI-20 | `check=True`+`capture_output` 抛错时 stderr 丢失，用户看不到 ffmpeg 真实原因 | `aicut.py:61-62` | open |
-| KI-21 | `jload` 等把 JSON 损坏当默认值，界面显示误导信息 | `gui/server.py:74-78`；`pipeline/classify.py:116-121`；`aicut.py:399,530` | open |
-| KI-22 | questions 兜底结果被缓存固化；LLM 错误只写文件不展示 | `pipeline/questions.py:132-134`；`pipeline/summarize.py:111-113` | open |
-| KI-23 | must_lines / must_topics / 答案标签匹配不到时静默跳过，不提示 | `pipeline/select.py:99-101, 166-167, 279-298` | open |
-| KI-24 | 转写时间字段缺失默认 0；包含句使 `end` 回退；时间码 59.999 显示 `00:60.00` | `pipeline/format_transcript.py:30, 41-49, 75-84` | open |
-| KI-25 | LLM 重试不覆盖 `RemoteDisconnected`/`ConnectionResetError`/200 非 JSON | `pipeline/llm.py:26-34, 77` | open |
-| KI-26 | `default_project` 共享可变 DEFAULTS，跨项目污染 | `pipeline/schema.py:24-42` | open |
-| KI-27 | 废片检测：文件末尾未闭合的静音/冻帧丢失；重叠区间重复计算；`--scene` 结果被丢弃 | `pipeline/junk_detect.py:62-136` | open |
+| KI-19 | ffmpeg/ffprobe 不查返回码：废片检测、抽帧、切点失败后得到「看起来成功」的空结果；`duration==0` 除零 | `pipeline/junk_detect.py:68-69, 104, 174`；`pipeline/understand_visual.py:35-38, 96-125`；`aicut.py:186-194` | fixed `ef3c020` |
+| KI-20 | `check=True`+`capture_output` 抛错时 stderr 丢失，用户看不到 ffmpeg 真实原因 | `aicut.py:61-62` | fixed `ef3c020` |
+| KI-21 | `jload` 等把 JSON 损坏当默认值，界面显示误导信息 | `gui/server.py:74-78`；`pipeline/classify.py:116-121`；`aicut.py:399,530` | fixed `ef3c020` |
+| KI-22 | questions 兜底结果被缓存固化；LLM 错误只写文件不展示 | `pipeline/questions.py:132-134`；`pipeline/summarize.py:111-113` | fixed `ef3c020` |
+| KI-23 | must_lines / must_topics / 答案标签匹配不到时静默跳过，不提示 | `pipeline/select.py:99-101, 166-167, 279-298` | fixed `ef3c020` |
+| KI-24 | 转写时间字段缺失默认 0；包含句使 `end` 回退；时间码 59.999 显示 `00:60.00` | `pipeline/format_transcript.py:30, 41-49, 75-84` | fixed `ef3c020` |
+| KI-25 | LLM 重试不覆盖 `RemoteDisconnected`/`ConnectionResetError`/200 非 JSON | `pipeline/llm.py:26-34, 77` | fixed `ef3c020` |
+| KI-26 | `default_project` 共享可变 DEFAULTS，跨项目污染 | `pipeline/schema.py:24-42` | fixed `ef3c020` |
+| KI-27 | 废片检测：文件末尾未闭合的静音/冻帧丢失；重叠区间重复计算；`--scene` 结果被丢弃 | `pipeline/junk_detect.py:62-136` | fixed `ef3c020` |
 
 ## 安全 / 密钥
 
@@ -89,15 +89,15 @@
 | KI-45 | `schema.SchemaTooNew` 继承 `Exception`，`except (ValueError, OSError)` 接不住，项目版本过新时连接直接断开 | `gui/server.py`（`/api/state`、POST `/api/calibrate`）；`pipeline/schema.py:21` | fixed `624e979` |
 | KI-46 | `/api/new` 的 title 非字符串时 `.strip()` 抛 AttributeError，连接断开 | `gui/server.py`（`/api/new`） | fixed `624e979` |
 | KI-47 | `/api/state` 项目名不合法时返回 404，应为 400 | `gui/server.py`（`/api/state`） | fixed `624e979` |
-| KI-48 | shots.json 缺 `shots` 键时 KeyError，用户只看到 traceback | `aicut.py`（`cmd_build`） | open |
-| KI-49 | 磁盘上的多选答案不是数组时 `.includes` 抛错，确认页问题整页渲染失败 | `gui/static/confirm.html`（`renderQuestions`） | open |
+| KI-48 | shots.json 缺 `shots` 键时 KeyError，用户只看到 traceback | `aicut.py`（`cmd_build`） | fixed `ef3c020` |
+| KI-49 | 磁盘上的多选答案不是数组时 `.includes` 抛错，确认页问题整页渲染失败 | `gui/static/confirm.html`（`renderQuestions`） | fixed `ef3c020` |
 | KI-50 | 前端 `move`/`dup`/`del` 的 `saveShots(true)` 不 await，连续操作时并发 POST 可能让旧状态覆盖新状态（原子写只保证不损坏，不保证顺序） | `gui/static/index.html`（`saveShots` 调用点） | open |
 | KI-51 | `project.json` 读改写无锁（`/api/calibrate` 与 aicut 子进程 `schema.save` 之间可丢更新）；`write_json` 未 `fsync`，被强杀留 `.tmp` 残片 | `gui/server.py`（`/api/calibrate`）；`pipeline/schema.py`（`write_json`） | open |
 | KI-52 | `gui/static/prototype.html` 是演示页但仍由 `/static/` 公开服务，含未转义插值 | `gui/static/prototype.html` | open |
 | KI-53 | CSP 仍需 `'unsafe-inline'`：内联脚本与内联事件改成 `addEventListener` 后才能收紧 | `gui/static/*.html` | open |
 | KI-54 | `gui/server.py` 834 行，超过 800 行软上限；路由宜拆到独立模块 | `gui/server.py` | open |
 | KI-55 | `aicut.py` 881 行，超过 800 行软上限（同 KI-54） | `aicut.py` | open |
-| KI-56 | `overrides.json` 损坏时 `select`/`prepare` 不捕获 `OverridesCorrupt`，打出 traceback 而非人话 | `aicut.py`（`cmd_select`）；`pipeline/select.py`（`review.load` 调用处） | open |
+| KI-56 | `overrides.json` 损坏时 `select`/`prepare` 不捕获 `OverridesCorrupt`，打出 traceback 而非人话 | `aicut.py`（`cmd_select`）；`pipeline/select.py`（`review.load` 调用处） | fixed `ef3c020` |
 | KI-57 | `createProject` 残留按 URL hash 选项目的启动代码，与随后的 `selectProject(name)` 抢切项目 | `gui/static/index.html`（`createProject`） | open |
 | KI-58 | `_level_of` 只按话题名判必留话题，按关键信息占比判出的必留话题内句子拿不到「必留→待定」保护，与 `topics[].must` 口径不一 | `pipeline/classify.py`（`_level_of`） | open |
 | KI-59 | 同名草稿重跑先拷完媒体才在 `install()` 报「已存在」，白耗时间 | `pipeline/to_jianying.py`（`install`） | fixed `71e44e7` |
@@ -107,7 +107,7 @@
 | KI-63 | `.partial-*` 临时文件与成品同目录，未来对 `clips/*.mp4` 的 glob 会读到半成品；`_clear_stale_partials` 会删并发写者的临时文件 | `pipeline/media_io.py` | open |
 | KI-64 | `zip_pkg` 打印的是临时 zip 路径（`.xxx.partial-….zip`），易误导 | `packaging/build_package.py`（`zip_pkg`） | fixed `71e44e7` |
 | KI-65 | 旧项目 wav 认领：无标记的旧 wav 中断残片可能被 ffprobe 按大小估出正时长而被认领 | `pipeline/media_io.py`（`complete_or_adopt`） | open |
-| KI-66 | 素材无法被 ffprobe 识别时 `cmd_ingest` 抛 `KeyError: 'format'`，用户看到 traceback | `aicut.py`（`cmd_ingest`） | open |
+| KI-66 | 素材无法被 ffprobe 识别时 `cmd_ingest` 抛 `KeyError: 'format'`，用户看到 traceback | `aicut.py`（`cmd_ingest`） | fixed `ef3c020` |
 | KI-67 | `secrets.mask` 长度 >8 即显示前 4 后 4，9–12 位 Key 几乎全暴露 | `pipeline/secrets.py`（`mask`） | open |
 | KI-68 | `JOBS` 与任务日志从不清理，长时间使用内存持续增长 | `gui/jobs.py`（`JOBS`） | open |
 | KI-69 | `cmd_new` 判空目录与建目录之间有竞争窗口（GUI 有全局互斥，影响低） | `aicut.py`（`cmd_new`） | open |
@@ -118,7 +118,7 @@
 | KI-74 | 从钥匙串/凭证文件读出的 Key 未去首尾空白，带换行时 LLM 请求头报错 | `pipeline/secrets.py`（`get`） | open |
 | KI-75 | ASR 上传缓存：云端提前作废 file_id 时要等 12h 过期才重传 | `pipeline/cloud.py`（`work/asr_upload.json`） | open |
 | KI-76 | 预览字幕 `esc()` 不转义 `%`：LGPL ffmpeg 报 `Stray %` 该条字幕静默不显示，Homebrew ffmpeg 直接失败 | `pipeline/render_preview.py:37-40` | fixed `71e44e7` |
-| KI-77 | 废片判定：冻帧与静音完全重叠时只给「待定/参考」，「无语音 + 画面静止」强信号只对黑场成立 | `pipeline/junk_detect.py`（`judge`） | open |
+| KI-77 | 废片判定：冻帧与静音完全重叠时只给「待定/参考」，「无语音 + 画面静止」强信号只对黑场成立 | `pipeline/junk_detect.py`（`judge`） | fixed `ef3c020` |
 | KI-78 | Windows `INSTALL.bat` 遇同名草稿用 `rd /s /q` 删除已有草稿，与 README「不会动你已有的任何草稿」矛盾 | `packaging/build_package.py` 生成的 `INSTALL.bat` | fixed `71e44e7`（Windows 实机待验证） |
 | KI-79 | `INSTALL.bat` 里 `echo [!] JianYing is running…` 的 `!` 在延迟扩展下被吞，显示成 `[]` | `packaging/build_package.py:175` | fixed `71e44e7` |
 | KI-80 | `to_jianying.py` 命令行直接传相对 `--staging` 时素材路径写成相对路径，静态校验 FAIL（aicut 调用不受影响） | `pipeline/to_jianying.py:250-270`（`bundle_media`） | open |
