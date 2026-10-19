@@ -102,11 +102,11 @@ def test_corrupt_clip_manifest_recut_with_warning(tmp_path, monkeypatch, capsys)
         from pathlib import Path
         Path(args[-1]).write_bytes(b"clip")
     monkeypatch.setattr(media_io, "run_ffmpeg", fake_ffmpeg)
-    aicut.ensure_clips(pdir, {"material": "/tmp/a.mp4"}, [{"id": "sh01", "in": 0.0, "out": 2.0}])
+    paths = aicut.ensure_clips(pdir, {"material": "/tmp/a.mp4"}, [{"id": "sh01", "in": 0.0, "out": 2.0}])
     out = capsys.readouterr().out
     assert "[!]" in out and "manifest.json" in out
     assert len(cut) == 1
-    assert json.loads((clips / "manifest.json").read_text(encoding="utf-8"))["sh01"]
+    assert paths["sh01"].parent == clips and paths["sh01"].name.startswith("sh01-")  # KI-89
 
 
 # ---------------------------------------------------------------- 4. merge 不改入参

@@ -64,26 +64,26 @@ def test_num(raw, expected):
 
 
 # ---------------------------------------------------------------- fetch 补丁
-def test_fetch_adds_token_to_same_origin_api_and_keeps_headers():
+def test_fetch_api_sends_same_origin_credentials_not_token():
     out = run_js("""
       fetch('/api/x', {method:'POST', headers:{'Content-Type':'application/json'}});
-      const h = calls[0].init.headers;
-      [h.get('X-AICUT-Token'), h.get('Content-Type'), calls[0].init.method];
+      const i = calls[0].init;
+      [i.credentials, i.headers['Content-Type'], i.method, JSON.stringify(i).includes('AICUT')];
     """)
-    assert out == ["TOKEN123", "application/json", "POST"]
+    assert out == ["same-origin", "application/json", "POST", False]
 
 
-def test_fetch_absolute_same_origin_api_gets_token():
+def test_fetch_absolute_same_origin_api_gets_credentials():
     out = run_js("""
       fetch('http://127.0.0.1:8765/api/state');
-      calls[0].init.headers.get('X-AICUT-Token');
+      calls[0].init.credentials;
     """)
-    assert out == "TOKEN123"
+    assert out == "same-origin"
 
 
 @pytest.mark.parametrize("url", ["/media/p/proxy", "/static/browse.html",
                                  "http://evil.example/api/x"])
-def test_fetch_does_not_leak_token(url):
+def test_fetch_non_api_untouched(url):
     out = run_js(f"fetch({json.dumps(url)}); calls[0].init === undefined;")
     assert out is True
 

@@ -12,10 +12,8 @@
 from __future__ import annotations
 
 import argparse
-import hmac
 import json
 import mimetypes
-import os
 import re
 import signal
 import subprocess
@@ -25,7 +23,7 @@ import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
@@ -33,7 +31,9 @@ sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
 from pipeline import applog, proc, review, schema, style  # noqa: E402
-from gui import confirm, desktop, jobs, maintenance, media, payloads, settings, support, views  # noqa: E402
+from gui import (  # noqa: E402
+    confirm, desktop, jobs, maintenance, media, payloads, session, settings, support, views,
+)
 from gui.static_files import STATIC_FILES  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
     JOB_COMMANDS, JOBS, JOBS_LOCK, JobConflict, run_aicut, start_job,
@@ -46,11 +46,15 @@ STATIC = (proc.resource_path("gui", "static") if proc.FROZEN
           else Path(__file__).resolve().parent / "static")
 PICKER = None  # 由桌面壳注入（pywebview 的文件选择框）
 
-# ---- GL-05：本地服务访问控制
-API_TOKEN = os.urandom(32).hex()  # 每次启动随机生成；页面加载时由服务端注入
-TOKEN_HEADER = "X-AICUT-Token"
-TOKEN_PLACEHOLDER = b"__AICUT_TOKEN__"
-TOKEN_EXPIRED_MSG = "页面已过期，请刷新"  # 浏览器模式下服务重启后，旧标签页会看到它
+# ---- GL-05 / KI-88：本地服务访问控制。页面里不放任何秘密：入口地址带一次性 nonce，
+# 兑换成 HttpOnly 会话 cookie；页面、/api/、/media/ 都只认 cookie（见 gui/session.py）
+entry_url = session.entry_url  # 桌面壳与浏览器启动器用
+AUTH_PREFIXES = ("/api/", "/media/")
+TOKEN_EXPIRED_MSG = "页面已过期：请关掉这个页面，从剪辑台重新打开"  # 服务重启后旧标签页会看到它
+GATE_PAGE = ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>剪辑台</title>'
+             '</head><body style="font-family:-apple-system,sans-serif;padding:48px;color:#333">'
+             '<h2>请从剪辑台 App 打开</h2><p>这个页面需要从「AI 粗剪」App 里打开。'
+             '浏览器模式：请重新双击「启动剪辑台」。</p></body></html>').encode()
 ALLOWED_HOSTNAMES = ("127.0.0.1", "localhost")
 JSON_CTYPE = "application/json"
 SECURITY_HEADERS = {
@@ -169,9 +173,26 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
 
     def _send_page(self, f: Path) -> None:
-        """HTML 页面：把占位符替换成本次启动的 token。"""
-        body = f.read_bytes().replace(TOKEN_PLACEHOLDER, API_TOKEN.encode())
-        return self._send(200, body, "text/html; charset=utf-8",
+        return self._send(200, f.read_bytes(), "text/html; charset=utf-8",
+                          {"Content-Security-Policy": PAGE_CSP})
+
+    def _authed(self) -> bool:
+        return session.has_valid_cookie(self.headers.get("Cookie"), self.server.server_address[1])
+
+    def _page(self, f: Path, path: str, q: dict) -> None:
+        """KI-88：页面只发给持会话 cookie 的；入口地址的 nonce 兑换成 cookie 后跳回去掉 nonce 的地址。"""
+        if session.NONCE_PARAM in q:
+            fresh = session.redeem(q[session.NONCE_PARAM][0])
+            if fresh or self._authed():
+                rest = {k: v for k, v in q.items() if k != session.NONCE_PARAM}
+                extra = {"Location": path + ("?" + urlencode(rest, doseq=True, quote_via=quote)
+                                             if rest else "")}
+                if fresh:
+                    extra["Set-Cookie"] = session.cookie_header(self.server.server_address[1])
+                return self._send(302, b"", "text/plain; charset=utf-8", extra)
+        elif self._authed():
+            return self._send_page(f)
+        return self._send(403, GATE_PAGE, "text/html; charset=utf-8",
                           {"Content-Security-Policy": PAGE_CSP})
 
     # ---------- 兜底：任何请求都不能直接断连
@@ -227,10 +248,8 @@ class Handler(BaseHTTPRequestHandler):
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if ctype != JSON_CTYPE:
                 return 415, f"请求必须是 {JSON_CTYPE}"
-        if path.startswith("/api/"):
-            given = self.headers.get(TOKEN_HEADER) or ""
-            if not hmac.compare_digest(given.encode(), API_TOKEN.encode()):
-                return 403, TOKEN_EXPIRED_MSG
+        if path.startswith(AUTH_PREFIXES) and not self._authed():
+            return 403, TOKEN_EXPIRED_MSG
         return None
 
     def _json(self, obj, code: int = 200) -> None:
@@ -286,14 +305,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": deny[1]}, deny[0])
 
         if p in ("/", "/index.html"):
-            return self._send_page(STATIC / "index.html")
+            return self._page(STATIC / "index.html", p, q)
 
         if p.startswith("/static/"):  # KI-52：只发白名单里的单段文件名
             name = p[len("/static/"):]
             f = STATIC / name
             if name in STATIC_FILES and f.is_file():
                 if f.suffix == ".html":
-                    return self._send_page(f)
+                    return self._page(f, p, q)
                 ctype = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
                 return self._send(200, f.read_bytes(), ctype)
             return self._json({"error": "not found"}, 404)
@@ -578,6 +597,14 @@ def serve_in_background(start_port: int = 8765) -> tuple[ThreadingHTTPServer, st
     return srv, f"http://127.0.0.1:{port}/"
 
 
+def open_browser(url: str) -> None:
+    """KI-88：用一次性入口打开默认浏览器（macOS 经 osascript 的 stdin 传地址，ps 看不到）；
+    打不开就把链接打印出来，让用户自己粘贴。"""
+    link = entry_url(url)
+    if not webbrowser.open(link):
+        print(f"没能自动打开浏览器，请在浏览器里打开这个一次性链接（{session.NONCE_TTL_S // 60} 分钟内有效）：{link}")
+
+
 def main() -> None:
     applog.setup("app")
     ap = argparse.ArgumentParser()
@@ -601,7 +628,9 @@ def main() -> None:
     print("关闭这个窗口即退出。")
     report_stale_job()
     if args.open:
-        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.6, open_browser, args=(url,)).start()
+    else:
+        print(f"在浏览器里打开这个一次性链接（{session.NONCE_TTL_S // 60} 分钟内有效）：{entry_url(url)}")
     # 终端窗口被关 / kill 时也要走到 finally，停掉后台任务（不留孤儿进程继续计费）
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     signal.signal(signal.SIGHUP, lambda *_: sys.exit(0))

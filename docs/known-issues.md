@@ -131,3 +131,5 @@
 | KI-87 | 英文素材分句拼整句时无空格（"world.good"） | `pipeline/format_transcript.py:116` | fixed `9017287` |
 | KI-88 | 同机其他用户可经 `GET /` 取到页面里的 token 后调用全部 API（单用户威胁模型下可接受）；改为一次性 nonce 换 HttpOnly SameSite=Strict cookie | `gui/server.py`（`_send_page`、`_deny_reason`） | open |
 | KI-89 | 各版本共用 `work/clips`：新版本重切同名镜头会改动旧版本引用的切片（旧版本重新导出可能与当初不一致） | `aicut.py`（`ensure_clips`）；`pipeline/clips.py` | open |
+| KI-90 | 浏览器模式下会话 cookie 不按端口隔离（RFC 6265）：本机另一用户在 127.0.0.1 其他端口起服务并诱导剪辑师用同一浏览器访问，可收到 cookie（App 内 WKWebView 不受影响；单用户本机威胁模型下低） | `gui/session.py`；`docs/GUI.md` 安全模型 | open（接受：多人共用电脑用 App） |
+| KI-91 | 会话凭据为进程级常量：所有窗口共用、无登出与轮换（进程退出即失效，本地单用户可接受） | `gui/session.py` | open |

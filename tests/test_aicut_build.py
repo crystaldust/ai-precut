@@ -122,7 +122,8 @@ def test_clips_resume_after_failure(project, monkeypatch):
     with pytest.raises(SystemExit):
         aicut.ensure_clips(project, c, shots)
     clips = project / "work/clips"
-    assert media_io.is_complete(clips / "S01.mp4") and not (clips / "S02.mp4").exists()
+    done = [p.name for p in clips.glob("*.mp4") if media_io.is_complete(p)]
+    assert len(done) == 1 and done[0].startswith("S01-")  # KI-89：带键命名，S02 没留半成品
     calls.clear()
     monkeypatch.setattr(media_io, "run_ffmpeg", fake_ffmpeg(calls))
     aicut.ensure_clips(project, c, shots)

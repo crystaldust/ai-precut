@@ -23,8 +23,8 @@ def fake_webview(start_exc=None):
         wv.calls.append(("create", title, url))
         return FakeWindow()
 
-    def start():
-        wv.calls.append(("start",))
+    def start(**kw):
+        wv.calls.append(("start", kw))
         if start_exc:
             raise start_exc
 
@@ -58,9 +58,14 @@ def test_main_wires_window_and_always_cleans_up(entry, monkeypatch, start_exc):
             ns["main"]()
     else:
         ns["main"]()
-    assert wv.calls[0] == ("create", "AI 粗剪", "http://127.0.0.1:9/")
+    kind, title, url = wv.calls[0]
+    assert (kind, title) == ("create", "AI 粗剪")
+    assert url.startswith("http://127.0.0.1:9/?nonce=")  # KI-88：主窗口用一次性入口换 cookie
+    from gui import session
+    assert session.redeem(url.split("nonce=", 1)[1]) is True
     assert ("create", "浏览素材", "http://127.0.0.1:9/b") in wv.calls  # KI-36：子页面开新窗口
-    assert ("start",) in wv.calls
+    # KI-88：private_mode 下 pywebview 每开一个窗口都清空共享的 cookie 存储，会把主窗口登出
+    assert ("start", {"private_mode": False}) in wv.calls
     assert "path" in seen and ("picker", ["/v/a.mov"]) in seen and "stale" in seen
     assert seen[-2:] == ["jobs.shutdown", "srv.shutdown"]  # 关窗口 = 停任务，不留孤儿进程
 

@@ -30,8 +30,8 @@ def main() -> None:
     applog.setup("app")  # 第一件事：窗口化 App 没有终端，之后的一切都要能在日志里找到
     proc.ensure_bundled_path()
     srv, url = server.serve_in_background()
-    window = webview.create_window(
-        "AI 粗剪", url, width=1380, height=900,
+    window = webview.create_window(  # KI-88：一次性入口地址，服务端换成 HttpOnly 会话 cookie
+        "AI 粗剪", server.entry_url(url), width=1380, height=900,
         min_size=(1080, 680), text_select=True)
 
     def pick_video():
@@ -46,7 +46,9 @@ def main() -> None:
         title, url, width=1280, height=860, min_size=(960, 600), text_select=True))
     server.report_stale_job()
     try:
-        webview.start()
+        # KI-88：private_mode=True 时 pywebview（cocoa）每建一个窗口都清空共享的 WebKit 数据，
+        # 开子窗口会把主窗口的会话 cookie 一起清掉；会话 cookie 不落盘、每次启动都换值
+        webview.start(private_mode=False)
     finally:
         jobs.shutdown_all()  # 关窗口 = 停掉后台任务，不留孤儿进程继续计费
         srv.shutdown()

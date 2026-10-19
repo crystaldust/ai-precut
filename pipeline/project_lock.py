@@ -4,6 +4,9 @@
 命令行和剪辑台起的任务（子进程里同样跑 aicut）都经过 aicut.main，所以只要有任务在用这个项目，
 不论它来自哪个剪辑台实例、还是终端，清理都拿不到独占锁 → 拒绝。进程退出（含被强杀）锁自动释放。
 文件系统不支持 flock 时不阻断（记 warning）：锁是保护，不能让剪辑跑不起来。
+
+出片的「切片 → 写时间线 → 清理不再引用的切片」另持一把**独占**的出片锁（KI-89 复审）：
+否则两个并发出片时，后一个的清理会删掉前一个刚切好、还没写进时间线的切片。
 """
 from __future__ import annotations
 
@@ -15,6 +18,7 @@ from pathlib import Path
 from typing import Iterator
 
 LOCK_FILE = ".aicut-busy.lock"
+BUILD_LOCK_FILE = ".aicut-build.lock"
 LOCK_MODE = 0o600
 UNSUPPORTED = "项目锁不可用（%s），%s 不加锁继续"
 _LOG = logging.getLogger("aicut.project_lock")
@@ -24,14 +28,14 @@ class Busy(RuntimeError):
     """这个项目正在被某个任务使用。"""
 
 
-def _open(pdir: Path) -> int:
+def _open(pdir: Path, name: str = LOCK_FILE) -> int:
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-    return os.open(Path(pdir) / LOCK_FILE, flags, LOCK_MODE)
+    return os.open(Path(pdir) / name, flags, LOCK_MODE)
 
 
 @contextlib.contextmanager
-def _locked(pdir: Path, mode: int) -> Iterator[None]:
-    fd = _open(pdir)
+def _locked(pdir: Path, mode: int, name: str = LOCK_FILE) -> Iterator[None]:
+    fd = _open(pdir, name)
     try:
         try:
             fcntl.flock(fd, mode)
@@ -49,6 +53,12 @@ def _locked(pdir: Path, mode: int) -> Iterator[None]:
 def busy(pdir: Path):
     """任务使用项目期间持有的共享锁（多个任务可同时持有；等独占的清理做完）。"""
     return _locked(pdir, fcntl.LOCK_SH)
+
+
+def build_section(pdir: Path, *, blocking: bool = True):
+    """出片关键段的独占锁：默认等前一个出片做完；blocking=False 时拿不到立即抛 Busy。"""
+    mode = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+    return _locked(pdir, mode, BUILD_LOCK_FILE)
 
 
 def exclusive(pdir: Path):

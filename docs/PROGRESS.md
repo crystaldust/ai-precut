@@ -68,7 +68,7 @@
 | 5.2 日志 + 诊断包 | ✅ | 日志落 `~/Library/Logs/剪辑台/`，一键诊断包（GL-19 `ac3f15c`，FR-13）；待人工放行 |
 | 5.5 许可合规 | ✅ | ffmpeg 8.1.3 LGPL 自建、H.264 一律 VideoToolbox、随包许可声明与源码（GL-04 `ac3f15c`） |
 | 5.6 构建矩阵 | ⚠️ | 只出 arm64（已决定不支持 Intel）；Windows 安装包未做 |
-| 桌面壳（pywebview + 本地服务） | ✅ | `app/main.py` 可用；本地服务 Host/Origin/token 校验（GL-05/06）、任务互斥与取消（GL-17）；KI-88 未修 |
+| 桌面壳（pywebview + 本地服务） | ✅ | `app/main.py` 可用；本地服务 Host/Origin 校验 + 一次性 nonce 换 HttpOnly 会话 cookie（GL-05/06、KI-88）、任务互斥与取消（GL-17） |
 | 资源与二进制内嵌 | ✅ | ffmpeg/ffprobe、模板、静态文件已内嵌；ASR 走 HTTPS 直连，不再需要 mediakit-cli（GL-01） |
 | 冻结模式适配 | ✅ | 子任务同进程执行；字符串退出码（GL-12）、全局 stdout 互踩（GL-17）已修 |
 | 一条命令构建 | ✅ | `./packaging/build_app.sh` → `dist/AI粗剪.app`；下载校验哈希（GL-04） |

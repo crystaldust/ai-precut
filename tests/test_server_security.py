@@ -14,9 +14,10 @@ def test_server_smoke(gui_server):
     assert "projects" in json.loads(body)
 
 
-# ---------------------------------------------------------------- GL-05
-def test_token_is_random_per_process(gui_server):
-    assert len(gui_server.module.API_TOKEN) >= 32
+# ---------------------------------------------------------------- GL-05 / KI-88
+def test_session_secret_is_random_per_process(gui_server):
+    from gui import session
+    assert len(session.SECRET) >= 64
 
 
 def test_api_get_without_token_forbidden(gui_server):
@@ -26,8 +27,9 @@ def test_api_get_without_token_forbidden(gui_server):
 
 
 def test_api_get_wrong_token_forbidden(gui_server):
+    from gui import session
     status, _, _ = call(gui_server, "GET", "/api/projects", token=False,
-                        headers={"X-AICUT-Token": "x"})
+                        headers={"Cookie": f"{session.cookie_name(gui_server.port)}=x"})
     assert status == 403
 
 
@@ -103,10 +105,12 @@ def test_pick_post_with_empty_json_ok(gui_server, monkeypatch):
 
 @pytest.mark.parametrize("path", ["/", "/static/index.html", "/static/browse.html",
                                   "/static/confirm.html", "/static/calibrate.html"])
-def test_pages_have_token_injected(gui_server, path):
-    status, body, _ = call(gui_server, "GET", path, token=False)
+def test_pages_need_cookie_and_hold_no_secret(gui_server, path):
+    from gui import session
+    assert call(gui_server, "GET", path, token=False)[0] == 403  # KI-88：「请从剪辑台 App 打开」
+    status, body, _ = call(gui_server, "GET", path)
     assert status == 200
-    assert gui_server.module.API_TOKEN.encode() in body
+    assert session.SECRET.encode() not in body
     assert b"__AICUT_TOKEN__" not in body
 
 
@@ -114,7 +118,7 @@ def test_static_js_served_without_token(gui_server):
     status, body, headers = call(gui_server, "GET", "/static/common.js", token=False)
     assert status == 200
     assert "javascript" in headers["content-type"]
-    assert b"X-AICUT-Token" in body
+    assert b"X-AICUT-Token" not in body
 
 
 @pytest.mark.parametrize("path", ["/", "/api/projects", "/api/nope"])
@@ -125,17 +129,18 @@ def test_security_headers(gui_server, path):
     assert headers["cross-origin-resource-policy"] == "same-origin"
 
 
-def test_media_needs_host_not_token(gui_server):
+def test_media_needs_host_and_cookie(gui_server):
     make_project(gui_server.root, **{"work/proxy.mp4": b"\x00" * 100})
-    status, _, headers = call(gui_server, "GET", "/media/p1/proxy", token=False)
+    assert call(gui_server, "GET", "/media/p1/proxy", token=False)[0] == 403  # KI-88
+    status, _, headers = call(gui_server, "GET", "/media/p1/proxy")
     assert status == 200
     assert headers["cross-origin-resource-policy"] == "same-origin"
-    status, _, headers = call(gui_server, "GET", "/media/p1/proxy", token=False,
+    status, _, headers = call(gui_server, "GET", "/media/p1/proxy",
                               headers={"Range": "bytes=0-9"})
     assert status == 206
     assert headers["x-content-type-options"] == "nosniff"
     evil = {"Host": f"evil.example:{gui_server.port}"}
-    assert call(gui_server, "GET", "/media/p1/proxy", token=False, headers=evil)[0] == 403
+    assert call(gui_server, "GET", "/media/p1/proxy", headers=evil)[0] == 403
 
 
 # ---------------------------------------------------------------- GL-06
@@ -253,7 +258,7 @@ def test_unlisted_static_file_404(gui_server, fake_static, path):
 
 
 def test_listed_static_file_still_served(gui_server, fake_static):
-    assert call(gui_server, "GET", "/static/index.html", token=False)[0] == 200
+    assert call(gui_server, "GET", "/static/index.html")[0] == 200
     assert call(gui_server, "GET", "/static/common.js", token=False)[0] == 200
 
 
@@ -267,7 +272,7 @@ def test_every_script_referenced_by_pages_is_whitelisted(gui_server):
         srcs |= set(re.findall(r'<script[^>]*\ssrc="/static/([^"]+)"', html))
     assert srcs and srcs <= static_files.STATIC_FILES
     for name in sorted(srcs | set(pages)):
-        assert call(gui_server, "GET", f"/static/{name}", token=False)[0] == 200, name
+        assert call(gui_server, "GET", f"/static/{name}")[0] == 200, name
 
 
 # ---------------------------------------------------------------- KI-53：CSP 不再允许内联脚本

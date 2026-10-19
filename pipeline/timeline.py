@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from pipeline import build_documentary
+from pipeline.clips import clip_source
 
 SUB_BREAK = re.compile(r"(?<=[，。！？；])")  # 字幕卡只在这些标点后断开
 DEFAULT_MAX_CHARS = 14
@@ -32,8 +33,9 @@ def split_sub(text: str, max_chars: int) -> list[str]:
     return cards or [text]
 
 
-def compose_timeline(c: dict, preset: dict, shots: list[dict], clips_dir: Path,
+def compose_timeline(c: dict, preset: dict, shots: list[dict], clips: dict[str, Path] | Path,
                      durations: dict[str, float]) -> dict:
+    """clips：{镜头 id: 切片路径}（KI-89 带键命名）；传目录则按旧命名 <id>.mp4。"""
     max_chars = preset.get("subtitle", {}).get("max_chars", DEFAULT_MAX_CHARS)
     tl = {"project": {"name": c["title"], "width": 1080, "height": 1920,
                       "fps": 30, "platform": c.get("platform", "douyin")},
@@ -41,7 +43,7 @@ def compose_timeline(c: dict, preset: dict, shots: list[dict], clips_dir: Path,
     t = 0.0
     for sh in shots:
         dur = durations.get(sh["id"], round(sh["out"] - sh["in"], 3))
-        tl["video"].append({"id": sh["id"], "source": str(clips_dir / f"{sh['id']}.mp4"),
+        tl["video"].append({"id": sh["id"], "source": str(clip_source(clips, sh["id"])),
                             "in": 0.0, "out": dur, "timeline_in": round(t, 3),
                             "role": "broll" if not sh.get("sub") else "speech",
                             "caption": sh.get("note", "")})

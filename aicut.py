@@ -521,37 +521,20 @@ def cmd_brief(args) -> None:
 
 
 # ------------------------------------------------------------------ build
-def ensure_clips(pdir: Path, c: dict, shots: list[dict]) -> Path:
-    """只重切"入出点变了"的镜头，其余复用缓存。"""
-    check_or_die(schema.check_shot_ids, shots)  # id 即切片文件名：必须安全且唯一
-    clips_dir = pdir / "work/clips"
-    clips_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = clips_dir / "manifest.json"
-    manifest = media_io.read_manifest(manifest_path)  # 损坏只是缓存：提示后全部重切
-    src = Path(c["material"])
-    changed = 0
-    for sh in shots:
-        key = build_documentary.clip_key(sh, src)
-        dst = clips_dir / f"{sh['id']}.mp4"
-        if manifest.get(sh["id"]) == key and media_io.complete_or_adopt(dst):
-            continue
-        info(f"切镜头 {sh['id']}（{sh['out'] - sh['in']:.1f}s）")
-        try:
-            clips.cut_clip(dst, src, sh)
-        except media_io.MediaError as exc:
-            die(f"切镜头 {sh['id']} 失败：{exc}")
-        manifest = {**manifest, sh["id"]: key}
-        save_json(manifest_path, manifest)  # 每镜落盘：中断后已切好的不重切
-        changed += 1
-    info(f"切片：{changed} 个新切，{len(shots) - changed} 个复用")
-    return clips_dir
+def ensure_clips(pdir: Path, c: dict, shots: list[dict]) -> dict[str, Path]:
+    """只切缓存里没有的镜头（切片按内容命名，KI-89），返回 {镜头 id: 切片路径}。"""
+    check_or_die(schema.check_shot_ids, shots)  # id 是切片文件名的一部分：必须安全且唯一
+    try:
+        return clips.ensure(pdir, Path(c["material"]), shots, say=info)
+    except clips.CutFailed as exc:  # 已切好的每镜原子落盘：重跑不重切
+        die(str(exc))
 
 
-def actual_durations(clips_dir: Path, shots: list[dict]) -> dict[str, float]:
+def actual_durations(clip_paths: dict[str, Path] | Path, shots: list[dict]) -> dict[str, float]:
     """以切片文件真实时长为准，避免"请求 10 秒、实际 8 秒"导致预览和草稿不一致。"""
     out = {}
     for sh in shots:
-        d = media_io.duration_or_zero(clips_dir / f"{sh['id']}.mp4")
+        d = media_io.duration_or_zero(clips.clip_source(clip_paths, sh["id"]))
         out[sh["id"]] = round(d if d > 0 else sh["out"] - sh["in"], 3)
     return out
 
@@ -602,16 +585,17 @@ def cmd_build(args) -> None:
     if low := diskspace.shortfall(pdir, build_need(pdir, c, shots, args.version)):
         die(low)  # KI-33：切片 / 预览之前确认磁盘够（只算要写的，M5）
 
-    with applog.stage(pdir / "work", "clips"):
-        clips_dir = ensure_clips(pdir, c, shots)
-    version = args.version or next_version(pdir)
-    vdir = pdir / "output" / version
-    vdir.mkdir(parents=True, exist_ok=True)
-
-    durations = actual_durations(clips_dir, shots)
-    tl = compose_timeline(c, preset, shots, clips_dir, durations)
-    save_json(vdir / "timeline.json", schema.stamp(tl))  # KI-37；指纹仍按未打标的时间线算
-    clips.save_snapshot(vdir, shots)  # 清理缓存后导出这一版时按它补切（审查修复 H2）
+    with project_lock.build_section(pdir):  # KI-89 复审：切片 → 时间线 → 清理，同项目出片串行
+        with applog.stage(pdir / "work", "clips"):
+            clip_paths = ensure_clips(pdir, c, shots)
+        version = args.version or next_version(pdir)
+        vdir = pdir / "output" / version
+        vdir.mkdir(parents=True, exist_ok=True)
+        durations = actual_durations(clip_paths, shots)
+        tl = compose_timeline(c, preset, shots, clip_paths, durations)
+        save_json(vdir / "timeline.json", schema.stamp(tl))  # KI-37；指纹仍按未打标的时间线算
+        clips.save_snapshot(vdir, shots)  # 清理缓存后导出这一版时按它补切（审查修复 H2）
+        clips.prune_unreferenced(pdir)  # KI-89：带键切片只留仍被某一版引用的
     tl_hash = build_documentary.preview_fingerprint(tl, shots, Path(c["material"]))  # KI-11
     total = sum(durations.values())
     ok(f"时间线：{len(shots)} 镜，{int(total // 60)}:{total % 60:05.2f}")

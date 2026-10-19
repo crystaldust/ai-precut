@@ -1,8 +1,5 @@
-// 剪辑台各页面共用：API token、转义（GL-05、GL-07）与事件委托（KI-53）。必须在其它脚本之前同步加载。
+// 剪辑台各页面共用：API 凭证、转义（GL-05、GL-07）与事件委托（KI-53）。必须在其它脚本之前同步加载。
 (function(){
-  const meta = document.querySelector('meta[name="aicut-token"]');
-  const TOKEN = meta ? meta.content : '';
-  const TOKEN_HEADER = 'X-AICUT-Token';
   const nativeFetch = window.fetch.bind(window);
 
   function isApi(input){
@@ -11,15 +8,11 @@
     return u.origin === location.origin && u.pathname.startsWith('/api/');
   }
 
-  // 所有同源 /api/ 请求自动带 token；<video src> 走 /media/，不需要
+  // KI-88：凭证是服务端下发的 HttpOnly 会话 cookie（页面里没有 token）。同源 /api/ 请求显式带上它；
+  // <video src> 走 /media/，浏览器同源请求自动带 cookie
   window.fetch = (input, init) => {
     if (!isApi(input)) return nativeFetch(input, init);
-    const opt = {...(init || {})};
-    const base = opt.headers || (typeof input === 'string' ? {} : input.headers);
-    const headers = new Headers(base || {});
-    headers.set(TOKEN_HEADER, TOKEN);
-    opt.headers = headers;
-    return nativeFetch(input, opt);
+    return nativeFetch(input, {...(init || {}), credentials: 'same-origin'});
   };
 
   // 所有动态文本进 innerHTML / 属性前都过 esc()；属性必须用双引号包住

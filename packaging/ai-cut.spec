@@ -23,7 +23,7 @@ BUILD_NUMBER = _version.build_number(ROOT)  # 拿不到就构建失败，不静�
 hidden = [
     "aicut",
     "gui.confirm", "gui.desktop", "gui.jobs", "gui.maintenance",
-    "gui.media", "gui.payloads", "gui.server", "gui.settings",
+    "gui.media", "gui.payloads", "gui.server", "gui.session", "gui.settings",
     "gui.static_files", "gui.support", "gui.views",
     "pipeline.applog", "pipeline.asr_state", "pipeline.brief", "pipeline.build_documentary",
     "pipeline.cache", "pipeline.classify", "pipeline.cli_args", "pipeline.clips",

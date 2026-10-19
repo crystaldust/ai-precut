@@ -59,7 +59,7 @@
 | 9 | 密钥与运维 | 密钥文件权限与脱敏正确；HTTP 边界校验；费用、进程、启动脚本、版本号可控 | KI-28..KI-37 KI-50..KI-55 KI-57 KI-61..KI-63 KI-65 KI-67..KI-72 KI-74 KI-75 KI-83 KI-84 KI-86 KI-87 | complete | [plan](../PRPs/plans/m9-secrets-ops.plan.md) · [report](../PRPs/reports/m9-secrets-ops-report.md) · `9017287` |
 | 10 | 测试达标 | 覆盖率 ≥ 80%；有素材 → 剪映草稿的端到端测试 | KI-38 KI-39 | complete | [plan](../PRPs/plans/m10-test-coverage.plan.md) · [report](../PRPs/reports/m10-test-coverage-report.md) · `25c76fc` |
 | 11 | 文档一致 | 指标可检验、PLAN 与 PRD 对齐、术语统一 | KI-40..KI-44 | complete | [plan](../PRPs/plans/m11-docs-consistency.plan.md) · [report](../PRPs/reports/m11-docs-consistency-report.md) · `83d2a1a` |
-| 12 | 收尾 | 相对 staging 路径可用；同机其他用户拿不到 token；旧版本切片不被新版本改动 | KI-80 KI-88 KI-89 | in-progress | — |
+| 12 | 收尾 | 相对 staging 路径可用；同机其他用户拿不到 token；旧版本切片不被新版本改动 | KI-80 KI-88 KI-89 | in-progress | [plan](../PRPs/plans/m12-wrapup.plan.md) · [report](../PRPs/reports/m12-wrapup-report.md) |
 
 ## Open Questions
 

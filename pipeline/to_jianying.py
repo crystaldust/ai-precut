@@ -249,7 +249,7 @@ def bundle_media(draft_dir: Path, final_dir: Path) -> int:
     """
     res = draft_dir / "Resources"
     res.mkdir(parents=True, exist_ok=True)
-    final_res = final_dir / "Resources"
+    final_res = Path(os.path.abspath(final_dir)) / "Resources"  # KI-80：剪映只认绝对路径
     content_path = draft_dir / "draft_content.json"
     content = json.loads(content_path.read_text(encoding="utf-8"))
     total, seen = 0, {}
@@ -696,7 +696,9 @@ def main() -> None:
         tl = json.loads(Path(args.timeline).read_text(encoding="utf-8"))
         texts = layout_texts(tl.get("text", []))
         expect = expected(tl, texts)
-        draft_dir = build_staging(tl, Path(args.staging), name, texts=texts)
+        # KI-80：相对 --staging 会让草稿与 dry-run 校验里的素材路径变成相对路径
+        staging = Path(os.path.abspath(Path(args.staging).expanduser()))
+        draft_dir = build_staging(tl, staging, name, texts=texts)
         draft_id = normalize(draft_dir)
         size = bundle_media(draft_dir, root / name)
         align_with_template(draft_dir, TEMPLATE)

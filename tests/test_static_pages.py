@@ -7,7 +7,6 @@ import pytest
 STATIC = Path(__file__).resolve().parent.parent / "gui" / "static"
 PAGES = ["index.html", "browse.html", "confirm.html", "calibrate.html"]
 XSS_PAGES = ["index.html", "browse.html", "confirm.html"]
-TOKEN_META = '<meta name="aicut-token" content="__AICUT_TOKEN__">'
 COMMON_JS = '<script src="/static/common.js"></script>'
 
 
@@ -28,20 +27,21 @@ ALL_SOURCES = sorted(p.name for p in STATIC.glob("*.html") if p.name != "prototy
     sorted(p.name for p in STATIC.glob("*.js"))
 
 
-# ---------------------------------------------------------------- GL-05
+# ---------------------------------------------------------------- GL-05 / KI-88
 @pytest.mark.parametrize("page", PAGES)
-def test_pages_have_token_meta_and_common_js(page):
+def test_pages_load_common_js_first_and_hold_no_token(page):
     src = _html(page)
     own = f'<script src="/static/{page.replace(".html", ".js")}"></script>'
-    assert TOKEN_META in src and COMMON_JS in src and own in src
-    assert src.index(TOKEN_META) < src.index(COMMON_JS) < src.index(own)
+    assert COMMON_JS in src and own in src
+    assert src.index(COMMON_JS) < src.index(own)
+    assert "aicut-token" not in src and "__AICUT_TOKEN__" not in src  # 凭证只在 HttpOnly cookie 里
 
 
 def test_common_js_escapes_quote():
     js = _read("common.js")
     assert "window.esc" in js
     assert "&#39;" in js
-    assert "X-AICUT-Token" in js
+    assert "X-AICUT-Token" not in js and "credentials" in js
 
 
 def test_pick_sends_json():

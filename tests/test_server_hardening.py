@@ -139,8 +139,9 @@ def test_state_missing_project_404(gui_server):
 
 # ---------------------------------------------------------------- MEDIUM 4：请求体上限
 def _raw_post(gs, headers: dict, body: bytes = b"") -> int:
+    from gui import session
     lines = [f"POST /api/browse/must HTTP/1.1", f"Host: 127.0.0.1:{gs.port}",
-             f"X-AICUT-Token: {gs.module.API_TOKEN}", "Content-Type: application/json",
+             f"Cookie: {session.cookie_name(gs.port)}={session.SECRET}", "Content-Type: application/json",
              "Connection: close"]
     lines += [f"{k}: {v}" for k, v in headers.items()]
     data = ("\r\n".join(lines) + "\r\n\r\n").encode() + body

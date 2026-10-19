@@ -4,6 +4,7 @@
 pywebview（cocoa）只处理用户点链接的导航，页面里的 window.open 会被直接吞掉。
 桌面壳启动时注入窗口打开器；页面 POST /api/window，这里在 App 内开新窗口。
 没有打开器（浏览器模式）或打开失败 → {"opened": false}，页面自己退回 window.open。
+每个新窗口的地址都带自己的一次性 nonce，自己换会话 cookie（KI-88），不依赖窗口间共享 cookie。
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import quote
 
+from gui import session
 from pipeline import applog
 
 WINDOW_PAGES = {"browse": "浏览素材", "calibrate": "剪辑偏好", "confirm": "确认与提问"}
@@ -41,7 +43,7 @@ def handle_post(path: str, body: dict, resolve: Callable[[str], Path],
         return 400, {"error": str(exc)}
     if OPENER is None:
         return 200, {"opened": False}
-    url = PAGE_URL.format(port=int(port), page=page, project=quote(name, safe=""))
+    url = session.entry_url(PAGE_URL.format(port=int(port), page=page, project=quote(name, safe="")))
     try:
         OPENER(WINDOW_TITLE.format(label=WINDOW_PAGES[page], project=name), url)
     except Exception:  # noqa: BLE001 - 开不了窗口就让页面自己 window.open，不当成失败

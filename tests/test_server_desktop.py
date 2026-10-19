@@ -32,9 +32,12 @@ def test_opener_gets_local_url_and_title(gui_server, opener, page):
     status, data = _open(gui_server, project="九月 一号", page=page)
     assert status == 200 and data == {"opened": True}
     title, url = seen[0]
-    assert url == (f"http://127.0.0.1:{gui_server.port}/static/{page}.html"
-                   "?project=%E4%B9%9D%E6%9C%88%20%E4%B8%80%E5%8F%B7")
+    base, nonce = url.split("&nonce=")
+    assert base == (f"http://127.0.0.1:{gui_server.port}/static/{page}.html"
+                    "?project=%E4%B9%9D%E6%9C%88%20%E4%B8%80%E5%8F%B7")
     assert "九月 一号" in title
+    from gui import session  # KI-88：每个子窗口一个一次性 nonce，自己换 cookie
+    assert session.redeem(nonce) is True and session.redeem(nonce) is False
 
 
 def test_opener_failure_falls_back(gui_server, opener):

@@ -99,10 +99,11 @@ def preset_dir(gui_server, tmp_path_factory, monkeypatch):
 
 
 def call(gs, method, path, body=None, *, token=True, headers=None, raw=None):
-    """发请求并返回 (status, bytes, headers)。默认带合法 Host/token/JSON。"""
+    """发请求并返回 (status, bytes, headers)。默认带合法 Host/会话 cookie/JSON（token=False 不带凭证）。"""
+    from gui import session
     h = {"Host": f"127.0.0.1:{gs.port}"}
-    if token:
-        h["X-AICUT-Token"] = getattr(gs.module, "API_TOKEN", "")
+    if token:  # KI-88：凭证是 nonce 换来的会话 cookie
+        h["Cookie"] = f"{session.cookie_name(gs.port)}={session.SECRET}"
     data = raw if raw is not None else (None if body is None else json.dumps(body).encode())
     if data is not None:
         h["Content-Type"] = "application/json"
