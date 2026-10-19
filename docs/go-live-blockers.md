@@ -10,9 +10,9 @@
 | GL-02 | GUI 无 API Key 配置入口（只能 CLI `config set`）；首次使用需告知两条外发数据流（PRD §7）；无 DeepSeek Key 时 prepare 静默跳过文本分析 | `aicut.py:591-594, 658-684`；`gui/server.py` | open |
 | GL-03 | 交付说明仍写「右键→打开」，macOS 15+ 已失效。改为「系统设置 → 隐私与安全性 → 仍要打开」（不做签名公证，PRD §13） | `docs/PACKAGING.md:56`；`dist/` 内使用说明 | open |
 | GL-04 | 内置 ffmpeg 为 GPL 构建（`--enable-gpl --enable-libx264`）。换 LGPL 构建，`libx264` 全部改 `h264_videotoolbox`；下载加 `curl -f` + SHA256 校验；随包附 THIRD-PARTY-NOTICES | `packaging/build_app.sh:13-17`；`aicut.py:287,447`；`pipeline/render_preview.py:97`；`pipeline/build_documentary.py` | open |
-| GL-05 | 本地服务无 Host/Origin/token 校验、POST 不验 Content-Type → 任意网页可跨站调用全部 API，DNS rebinding 可读数据 | `gui/server.py:323-330, 380-622` | open |
-| GL-06 | 路径穿越：`version` 参数可在任意位置建目录写文件；镜头 `id` 可让 ffmpeg 覆盖任意 .mp4；`project` 未经校验传给 aicut | `gui/server.py:530-556` → `aicut.py:437-443, 543-545` | open |
-| GL-07 | XSS：LLM / 转写内容直接 innerHTML；`confirm.html` 内联 JS 拼接未完整转义 | `gui/static/browse.html:116-175`；`index.html:186,419,429,498`；`confirm.html:92,99` | open |
+| GL-05 | 本地服务无 Host/Origin/token 校验、POST 不验 Content-Type → 任意网页可跨站调用全部 API，DNS rebinding 可读数据 | `gui/server.py:323-330, 380-622` | fixed `624e979` |
+| GL-06 | 路径穿越：`version` 参数可在任意位置建目录写文件；镜头 `id` 可让 ffmpeg 覆盖任意 .mp4；`project` 未经校验传给 aicut | `gui/server.py:530-556` → `aicut.py:437-443, 543-545` | fixed `624e979` |
+| GL-07 | XSS：LLM / 转写内容直接 innerHTML；`confirm.html` 内联 JS 拼接未完整转义 | `gui/static/browse.html:116-175`；`index.html:186,419,429,498`；`confirm.html:92,99` | fixed `624e979` |
 | GL-08 | 「必留进片率 100%」无保证：话题预算为 0/用尽、`_trim`、exclude 都会丢 must_keep 段 | `pipeline/select.py:129-133, 173, 183-187` | open |
 | GL-09 | 必留/关键信息被静默丢弃：LLM 标注批次失败或漏 id 时该批句子被判废片且流程显示成功；待定超限时把必留话题段降为废片 | `pipeline/understand_text.py:167-181`；`pipeline/classify.py:56-59, 87-96` | open |
 | GL-10 | 导出剪映草稿崩溃：片头字幕卡与普通字幕同轨重叠抛 `SegmentOverlap`；`card.at` 超总时长产生负时长 | `pipeline/to_jianying.py:99-113`；`pipeline/build_documentary.py:103-108` | open |
@@ -23,11 +23,11 @@
 | GL-15 | 中断后半成品被当成完成：ffmpeg 直写最终文件，`exists()` 判完成 → 只转写前半段且计费 | `aicut.py:205-209, 284-289, 442-449`；`pipeline/build_documentary.py:80` | open |
 | GL-16 | ASR 任务失败后 `asr_task.json` 不清，3 天内重试永远失败；任务未绑定音频指纹 | `pipeline/cloud.py:148-184` | open |
 | GL-17 | 任务无互斥/取消：同项目可并发多个任务（重复计费、互相覆盖）；冻结模式全局 `redirect_stdout`/`sys.argv` 多线程互踩；未知任务留幽灵 running | `gui/server.py:42-57, 215-295`；`pipeline/proc.py:61-67` | open |
-| GL-18 | 保存丢数据：固定 `.tmp` 名并发保存失败（实测 200 次失败 90 次）；请求体解析失败返回 `{}` 后用空列表覆盖分镜；`overrides.json` 损坏时当空并在下次裁决时永久覆盖 | `gui/server.py:81-85, 323-330, 524-543`；`pipeline/review.py:23-67` | open |
+| GL-18 | 保存丢数据：固定 `.tmp` 名并发保存失败（实测 200 次失败 90 次）；请求体解析失败返回 `{}` 后用空列表覆盖分镜；`overrides.json` 损坏时当空并在下次裁决时永久覆盖 | `gui/server.py:81-85, 323-330, 524-543`；`pipeline/review.py:23-67` | fixed `624e979` |
 | GL-19 | 无日志落盘、无诊断包：出错后用户和开发者都拿不到信息（PRD FR-13） | 全仓无 logging；`packaging/ai-cut.spec:64`；`gui/server.py:69,302` | open |
 | GL-20 | GUI 新建项目在 `.command`/开发方式启动时卡在 `input()` 永不返回，并留空目录导致重试失败 | `gui/server.py:58`；`aicut.py:162-165` | open |
-| GL-21 | 中文/空格项目名视频全部 404（服务端未 percent-decode） | `gui/server.py` 路由；`gui/static/index.html:204,230,262,430` | open |
+| GL-21 | 中文/空格项目名视频全部 404（服务端未 percent-decode） | `gui/server.py` 路由；`gui/static/index.html:204,230,262,430` | fixed `624e979` |
 | GL-22 | 字幕框点不进（点击冒泡触发整表重绘）；任务失败后模态层无法关闭，只能杀 App | `gui/static/index.html:344-370, 435-468` | open |
-| GL-23 | 前端镜头 id 重复（删一个再加一个）→ 切片互相覆盖，成片重复内容 | `gui/static/index.html:388` | open |
+| GL-23 | 前端镜头 id 重复（删一个再加一个）→ 切片互相覆盖，成片重复内容 | `gui/static/index.html:388` | fixed `624e979` |
 | GL-24 | 画面过暗分支把必留话题段、标注失败的待定段直接判废片（与 GL-09 同类静默丢弃） | `pipeline/classify.py:82-83` | open |
 | GL-25 | build 不检查分镜表是否含全部必留段；GUI 手存的 `shots.json` 优先于 `shots-selected.json`，漏必留照样出片 | `aicut.py:531-536` | open |

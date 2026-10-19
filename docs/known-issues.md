@@ -52,7 +52,7 @@
 | KI-28 | 密钥文件先以默认权限创建再 chmod；`chmod` 父目录可能改动共享目录；`delete` 不清 legacy key；keyring 删除失败被吞 | `pipeline/secrets.py:58-141` | open |
 | KI-29 | CLI 输出原文写入 `failed.json`，未经 `secrets.mask` 脱敏；网络错误子串匹配过宽 | `pipeline/cloud.py:76-82, 187-203` | open |
 | KI-30 | Range 请求解析错误（后缀范围、越界未返回 416） | `gui/server.py:340-350` | open |
-| KI-31 | 请求体非法时未捕获异常直接断连；shots 入出点未校验（负数、nan、out≤in） | `gui/server.py:99-110, 534-543` | open |
+| KI-31 | 请求体非法时未捕获异常直接断连；shots 入出点未校验（负数、nan、out≤in） | `gui/server.py:99-110, 534-543` | fixed `624e979` |
 
 ## 运维 / 体验
 
@@ -86,9 +86,9 @@
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-45 | `schema.SchemaTooNew` 继承 `Exception`，`except (ValueError, OSError)` 接不住，项目版本过新时连接直接断开 | `gui/server.py`（`/api/state`、POST `/api/calibrate`）；`pipeline/schema.py:21` | open |
-| KI-46 | `/api/new` 的 title 非字符串时 `.strip()` 抛 AttributeError，连接断开 | `gui/server.py`（`/api/new`） | open |
-| KI-47 | `/api/state` 项目名不合法时返回 404，应为 400 | `gui/server.py`（`/api/state`） | open |
+| KI-45 | `schema.SchemaTooNew` 继承 `Exception`，`except (ValueError, OSError)` 接不住，项目版本过新时连接直接断开 | `gui/server.py`（`/api/state`、POST `/api/calibrate`）；`pipeline/schema.py:21` | fixed `624e979` |
+| KI-46 | `/api/new` 的 title 非字符串时 `.strip()` 抛 AttributeError，连接断开 | `gui/server.py`（`/api/new`） | fixed `624e979` |
+| KI-47 | `/api/state` 项目名不合法时返回 404，应为 400 | `gui/server.py`（`/api/state`） | fixed `624e979` |
 | KI-48 | shots.json 缺 `shots` 键时 KeyError，用户只看到 traceback | `aicut.py`（`cmd_build`） | open |
 | KI-49 | 磁盘上的多选答案不是数组时 `.includes` 抛错，确认页问题整页渲染失败 | `gui/static/confirm.html`（`renderQuestions`） | open |
 | KI-50 | 前端 `move`/`dup`/`del` 的 `saveShots(true)` 不 await，连续操作时并发 POST 可能让旧状态覆盖新状态（原子写只保证不损坏，不保证顺序） | `gui/static/index.html`（`saveShots` 调用点） | open |
