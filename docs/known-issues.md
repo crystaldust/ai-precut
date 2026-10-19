@@ -7,18 +7,18 @@
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-01 | 成片字幕被截成前 28 字；镜头被预算截断时字幕不跟着裁剪 | `pipeline/select.py:154,215,250` | open |
-| KI-02 | `_fix_ending` 会把开场 hook 挪到片尾；取第一个匹配而非最后一个；关键词过泛 | `pipeline/select.py:325-345` | open |
-| KI-03 | 必留原话按逗号切分，碎片命中大量句子被强制入选，成片超长 | `pipeline/select.py:141-160, 395-397` | open |
-| KI-04 | 答案规则 `focus`/`pacing` 只解析不生效；兜底问题「关键信息」绑定空规则；label 截断 12 字互相覆盖 | `pipeline/select.py:87-113`；`pipeline/questions.py:91-92` | open |
-| KI-05 | 确认页答案不生效：页面无入口，prepare 在确认前已跑完选段，无 select 任务 | `gui/server.py:224-251, 600-606`；`aicut.py:588-598` | open |
-| KI-06 | `signals` 未并入 scored 段 → 情绪权重、情绪结尾永远无效 | `pipeline/select.py:77-78, 340-341`；`pipeline/classify.py` | open |
-| KI-07 | 必留话题关键词写死为培训场景且过宽（真实项目 19 话题判 14 个必留）；应外置到 presets | `pipeline/classify.py:19-27, 48` | open |
-| KI-08 | 抢话代理指标过宽（换人+停顿<0.25s 即判可用） | `pipeline/classify.py:101-134` | open |
-| KI-09 | 话题分段一次调用、输出上限 3000 token，长素材 JSON 截断即整条流水线崩；模型脏输出（`"false"` 字符串、非 dict）未校验 | `pipeline/understand_text.py:135-189` | open |
-| KI-10 | `--model` 只记标签不传给客户端 | `pipeline/understand_text.py:184-189`；`pipeline/summarize.py:94-115` | open |
-| KI-11 | 预览缓存哈希漏入出点 → 改镜头后复用旧预览；切片缓存只看文件存在 | `aicut.py:557-563`；`pipeline/build_documentary.py:80` | open |
-| KI-12 | 人工裁决按 segment id 存储，重新分段后套到错误句子上 | `pipeline/review.py:23-67` | open |
+| KI-01 | 成片字幕被截成前 28 字；镜头被预算截断时字幕不跟着裁剪 | `pipeline/select.py:154,215,250` | fixed `bc3c705` |
+| KI-02 | `_fix_ending` 会把开场 hook 挪到片尾；取第一个匹配而非最后一个；关键词过泛 | `pipeline/select.py:325-345` | fixed `bc3c705` |
+| KI-03 | 必留原话按逗号切分，碎片命中大量句子被强制入选，成片超长 | `pipeline/select.py:141-160, 395-397` | fixed `bc3c705` |
+| KI-04 | 答案规则 `focus`/`pacing` 只解析不生效；兜底问题「关键信息」绑定空规则；label 截断 12 字互相覆盖 | `pipeline/select.py:87-113`；`pipeline/questions.py:91-92` | fixed `bc3c705` |
+| KI-05 | 确认页答案不生效：页面无入口，prepare 在确认前已跑完选段，无 select 任务 | `gui/server.py:224-251, 600-606`；`aicut.py:588-598` | fixed `bc3c705` |
+| KI-06 | `signals` 未并入 scored 段 → 情绪权重、情绪结尾永远无效 | `pipeline/select.py:77-78, 340-341`；`pipeline/classify.py` | fixed `bc3c705` |
+| KI-07 | 必留话题关键词写死为培训场景且过宽（真实项目 19 话题判 14 个必留）；应外置到 presets | `pipeline/classify.py:19-27, 48` | fixed `bc3c705` |
+| KI-08 | 抢话代理指标过宽（换人+停顿<0.25s 即判可用） | `pipeline/classify.py:101-134` | fixed `bc3c705` |
+| KI-09 | 话题分段一次调用、输出上限 3000 token，长素材 JSON 截断即整条流水线崩；模型脏输出（`"false"` 字符串、非 dict）未校验 | `pipeline/understand_text.py:135-189` | fixed `bc3c705` |
+| KI-10 | `--model` 只记标签不传给客户端 | `pipeline/understand_text.py:184-189`；`pipeline/summarize.py:94-115` | fixed `bc3c705` |
+| KI-11 | 预览缓存哈希漏入出点 → 改镜头后复用旧预览；切片缓存只看文件存在 | `aicut.py:557-563`；`pipeline/build_documentary.py:80` | fixed `bc3c705` |
+| KI-12 | 人工裁决按 segment id 存储，重新分段后套到错误句子上 | `pipeline/review.py:23-67` | fixed `bc3c705` |
 
 ## 渲染 / 导出
 
@@ -99,7 +99,7 @@
 | KI-55 | `aicut.py` 881 行，超过 800 行软上限（同 KI-54） | `aicut.py` | open |
 | KI-56 | `overrides.json` 损坏时 `select`/`prepare` 不捕获 `OverridesCorrupt`，打出 traceback 而非人话 | `aicut.py`（`cmd_select`）；`pipeline/select.py`（`review.load` 调用处） | fixed `ef3c020` |
 | KI-57 | `createProject` 残留按 URL hash 选项目的启动代码，与随后的 `selectProject(name)` 抢切项目 | `gui/static/index.html`（`createProject`） | open |
-| KI-58 | `_level_of` 只按话题名判必留话题，按关键信息占比判出的必留话题内句子拿不到「必留→待定」保护，与 `topics[].must` 口径不一 | `pipeline/classify.py`（`_level_of`） | open |
+| KI-58 | `_level_of` 只按话题名判必留话题，按关键信息占比判出的必留话题内句子拿不到「必留→待定」保护，与 `topics[].must` 口径不一 | `pipeline/classify.py`（`_level_of`） | fixed `bc3c705` |
 | KI-59 | 同名草稿重跑先拷完媒体才在 `install()` 报「已存在」，白耗时间 | `pipeline/to_jianying.py`（`install`） | fixed `71e44e7` |
 | KI-60 | 子任务失败输出只打印末尾 600/500 字符，「草稿静态校验未通过」的开头可能被截掉 | `aicut.py`（`cmd_build` 调 to_jianying 处） | fixed `ef3899f` |
 | KI-61 | ffmpeg 调用无超时，坏素材/网络盘卡住时 GUI 任务永远 running（取消见 GL-17） | `pipeline/media_io.py`（`run_ffmpeg`） | open |
@@ -114,7 +114,7 @@
 | KI-70 | 第三方错误文本（mediakit-cli 输出前 400 字、LLM 响应体前 300 字）未按已知 Key 脱敏就进任务日志与 `failed.json`（纵深防御） | `pipeline/cloud.py`；`pipeline/llm.py` | open |
 | KI-71 | 上次退出遗留的后台任务只在点按钮时以 409 出现，界面不主动提示 | `gui/server.py`（`report_stale_job`）；`gui/static/index.html` | open |
 | KI-72 | 看门狗依赖系统 `pgrep`，缺失时跳过「先正常退出」直接 SIGKILL 整组 | `pipeline/proc.py`（`start_parent_watchdog`） | open |
-| KI-73 | 预览字幕首选字体 `/System/Library/Fonts/PingFang.ttc` 在当前 macOS 上不存在，实际回落宋体 | `pipeline/render_preview.py:20-24` | open |
+| KI-73 | 预览字幕首选字体 `/System/Library/Fonts/PingFang.ttc` 在当前 macOS 上不存在，实际回落宋体 | `pipeline/render_preview.py:20-24` | fixed `bc3c705` |
 | KI-74 | 从钥匙串/凭证文件读出的 Key 未去首尾空白，带换行时 LLM 请求头报错 | `pipeline/secrets.py`（`get`） | open |
 | KI-75 | ASR 上传缓存：云端提前作废 file_id 时要等 12h 过期才重传 | `pipeline/cloud.py`（`work/asr_upload.json`） | open |
 | KI-76 | 预览字幕 `esc()` 不转义 `%`：LGPL ffmpeg 报 `Stray %` 该条字幕静默不显示，Homebrew ffmpeg 直接失败 | `pipeline/render_preview.py:37-40` | fixed `71e44e7` |
@@ -126,6 +126,6 @@
 | KI-82 | `ensure_jy_python` 不检查已有 venv 的 Python 版本，≤3.10 的旧 venv 不认 `-P` | `aicut.py:136` | fixed `71e44e7` |
 | KI-83 | `aicut summary` 子命令无 `--model`，CLI 上 KI-10 只对 `text` 生效 | `aicut.py`（`summary` 子命令） | open |
 | KI-84 | 旧逻辑存下的跨题串规则会沿用到剪辑师重新保存确认页为止 | `pipeline/select.py`（`_current_rules`） | open |
-| KI-85 | `review.clear()` 按存储时 id 删除，裁决被重定位后删不到（目前无调用方） | `pipeline/review.py`（`clear`） | open |
+| KI-85 | `review.clear()` 按存储时 id 删除，裁决被重定位后删不到（目前无调用方） | `pipeline/review.py`（`clear`） | fixed `bc3c705` |
 | KI-86 | 旧项目的 `questions.json` 由旧提示词生成，focus 为自由文本，M6 后只警告不生效；需提供「重新生成决策问题」入口或提示 | `pipeline/questions.py`；`gui/static/confirm.html` | open |
 | KI-87 | 英文素材分句拼整句时无空格（"world.good"） | `pipeline/format_transcript.py:116` | open |
