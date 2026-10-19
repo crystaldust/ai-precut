@@ -49,7 +49,7 @@
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-28 | 密钥文件先以默认权限创建再 chmod；`chmod` 父目录可能改动共享目录；`delete` 不清 legacy key；keyring 删除失败被吞 | `pipeline/secrets.py:58-141` | open |
+| KI-28 | 密钥文件先以默认权限创建再 chmod；`chmod` 父目录可能改动共享目录；`delete` 不清 legacy key；keyring 删除失败被吞 | `pipeline/secrets.py:58-141` | partial `6f8ba02`（凭证文件创建权限已修） |
 | KI-29 | CLI 输出原文写入 `failed.json`，未经 `secrets.mask` 脱敏；网络错误子串匹配过宽 | `pipeline/cloud.py:76-82, 187-203` | open |
 | KI-30 | Range 请求解析错误（后缀范围、越界未返回 416） | `gui/server.py:340-350` | open |
 | KI-31 | 请求体非法时未捕获异常直接断连；shots 入出点未校验（负数、nan、out≤in） | `gui/server.py:99-110, 534-543` | fixed `624e979` |

@@ -7,7 +7,7 @@
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
 | GL-01 | 云端 ASR 依赖开发机上的 Node 版 `mediakit-cli`，App 未打包 → 用户机器转写必失败。改为 Python 直连 HTTP API（同 `llm.py` 写法） | `pipeline/cloud.py:39,72`；`packaging/ai-cut.spec` | open |
-| GL-02 | GUI 无 API Key 配置入口（只能 CLI `config set`）；首次使用需告知两条外发数据流（PRD §7）；无 DeepSeek Key 时 prepare 静默跳过文本分析 | `aicut.py:591-594, 658-684`；`gui/server.py` | open |
+| GL-02 | GUI 无 API Key 配置入口（只能 CLI `config set`）；首次使用需告知两条外发数据流（PRD §7）；无 DeepSeek Key 时 prepare 静默跳过文本分析 | `aicut.py:591-594, 658-684`；`gui/server.py` | fixed `6f8ba02` |
 | GL-03 | 交付说明仍写「右键→打开」，macOS 15+ 已失效。改为「系统设置 → 隐私与安全性 → 仍要打开」（不做签名公证，PRD §13） | `docs/PACKAGING.md:56`；`dist/` 内使用说明 | open |
 | GL-04 | 内置 ffmpeg 为 GPL 构建（`--enable-gpl --enable-libx264`）。换 LGPL 构建，`libx264` 全部改 `h264_videotoolbox`；下载加 `curl -f` + SHA256 校验；随包附 THIRD-PARTY-NOTICES | `packaging/build_app.sh:13-17`；`aicut.py:287,447`；`pipeline/render_preview.py:97`；`pipeline/build_documentary.py` | open |
 | GL-05 | 本地服务无 Host/Origin/token 校验、POST 不验 Content-Type → 任意网页可跨站调用全部 API，DNS rebinding 可读数据 | `gui/server.py:323-330, 380-622` | fixed `624e979` |
@@ -19,15 +19,15 @@
 | GL-11 | 坏草稿照样交付：校验 FAIL 也打印 `[✓]`；打包版 `run_inprocess` 丢弃 `main()` 返回值 | `aicut.py:131-140`；`pipeline/proc.py:64-69` | fixed `ef3899f` |
 | GL-12 | 打包版错误信息丢失：`int(exc.code)` 遇 `sys.exit("文字")` 抛 ValueError | `pipeline/proc.py:69` | fixed `ef3899f` |
 | GL-13 | 草稿注册非原子：先 move 后 register，失败留孤儿草稿且重试报「已存在」；剪映未装/改过草稿目录时直接崩 | `pipeline/to_jianying.py:246-247, 299-316` | fixed `ef3899f` |
-| GL-14 | GUI 只能导出 Mac 剪映草稿，没有 Windows 导出入口（`/api/job` 只有 prepare/build）；PRD §13 要求两平台都支持 | `gui/server.py:215-251`；`gui/static/index.html` | open |
+| GL-14 | GUI 只能导出 Mac 剪映草稿，没有 Windows 导出入口（`/api/job` 只有 prepare/build）；PRD §13 要求两平台都支持 | `gui/server.py:215-251`；`gui/static/index.html` | fixed `6f8ba02` |
 | GL-15 | 中断后半成品被当成完成：ffmpeg 直写最终文件，`exists()` 判完成 → 只转写前半段且计费 | `aicut.py:205-209, 284-289, 442-449`；`pipeline/build_documentary.py:80` | fixed `ef3899f` |
-| GL-16 | ASR 任务失败后 `asr_task.json` 不清，3 天内重试永远失败；任务未绑定音频指纹 | `pipeline/cloud.py:148-184` | open |
-| GL-17 | 任务无互斥/取消：同项目可并发多个任务（重复计费、互相覆盖）；冻结模式全局 `redirect_stdout`/`sys.argv` 多线程互踩；未知任务留幽灵 running | `gui/server.py:42-57, 215-295`；`pipeline/proc.py:61-67` | open |
+| GL-16 | ASR 任务失败后 `asr_task.json` 不清，3 天内重试永远失败；任务未绑定音频指纹 | `pipeline/cloud.py:148-184` | fixed `6f8ba02` |
+| GL-17 | 任务无互斥/取消：同项目可并发多个任务（重复计费、互相覆盖）；冻结模式全局 `redirect_stdout`/`sys.argv` 多线程互踩；未知任务留幽灵 running | `gui/server.py:42-57, 215-295`；`pipeline/proc.py:61-67` | fixed `6f8ba02` |
 | GL-18 | 保存丢数据：固定 `.tmp` 名并发保存失败（实测 200 次失败 90 次）；请求体解析失败返回 `{}` 后用空列表覆盖分镜；`overrides.json` 损坏时当空并在下次裁决时永久覆盖 | `gui/server.py:81-85, 323-330, 524-543`；`pipeline/review.py:23-67` | fixed `624e979` |
 | GL-19 | 无日志落盘、无诊断包：出错后用户和开发者都拿不到信息（PRD FR-13） | 全仓无 logging；`packaging/ai-cut.spec:64`；`gui/server.py:69,302` | open |
-| GL-20 | GUI 新建项目在 `.command`/开发方式启动时卡在 `input()` 永不返回，并留空目录导致重试失败 | `gui/server.py:58`；`aicut.py:162-165` | open |
+| GL-20 | GUI 新建项目在 `.command`/开发方式启动时卡在 `input()` 永不返回，并留空目录导致重试失败 | `gui/server.py:58`；`aicut.py:162-165` | fixed `6f8ba02` |
 | GL-21 | 中文/空格项目名视频全部 404（服务端未 percent-decode） | `gui/server.py` 路由；`gui/static/index.html:204,230,262,430` | fixed `624e979` |
-| GL-22 | 字幕框点不进（点击冒泡触发整表重绘）；任务失败后模态层无法关闭，只能杀 App | `gui/static/index.html:344-370, 435-468` | open |
+| GL-22 | 字幕框点不进（点击冒泡触发整表重绘）；任务失败后模态层无法关闭，只能杀 App | `gui/static/index.html:344-370, 435-468` | fixed `6f8ba02` |
 | GL-23 | 前端镜头 id 重复（删一个再加一个）→ 切片互相覆盖，成片重复内容 | `gui/static/index.html:388` | fixed `624e979` |
 | GL-24 | 画面过暗分支把必留话题段、标注失败的待定段直接判废片（与 GL-09 同类静默丢弃） | `pipeline/classify.py:82-83` | fixed `ebabfcc` |
 | GL-25 | build 不检查分镜表是否含全部必留段；GUI 手存的 `shots.json` 优先于 `shots-selected.json`，漏必留照样出片 | `aicut.py:531-536` | fixed `ebabfcc` |
