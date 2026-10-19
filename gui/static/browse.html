@@ -54,12 +54,18 @@ footer .keys{font-size:11px;color:#6b7c93;margin-top:4px}
 .stat{display:flex;gap:12px;font-size:12px;color:var(--muted);flex-wrap:wrap;margin-top:10px}
 .stat b{color:var(--text)}
 .empty{color:var(--muted);text-align:center;padding:60px}
+.warnstrip{display:none;margin:8px 0 0;padding:6px 10px;border:1px solid #f59e0b;border-radius:8px;font-size:12px;color:#f5c26b}
+.warnstrip ul{margin:4px 0 0;padding-left:18px}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2a3344;color:var(--text);
+  padding:8px 16px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none;max-width:80vw}
+.toast.on{opacity:1;bottom:34px}
 </style></head><body>
 <div id="app">
 <main>
   <header>
     <h1 id="title">素材浏览</h1>
     <div class="sub" id="sub">加载中…</div>
+    <div class="warnstrip" id="warnstrip" role="status"></div>
   </header>
   <div class="bar">
     <button id="vTime" class="on" onclick="setView('time')">按时间</button>
@@ -98,6 +104,9 @@ footer .keys{font-size:11px;color:#6b7c93;margin-top:4px}
 <script>
 const PROJECT = new URLSearchParams(location.search).get('project') || '';
 const LV = {1:'废片',2:'待定',3:'可用'};
+const COPY_WARN_TITLE = '需要你留意';
+const COPY_SAVE_FAILED = '没保存上，已恢复原样';
+const TOAST_MS = 1600, TOAST_ERROR_MIN_MS = 6000, TOAST_MS_PER_CHAR = 120;
 const COLOR = {1:'var(--waste)',2:'var(--pending)',3:'var(--usable)'};
 const pv = document.getElementById('pv');
 let DATA = null, view='time', filter=0, cur=null;
@@ -114,7 +123,28 @@ async function load(){
   document.getElementById('title').textContent = DATA.project.title || PROJECT;
   document.getElementById('sub').textContent =
     `素材 ${(DATA.material_duration/60).toFixed(1)} 分钟 · ${DATA.segments.length} 段 · 目标 ${DATA.project.target_duration}s`;
+  renderWarnings(DATA.warnings);
   renderSummary(); density(); render();
+}
+// 损坏文件 / AI 兜底等提示（与剪辑台警告栏同源，M8）
+function renderWarnings(list){
+  const el = document.getElementById('warnstrip'), items = Array.isArray(list) ? list : [];
+  el.style.display = items.length ? 'block' : 'none';
+  el.innerHTML = items.length ? `<b>${esc(COPY_WARN_TITLE)}</b><ul>${items.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>` : '';
+}
+function toast(t, ms=TOAST_MS){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('on');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'), ms); }
+// 错误要看得完：至少 6 秒，按字数加长
+function toastError(t){ toast(t, Math.max(TOAST_ERROR_MIN_MS, String(t).length * TOAST_MS_PER_CHAR)); }
+// 写失败（项目损坏 409 / 人工裁决文件损坏 409 等）：回滚界面上的乐观更新，并说出服务端原因
+async function postOrRollback(path, body, rollback){
+  let r = null;
+  try { r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)}); }
+  catch(e){ rollback(); toastError(COPY_SAVE_FAILED + '：' + e.message); return false; }
+  if(r.ok) return true;
+  const e = await r.json().catch(()=>({}));
+  rollback(); toastError(e.error ? `${COPY_SAVE_FAILED}：${e.error}` : COPY_SAVE_FAILED);
+  return false;
 }
 function renderSummary(){
   const s = DATA.summary || {};
@@ -204,17 +234,17 @@ function jump(start, id, end){
 }
 async function setLevel(id, level){
   const s = DATA.segments.find(x=>x.id===id); if(!s) return;
+  const prev = {level: s.level, level_reason: s.level_reason, override: s.override};
   s.level = level; s.level_reason = `人工改为${LV[level]}`; s.override = true;
-  await fetch('/api/browse/level', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({project:PROJECT, id, level})});
   render();
+  if(!await postOrRollback('/api/browse/level', {project:PROJECT, id, level}, ()=>Object.assign(s, prev))) render();
 }
 async function toggleMust(id){
   const s = DATA.segments.find(x=>x.id===id); if(!s) return;
-  s.must_keep = !s.must_keep;
-  await fetch('/api/browse/must', {method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({project:PROJECT, id, must:s.must_keep})});
+  const prev = s.must_keep;
+  s.must_keep = !prev;
   render();
+  if(!await postOrRollback('/api/browse/must', {project:PROJECT, id, must:s.must_keep}, ()=>{ s.must_keep = prev; })) render();
 }
 document.addEventListener('keydown', e=>{
   if(e.target.tagName==='INPUT') return;
@@ -227,4 +257,6 @@ document.addEventListener('keydown', e=>{
   if(e.key==='s'||e.key==='S') toggleMust(cur);
 });
 load();
-</script></body></html>
+</script>
+<div class="toast" id="toast"></div>
+</body></html>

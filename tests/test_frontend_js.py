@@ -118,3 +118,83 @@ def test_renumber_empty_list_starts_at_sh01():
 def test_next_shot_id_ignores_sel_ids():
     out = run_js("state.shots = [{id:'sel09'}, {id:'sh02'}]; nextShotId();", _shot_id_src())
     assert out == "sh03"
+
+
+# ---------------------------------------------------------------- KI-49：asList
+@pytest.mark.parametrize("raw,expected", [
+    (["a"], ["a"]), ("a", ["a"]), (None, []), ({}, []), (3, []), ("", []),
+])
+def test_as_list(raw, expected):
+    assert run_js(f"asList({json.dumps(raw)})") == expected
+
+
+# ---------------------------------------------------------------- M8 审查 HIGH：切到坏项目后不能留着旧项目的数据
+ASYNC_HARNESS = r"""
+const vm = require('vm');
+const [src, script] = JSON.parse(process.argv[1]);
+const els = {};
+const el = id => els[id] || (els[id] = {id, style: {}, textContent: '', innerHTML: '', classList: {add(){}, remove(){}, toggle(){}}});
+const ctx = {console, els, posts: [], toasts: [], warnbars: [], stateResp: null, stateErr: null};
+ctx.$ = s => el(s);
+ctx.document = {querySelectorAll: () => []};
+ctx.toast = (m) => ctx.toasts.push(m);
+ctx.renderWarnbar = (l) => ctx.warnbars.push(l);
+ctx.renderTab = () => {}; ctx.attachRunningJob = () => {}; ctx.renumber = () => {};
+ctx.fmtLong = String; ctx.num = Number; ctx.esc = String; ctx.TOAST_ERROR_MS = 6000;
+ctx.api = async (path, opt) => {
+  if (path.startsWith('/api/state')) { if (ctx.stateErr) throw new Error(ctx.stateErr); return ctx.stateResp; }
+  ctx.posts.push(path); return {};
+};
+ctx.setTimeout = setTimeout; ctx.clearTimeout = clearTimeout;
+vm.createContext(ctx);
+vm.runInContext(src, ctx);
+Promise.resolve(vm.runInContext(script, ctx)).then(out =>
+  process.stdout.write(JSON.stringify(out === undefined ? null : out)));
+"""
+
+
+def _project_switch_src() -> str:
+    src = (STATIC / "index.html").read_text(encoding="utf-8")
+    parts = ["var state = { project:null, data:null, tab:'preview', sel:null, shots:[], dirty:false };",
+             "var saveTimer = null;"]
+    for name in ("selectProject", "flushPendingSave", "refreshOrWarn", "showProjectError", "refresh",
+                 "saveShots", "scheduleSave"):
+        m = re.search(r"(async )?function " + name + r"\([^)]*\)\{[\s\S]*?\n\}\n", src)
+        assert m, name
+        parts.append(m.group(0))
+    return "\n".join(parts)
+
+
+def run_async(script):
+    args = json.dumps([_project_switch_src(), script])
+    r = subprocess.run([NODE, "-e", ASYNC_HARNESS, args], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+GOOD_STATE = "{project:{name:'A', title:'A'}, stages:[], shots:[{id:'sh01'}], warnings:[]}"
+
+
+def test_switch_to_corrupt_project_clears_previous_project():
+    out = run_async(f"""(async () => {{
+      stateResp = {GOOD_STATE};
+      await selectProject('A');
+      stateErr = 'project.json 损坏'; 
+      await selectProject('B');
+      return [state.project, state.data, state.shots.length, els['#actions'].style.display,
+              els['#tabs'].style.display, els['#title'].textContent, toasts, warnbars.at(-1)];
+    }})()""")
+    assert out == [None, None, 0, "none", "none", "B", ["project.json 损坏"], ["project.json 损坏"]]
+
+
+def test_pending_shot_save_goes_to_original_project_and_no_save_after_failure():
+    out = run_async(f"""(async () => {{
+      stateResp = {GOOD_STATE};
+      await selectProject('A');
+      scheduleSave();                 // A 的分镜表改动还没落盘
+      stateErr = 'project.json 损坏';
+      await selectProject('B');
+      const ok = await saveShots(true);  // 失败后的保存不能发出去
+      return [posts, ok];
+    }})()""")
+    assert out == [["/api/shots?project=A"], False]

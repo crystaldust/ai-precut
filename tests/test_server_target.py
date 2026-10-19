@@ -182,6 +182,8 @@ def test_state_warnings_empty_for_clean_project(gui_server):
 
 
 def test_state_survives_corrupt_scored_file(gui_server):
+    # KI-21：仍能打开（200），但警告栏必须点名损坏的三档判定，不能当「没有」
     make_project(gui_server.root, **{"work/segments_scored.json": "{坏"})
     status, body, _ = call(gui_server, "GET", "/api/state?project=p1")
-    assert status == 200 and json.loads(body)["warnings"] == []
+    warnings = json.loads(body)["warnings"]
+    assert status == 200 and len(warnings) == 1 and "三档判定" in warnings[0]

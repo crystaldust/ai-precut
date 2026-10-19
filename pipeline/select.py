@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-from pipeline import classify, review
+from pipeline import classify, review, schema
 
 HARD_TYPES = {"金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑"}
 MIN_SHOT = 1.5      # 最短镜头
@@ -32,6 +32,11 @@ MUST_KEEP_MISSING = "分镜表缺少 {n} 段必留内容：{items}；{remedy}"
 MUST_KEEP_REMEDY_MANUAL = "在分镜表里加回，或在「浏览素材」取消★后再出片"
 MUST_KEEP_REMEDY_SELECTED = "重新选段（「改目标时长」或重新「处理素材」）后再出片，或在「浏览素材」取消★"
 MUST_KEEP_MISSING_SHOWN = 5  # 报错里最多列几段
+MUST_LINE_UNMATCHED = "指定必须保留的原话「{line}」在转写里找不到，没能进片：检查是否和原话一字不差"
+MUST_LINE_TOO_SHORT = "指定必须保留的原话「{line}」所在的句子不足 {min} 秒，没能单独成镜"
+MUST_TOPIC_UNMATCHED = "必留话题「{topic}」对不上任何话题，已忽略"
+EXCLUDE_TOPIC_UNMATCHED = "排除话题「{topic}」对不上任何话题，没有排除任何内容"
+ANSWER_UNMATCHED = "答案「{label}」不在当前的决策问题里（问题可能已重新生成），已忽略：请到「确认与提问」重新作答"
 END_KEYWORDS = {
     "sign": ("签", "缴费", "转账", "落笔"),
     "leave": ("走", "离开", "出门", "下楼"),
@@ -108,9 +113,10 @@ def _score(seg: dict, weights: dict | None = None) -> float:
 
 
 def _rules(answers: dict, questions: dict | None) -> dict:
-    """把答案翻译成选段规则。没有题目定义时，退化为按标签猜。"""
+    """把答案翻译成选段规则。对不上任何选项的答案记进 ignored_answers（KI-23）。"""
     rules = {"must_topics": [], "exclude_topics": [], "ending": None,
              "focus": None, "pacing": "normal"}
+    ignored: list[str] = []
     labels: dict[str, dict] = {}
     for q in (questions or {}).get("questions", []):
         for o in q.get("options", []):
@@ -121,6 +127,8 @@ def _rules(answers: dict, questions: dict | None) -> dict:
         for v in values:
             rule = labels.get(v)
             if not rule:
+                if isinstance(v, str) and v:
+                    ignored.append(v)
                 continue
             kind, val = rule.get("kind"), rule.get("value")
             if kind == "must_topics":
@@ -133,6 +141,7 @@ def _rules(answers: dict, questions: dict | None) -> dict:
                 rules["focus"] = val
             elif kind == "pacing":
                 rules["pacing"] = "tight" if "紧凑" in v or "快" in v else "normal"
+    rules["ignored_answers"] = ignored
     return rules
 
 
@@ -212,10 +221,10 @@ def missing_must_keep(workdir: Path, shots: list[dict]) -> list[dict]:
     overrides.json 损坏时抛 review.OverridesCorrupt，由调用方报错。
     """
     scored_path = Path(workdir) / "segments_scored.json"
-    if not scored_path.exists():
+    scored = schema.read_json(scored_path, default=None)  # 损坏 → CorruptJSON（带文件名），不当「没分析过」
+    if scored is None:
         return []
-    scored = json.loads(scored_path.read_text(encoding="utf-8"))
-    segments = review.apply(scored.get("segments") or [], review.load(workdir))
+    segments = review.apply(schema.require_key(scored, "segments", scored_path), review.load(workdir))
     return uncovered_must_keep(segments, shots)
 
 
@@ -274,12 +283,18 @@ def _must_keep_report(segments: list[dict], shots: list[dict], covered: list[str
 
 
 def _force_lines(segments: list[dict], shots: list[dict], lines: list[str],
-                 target: float, weights: dict | None) -> list[dict]:
-    """剪辑员指定必须保留的原话：无论档位/预算，一律强制进片。"""
+                 target: float, weights: dict | None) -> tuple[list[dict], list[str]]:
+    """剪辑员指定必须保留的原话：无论档位/预算，一律强制进片。→ (镜头, 没能进片的原因)（KI-23）。"""
     used = {s["segment_id"] for s in shots}
+    problems: list[str] = []
     for line in lines:
-        for seg in segments:
-            if seg["id"] in used or line not in (seg.get("text") or ""):
+        hits = [seg for seg in segments if line in (seg.get("text") or "")]
+        if not hits:
+            problems.append(MUST_LINE_UNMATCHED.format(line=line))
+            continue
+        placed = any(seg["id"] in used for seg in hits)
+        for seg in hits:
+            if seg["id"] in used:
                 continue
             start, end = _clip(seg, MAX_SHOT)
             if end - start < MIN_SHOT:
@@ -290,14 +305,21 @@ def _force_lines(segments: list[dict], shots: list[dict], lines: list[str],
                           "reason": "剪辑员指定必须保留", "score": _score(seg, weights),
                           "forced": True})
             used.add(seg["id"])
+            placed = True
+        if not placed:
+            problems.append(MUST_LINE_TOO_SHORT.format(line=line, min=MIN_SHOT))
     shots.sort(key=lambda x: x["start"])
     shots, _ = _trim(shots, target)
-    return shots
+    return shots, problems
 
 
 def select(segments: list[dict], topics: list[dict], rules: dict,
            target: float, weights: dict | None = None) -> dict:
     names = [t.get("name", "") for t in topics]
+    unmatched_topics = [str(v) for v in rules.get("must_topics") or []
+                        if v and not _best_topic(str(v), names)]
+    unmatched_excludes = [str(v) for v in rules.get("exclude_topics") or []
+                          if v and not _best_topic(str(v), names)]
     must_topics = set(_match_topics(rules.get("must_topics") or [], names))
     exclude = set(_match_topics(rules.get("exclude_topics") or [], names))
     by_topic: dict[str, list[dict]] = {}
@@ -412,7 +434,8 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
 
     shots = _ensure_must_keep(segments, shots, weights)
     shots, total = _trim(shots, target)
-    shots = _force_lines(segments, shots, rules.get("must_lines") or [], target, weights)
+    shots, line_problems = _force_lines(segments, shots, rules.get("must_lines") or [],
+                                        target, weights)
     total = sum(x["dur"] for x in shots)
     shots = _build_hook(shots, segments)
     shots = _fix_ending(shots, segments, rules.get("ending"))
@@ -427,9 +450,15 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
               for s in segments
               if s.get("level") == 3 and s["id"] not in used_ids]
     report = _must_keep_report(segments, shots, covered, target, total)
+    warnings = [*report["warnings"],
+                *[MUST_TOPIC_UNMATCHED.format(topic=t) for t in unmatched_topics],
+                *[EXCLUDE_TOPIC_UNMATCHED.format(topic=t) for t in unmatched_excludes],
+                *line_problems,
+                *[ANSWER_UNMATCHED.format(label=x) for x in rules.get("ignored_answers") or []]]
 
     return {
         **report,
+        "warnings": warnings,
         "target": target, "total": round(total, 2),
         "rules": rules,
         "covered_topics": covered,
@@ -517,23 +546,33 @@ def markdown(selection: dict) -> str:
     return "\n".join(lines)
 
 
+def _current_rules(answers: dict, questions: dict | None, stored: dict | None) -> dict:
+    """已存规则只在答案仍对得上当前题目时才用；题目重新生成过（答案对不上）→ 按当前题目重算并报警告。"""
+    fresh = _rules(answers, questions)
+    if stored and not fresh["ignored_answers"]:
+        return dict(stored)
+    return fresh
+
+
 def run(scored_path: Path, answers_path: Path, out_dir: Path,
         *, questions_path: Path | None = None, title: str = "",
         material: str = "", weights: dict | None = None,
         calibration: dict | None = None, target: float | None = None) -> dict:
-    scored = json.loads(Path(scored_path).read_text(encoding="utf-8"))
-    answers, stored_rules = {}, None
-    if Path(answers_path).exists():
-        payload = json.loads(Path(answers_path).read_text(encoding="utf-8"))
-        answers = payload.get("answers", {})
-        stored_rules = payload.get("rules")
-    questions = None
-    if questions_path and Path(questions_path).exists():
-        questions = json.loads(Path(questions_path).read_text(encoding="utf-8"))
+    scored = schema.read_json(scored_path)
+    scored_segments = schema.require_key(scored, "segments", scored_path)  # 结构不对 → CorruptJSON
+    # 答案 / 题目坏了不能当「没答」：CorruptJSON（带文件名）由调用方给人话（M8 审查）
+    payload = schema.read_json(answers_path, default={})
+    answers = payload.get("answers") or {}
+    if not isinstance(answers, dict):
+        schema.require_key(payload, "answers", answers_path, dict)
+    stored_rules = payload.get("rules")
+    if stored_rules is not None and not isinstance(stored_rules, dict):
+        schema.require_key(payload, "rules", answers_path, dict)
+    questions = schema.read_json(questions_path, default=None) if questions_path else None
 
     out_dir = Path(out_dir)
     overrides = review.load(out_dir)
-    segments = review.apply(scored["segments"], overrides)
+    segments = review.apply(scored_segments, overrides)
     target = float(target or scored.get("target") or 175)
     topics = scored.get("topics", [])
     extra_warnings = []
@@ -543,7 +582,7 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
             topics = classify.allocate_budget([dict(t) for t in topics], target)
         else:
             extra_warnings.append(BUDGET_LEGACY_WARNING)
-    rules = stored_rules or _rules(answers, questions)
+    rules = _current_rules(answers, questions, stored_rules)
     lines = [x.strip() for x in str((calibration or {}).get("must_lines") or "")
              .replace("，", ",").replace("；", ",").split(",") if x.strip()]
     if lines:

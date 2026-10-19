@@ -10,16 +10,28 @@ from __future__ import annotations
 import contextlib
 import glob
 import json
+import math
 import os
 import subprocess
 import uuid
 from pathlib import Path
 from typing import Iterator
 
+from pipeline import schema
+
 PARTIAL_TAG = ".partial-"
 DONE_SUFFIX = ".done"
 STDERR_TAIL = 800       # 失败时带回的 ffmpeg stderr 末尾字符数
 FFMPEG_BASE = ["ffmpeg", "-y", "-loglevel", "error"]
+ANALYSIS_BASE = ["ffmpeg", "-hide_banner", "-nostats"]  # 分析滤镜的结果在 info 级日志里，不能加 -loglevel error
+FFPROBE_MATERIAL = ["ffprobe", "-v", "error", "-show_entries", "format=duration,size,bit_rate",
+                    "-show_entries", "stream=codec_type,codec_name,width,height,r_frame_rate,duration",
+                    "-of", "json"]
+MATERIAL_UNREADABLE = "ffprobe 认不出这个文件（{detail}）：确认它是完整的视频文件、没有损坏、不是还在拷贝中"
+DURATION_UNREADABLE = "读不到时长：{name}（{detail}）"
+NO_CONTAINER_DURATION = ("{name}：容器里没有时长信息（常见于录制中断或管道写出的文件），"
+                         "素材台账时长记为 0；文件本身可以读，后续步骤照常进行")
+CACHE_RESET = "[!] 切片缓存记录损坏，按空缓存处理，全部镜头重新切：{reason}"
 
 
 class MediaError(RuntimeError):
@@ -89,6 +101,10 @@ def atomic_output(dst: Path, *, mark: bool = True) -> Iterator[Path]:
         tmp.unlink(missing_ok=True)
 
 
+def _tail(text: str | None) -> str:
+    return (text or "").strip()[-STDERR_TAIL:]
+
+
 def run_ffmpeg(args: list[str], *, runner=subprocess.run) -> None:
     """ffmpeg <args>；非零退出抛 MediaError 并带上 stderr 末尾。"""
     try:
@@ -97,8 +113,21 @@ def run_ffmpeg(args: list[str], *, runner=subprocess.run) -> None:
     except OSError as exc:  # 没装 ffmpeg / 不可执行
         raise MediaError(f"无法运行 ffmpeg：{exc}") from exc
     if r.returncode != 0:
-        tail = (r.stderr or "").strip()[-STDERR_TAIL:]
-        raise MediaError(f"ffmpeg 失败（退出码 {r.returncode}）：{tail}")
+        raise MediaError(f"ffmpeg 失败（退出码 {r.returncode}）：{_tail(r.stderr)}")
+
+
+def run_analysis(args: list[str], *, runner=subprocess.run, timeout: float | None = None) -> str:
+    """ffmpeg 分析（blackdetect / scdet 等，输出到 null）；返回 stderr 日志。失败抛 MediaError（KI-19）。"""
+    try:
+        r = runner([*ANALYSIS_BASE, *args], capture_output=True, text=True,
+                   encoding="utf-8", errors="replace", timeout=timeout)
+    except OSError as exc:
+        raise MediaError(f"无法运行 ffmpeg：{exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise MediaError(f"ffmpeg 超过 {exc.timeout:.0f} 秒没有结束") from exc
+    if r.returncode != 0:
+        raise MediaError(f"ffmpeg 失败（退出码 {r.returncode}）：{_tail(r.stderr)}")
+    return r.stderr or ""
 
 
 def ffmpeg_to(dst: Path, args: list[str], *, runner=subprocess.run) -> Path:
@@ -124,6 +153,91 @@ def _probe_duration(path: Path, runner) -> float:
         return float((r.stdout or "").strip())
     except ValueError:
         return 0.0
+
+
+def duration_or_zero(path: Path, *, runner=subprocess.run) -> float:
+    """宽松版：读不出时长给 0.0（调用方自有兜底，例如切片按请求时长）。"""
+    return _probe_duration(path, runner)
+
+
+def _positive_seconds(raw) -> float | None:
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def _run_probe(cmd: list[str], runner) -> tuple[int, str, str]:
+    """跑 ffprobe → (退出码, stdout, stderr)；跑不起来抛 OSError 由调用方转人话。"""
+    r = runner(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return r.returncode, r.stdout or "", r.stderr or ""
+
+
+def probe_duration(path: Path, *, runner=subprocess.run) -> float:
+    """严格版：读不出正时长抛 MediaError（带 ffprobe 原因，KI-19）。认领旧产物仍用宽松的 _probe_duration。"""
+    name = Path(path).name
+    try:
+        code, out, err = _run_probe([*FFPROBE_DURATION, str(path)], runner)
+    except OSError as exc:
+        raise MediaError(DURATION_UNREADABLE.format(name=name, detail=f"无法运行 ffprobe：{exc}")) from exc
+    if code != 0:
+        raise MediaError(DURATION_UNREADABLE.format(name=name, detail=_tail(err) or f"退出码 {code}"))
+    value = _positive_seconds(out.strip())
+    if value is None:
+        raise MediaError(DURATION_UNREADABLE.format(name=name, detail=f"ffprobe 给出 {out.strip()[:40]!r}"))
+    return value
+
+
+def probe_material(path: Path, *, runner=subprocess.run) -> dict:
+    """素材台账用（KI-66）：→ {"duration": 秒, "streams": [...], "warnings": [...]}。
+
+    ffprobe 读不了（非零 / 没输出 / 没有容器信息）才抛 MediaError；容器没写时长时退回各路流里最长的时长，
+    流也没有时长 → duration 0 + 警告（文件能读，不能当坏文件拒绝）。
+    """
+    def unreadable(detail: str) -> MediaError:
+        return MediaError(MATERIAL_UNREADABLE.format(detail=detail))
+
+    try:
+        code, out, err = _run_probe([*FFPROBE_MATERIAL, str(path)], runner)
+    except OSError as exc:
+        raise unreadable(f"无法运行 ffprobe：{exc}") from exc
+    if code != 0:
+        raise unreadable(_tail(err) or f"退出码 {code}")
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise unreadable("ffprobe 没有输出可读的结果") from exc
+    fmt = data.get("format") if isinstance(data, dict) else None
+    if not isinstance(fmt, dict):
+        raise unreadable("没有容器信息")
+    streams = data.get("streams") if isinstance(data.get("streams"), list) else []
+    stream_durations = [d for s in streams if isinstance(s, dict)
+                        if (d := _positive_seconds(s.get("duration"))) is not None]
+    duration = _positive_seconds(fmt.get("duration")) or max(stream_durations, default=0.0)
+    warnings = [] if duration else [NO_CONTAINER_DURATION.format(name=Path(path).name)]
+    return {"duration": duration, "streams": streams, "warnings": warnings}
+
+
+def material_entry(src: Path, *, runner=subprocess.run) -> dict:
+    """素材台账的一条：路径 / 名称 / 大小 + probe_material；文件不在或认不出抛 MediaError（KI-66）。"""
+    src = Path(src)
+    if not src.is_file():
+        raise MediaError(f"原片不存在：{src}")
+    entry = {"path": str(src), "name": src.name, "size": src.stat().st_size,
+             **probe_material(src, runner=runner)}
+    for w in entry.get("warnings") or []:  # 同时记在 materials.json 里，剪辑台警告栏常驻显示
+        print(f"[!] {w}")
+    return entry
+
+
+def read_manifest(path: Path) -> dict:
+    """切片缓存清单：缺失 → {}；损坏只是缓存，不能挡住出片 → 提示后当空缓存（全部重切）。"""
+    try:
+        return schema.read_json(path, default={})
+    except schema.CorruptJSON as exc:
+        print(CACHE_RESET.format(reason=exc))
+        return {}
 
 
 def complete_or_adopt(dst: Path, *, runner=subprocess.run) -> bool:
@@ -154,6 +268,5 @@ def has_audio(path: Path, *, runner=subprocess.run) -> bool:
     except OSError as exc:  # 没装 ffprobe / 不可执行
         raise MediaError(f"无法运行 ffprobe：{exc}") from exc
     if r.returncode != 0:
-        tail = (r.stderr or "").strip()[-STDERR_TAIL:]
-        raise MediaError(f"读不了素材 {Path(path).name}：{tail}")
+        raise MediaError(f"读不了素材 {Path(path).name}：{_tail(r.stderr)}")
     return bool((r.stdout or "").strip())

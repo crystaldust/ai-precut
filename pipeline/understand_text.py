@@ -298,7 +298,7 @@ def _merge(segments: list[dict], topics: list[dict], annotations: dict,
 def run(segments_path: Path, out_path: Path, *, client=None,
         batch: int = 40, model: str | None = None, style: str = "",
         sleep=None) -> dict:
-    segments = json.loads(Path(segments_path).read_text(encoding="utf-8"))["segments"]
+    segments = schema.read_field(segments_path, "segments")  # 结构不对 → CorruptJSON（带文件名）
     # 只把有文本的句子送进模型
     usable = [s for s in segments if (s.get("text") or "").strip()]
     client = client or DeepSeekClient()

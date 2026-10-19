@@ -209,3 +209,30 @@ def test_run_marks_legacy_failures_as_annotation_failed(tmp_path):
     s2 = res["segments"][1]
     assert s2["annotation_failed"] is True and s2["level"] == 2
     assert any("1 句" in w and "标注失败" in w for w in res["warnings"])
+
+
+# ---------------------------------------------------------------- M8：KI-21 可选输入缺失 / 损坏
+def test_run_warns_when_audio_file_missing(tmp_path):
+    tp = _write_text(tmp_path)
+    res = classify.run(tp, tmp_path / "none.json", tmp_path / "s.json")
+    assert any("声音特征" in w for w in res["warnings"])
+
+
+def test_run_warns_when_visual_file_missing(tmp_path):
+    tp = _write_text(tmp_path)
+    res = classify.run(tp, None, tmp_path / "s.json", visual_path=tmp_path / "none.json")
+    assert any("画面质量" in w for w in res["warnings"])
+
+
+def test_run_without_optional_paths_has_no_missing_warning(tmp_path):
+    res = classify.run(_write_text(tmp_path), None, tmp_path / "s.json")
+    assert not any("声音特征" in w or "画面质量" in w for w in res["warnings"])
+
+
+def test_run_corrupt_audio_raises_corrupt_json(tmp_path):
+    from pipeline import schema
+    ap = tmp_path / "segments_audio.json"
+    ap.write_text("{坏", encoding="utf-8")
+    with pytest.raises(schema.CorruptJSON, match="segments_audio.json"):
+        classify.run(_write_text(tmp_path), ap, tmp_path / "s.json")
+    assert not (tmp_path / "s.json").exists()

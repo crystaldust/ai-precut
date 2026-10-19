@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pipeline import schema
+
 # 硬信息类型：出现即「可用」
 HARD_TYPES = {"金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑"}
 # 必留话题关键词（与 PRD 的信息骨架一致）
@@ -32,6 +34,9 @@ TEXT_INCOMPLETE_ERROR = ("逐句标注未完成（segments_text.json 标记为�
                          "先重新运行「处理素材」或 `aicut.py text` 补齐")
 LEGACY_FAILED_WARNING = ("{n} 句 AI 标注失败（旧版结果），已放进待定由你判断；"
                          "想让 AI 补标注，删掉 work/segments_text.json 后重新运行「处理素材」")
+AUDIO_MISSING_WARNING = ("没有声音特征（segments_audio.json）：本次分档没用上音量 / 语速 / 抢话，"
+                         "重新点「① 处理素材」可补上")
+VISUAL_MISSING_WARNING = "没有画面质量结果（visual_quality.json）：本次分档没有识别过暗画面"
 PENDING_OVER_WARNING = ("待定 {left} 段超过上限 {limit} 段：其中 {kept} 段属于必留话题或 AI 标注失败，"
                         "不自动降级，需要你逐条裁决")
 
@@ -217,25 +222,35 @@ def _assemble(scored: list[dict], total_target: float = 175.0,
 
 def run(text_path: Path, audio_path: Path | None, out_path: Path,
         total_target: float = 175.0, visual_path: Path | None = None) -> dict:
-    text = json.loads(Path(text_path).read_text(encoding="utf-8"))
+    text = schema.read_json(text_path)
     if text.get("complete") is False:
         raise TextIncomplete(TEXT_INCOMPLETE_ERROR)
     # 旧版程序：失败批次只记在 failures 里，句子本身看不出来 → 补上标记
     legacy_failed = {sid for f in text.get("failures") or [] for sid in f.get("ids") or []}
     segments = [{**s, "annotation_failed": True} if s["id"] in legacy_failed else s
-                for s in text["segments"]]
+                for s in schema.require_key(text, "segments", text_path)]
+    # KI-21：给了路径但没有文件 → 说出来；文件损坏 → CorruptJSON，不当成「没有」
+    missing: list[str] = []
     audio_by_id: dict[str, dict] = {}
-    if audio_path and Path(audio_path).exists():
-        audio = json.loads(Path(audio_path).read_text(encoding="utf-8"))
-        audio_by_id = {s["id"]: s.get("signals", {}) for s in audio["segments"]}
+    if audio_path:
+        audio = schema.read_json(audio_path, default=None)
+        if audio is None:
+            missing.append(AUDIO_MISSING_WARNING)
+        else:
+            audio_by_id = {s["id"]: s.get("signals", {})
+                           for s in schema.require_key(audio, "segments", audio_path)}
     visual_by_id: dict[str, dict] = {}
-    if visual_path and Path(visual_path).exists():
-        visual_by_id = json.loads(Path(visual_path).read_text(encoding="utf-8"))["segments"]
+    if visual_path:
+        visual = schema.read_json(visual_path, default=None)
+        if visual is None:
+            missing.append(VISUAL_MISSING_WARNING)
+        else:
+            visual_by_id = schema.require_key(visual, "segments", visual_path, dict)
     result = classify(segments, audio_by_id, text.get("topics"), total_target, visual_by_id)
     marked = sum(1 for s in segments if s["id"] in legacy_failed)
-    if marked:
-        result = {**result, "warnings": [LEGACY_FAILED_WARNING.format(n=marked),
-                                         *result["warnings"]]}
+    legacy = [LEGACY_FAILED_WARNING.format(n=marked)] if marked else []
+    if missing or legacy:
+        result = {**result, "warnings": [*missing, *legacy, *result["warnings"]]}
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

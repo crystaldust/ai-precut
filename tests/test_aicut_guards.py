@@ -56,7 +56,7 @@ def test_build_rejects_traversal_version(monkeypatch, tmp_path):
 
 
 def test_ensure_clips_rejects_traversal_id(monkeypatch, tmp_path):
-    monkeypatch.setattr(aicut, "run", _fail)
+    monkeypatch.setattr(aicut.media_io, "run_ffmpeg", _fail)
     pdir = _make_project(tmp_path)
     with pytest.raises(SystemExit):
         aicut.ensure_clips(pdir, {"material": "/tmp/a.mp4"},
@@ -65,7 +65,7 @@ def test_ensure_clips_rejects_traversal_id(monkeypatch, tmp_path):
 
 
 def test_ensure_clips_rejects_duplicate_ids(monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(aicut, "run", _fail)
+    monkeypatch.setattr(aicut.media_io, "run_ffmpeg", _fail)
     pdir = _make_project(tmp_path)
     shots = [{"id": "sh03", "in": 0, "out": 1}, {"id": "sh03", "in": 1, "out": 2}]
     with pytest.raises(SystemExit):

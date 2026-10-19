@@ -14,8 +14,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pipeline import applog, schema
 from pipeline.llm import DeepSeekClient
 
+ANSWERS_FILE = "brief_answers.json"
 KINDS = {"must_topics", "ending", "focus", "pacing", "exclude"}
 
 Q_SYSTEM = "你是纪录片剪辑顾问，只输出 JSON。"
@@ -114,9 +116,9 @@ def fallback(topics: list[dict], segments: list[dict]) -> dict:
 
 def run(summary_path: Path, scored_path: Path, out_path: Path, *,
         client=None) -> dict:
-    summary = json.loads(Path(summary_path).read_text(encoding="utf-8"))
-    scored = json.loads(Path(scored_path).read_text(encoding="utf-8"))
-    segments = scored["segments"]
+    summary = schema.read_json(summary_path)
+    scored = schema.read_json(scored_path)
+    segments = schema.require_key(scored, "segments", scored_path)
     topics = scored.get("topics") or []
     client = client or DeepSeekClient()
 
@@ -129,7 +131,8 @@ def run(summary_path: Path, scored_path: Path, out_path: Path, *,
                           points=points or "（无）"),
             temperature=0.4, max_tokens=1600)
         result = _normalize(data, topics)
-    except Exception as exc:  # noqa: BLE001 - 任何失败都兜底
+    except Exception as exc:  # noqa: BLE001 - 任何失败都兜底；真实原因（含堆栈，已脱敏）进诊断日志
+        applog.get("questions").exception("决策问题生成失败，改用兜底模板")
         result = fallback(topics, segments)
         result["error"] = str(exc)[:200]
 
@@ -137,3 +140,38 @@ def run(summary_path: Path, scored_path: Path, out_path: Path, *,
     Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2),
                               encoding="utf-8")
     return result
+
+
+def reusable(out_path: Path) -> bool:
+    """已有决策问题能否直接复用（KI-22）。
+
+    AI 生成的复用；兜底模板只在剪辑师已作答时保留（换题会让答案失效）；缺失 / 读不出来的重新生成。
+    """
+    try:
+        data = schema.read_json(out_path, default=None)
+    except schema.CorruptJSON:
+        return False
+    if not data:
+        return False
+    return not data.get("fallback") or (Path(out_path).parent / ANSWERS_FILE).exists()
+
+
+def normalize_answers(qs: dict | None, answers) -> dict:
+    """磁盘 / 请求里的答案 → {问题 id: str | list[str]}（KI-49）。
+
+    多选必为字符串列表、单选必为非空字符串；对不上当前问题 id 的丢掉。
+    """
+    if not isinstance(answers, dict):
+        return {}
+    out: dict = {}
+    for q in (qs or {}).get("questions") or []:
+        qid = q.get("id")
+        if qid not in answers:
+            continue
+        value = answers[qid]
+        if q.get("type") == "multi":
+            values = value if isinstance(value, list) else [value] if isinstance(value, str) else []
+            out[qid] = [v for v in values if isinstance(v, str) and v]
+        elif isinstance(value, str) and value:
+            out[qid] = value
+    return out

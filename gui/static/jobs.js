@@ -1,6 +1,6 @@
 // 剪辑台 · 任务弹窗（GL-17 / GL-22）与 Windows 导出入口（GL-14）。
 // 运行中可「取消任务」；失败 / 已取消后可「重试 / 关闭」；已有任务在跑时可「查看进行中的任务」。
-// 依赖 index.html 内联脚本里的 $ / state / api / showModal / closeModal / logLine / toast / refresh，
+// 依赖 index.html 内联脚本里的 $ / state / api / showModal / closeModal / logLine / toast / refreshOrWarn，
 // 只在调用时才用到，所以本文件可以先于内联脚本加载。
 
 /* 界面文案：产品可直接改这里 */
@@ -120,7 +120,7 @@ function pollJob(id, task){
     if(j.status==='done') return onJobDone(j, task);
     logLine('\n' + (j.status==='cancelled' ? COPY_JOB_CANCELLED : COPY_JOB_FAILED));
     setJobActions('ended');
-    refresh().catch(()=>{});
+    refreshOrWarn();
   };
   setTimeout(tick, JOB_POLL_FIRST_MS);
 }
@@ -129,7 +129,7 @@ function onJobDone(j, task){
   setJobActions('ack');
   const warned = (j.log||[]).some(l=>String(l).startsWith('[!]'));
   setTimeout(async ()=>{
-    try{ await refresh(); }catch(e){ /* 列表刷新失败不影响任务结果 */ }
+    await refreshOrWarn();  // 刷新失败不影响任务结果，但要在警告栏说出原因
     // 必留合计超过目标：处理素材 / 重新选段后自动问一次想剪成多长
     if((task==='prepare' || task==='select') && state.data?.selection?.over_target){ openTarget(true); return; }
     // 有警告：日志留着让人看完，不自动关

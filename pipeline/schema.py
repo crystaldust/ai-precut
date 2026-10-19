@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
 import os
@@ -21,6 +22,14 @@ CURRENT_SCHEMA = 2
 
 class SchemaTooNew(Exception):
     """项目由更新版本的程序创建。"""
+
+
+class CorruptJSON(ValueError):
+    """JSON 文件读不出来或顶层类型不对：不能当成「没有」继续（KI-21）。"""
+
+
+CORRUPT_JSON_MSG = "{name} 损坏、读不出来（{detail}），程序没有用它继续：{path}"
+_MISSING = object()
 
 
 # 字段默认值（v1）
@@ -39,7 +48,8 @@ REQUIRED = ("name", "material")
 
 
 def default_project(name: str, material: str, **overrides: Any) -> dict:
-    cfg: dict[str, Any] = {"name": name, "material": str(material), **DEFAULTS}
+    # 深拷贝：brief / calibration 是可变 dict，不能让所有项目共享同一个（KI-26）
+    cfg: dict[str, Any] = {"name": name, "material": str(material), **copy.deepcopy(DEFAULTS)}
     cfg["title"] = overrides.pop("title", name)
     cfg.update(overrides)
     return cfg
@@ -80,7 +90,7 @@ def migrate(cfg: dict) -> tuple[dict, list[str]]:
 
     for key, value in DEFAULTS.items():
         if key not in out:
-            out[key] = value
+            out[key] = copy.deepcopy(value)  # KI-26
             changes.append(f"补齐 {key}")
 
     for key in REQUIRED:
@@ -92,10 +102,7 @@ def migrate(cfg: dict) -> tuple[dict, list[str]]:
 
 def load(path: Path) -> dict:
     """读取并迁移，不写回（写回由调用方决定）。"""
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError("project.json 顶层必须是对象")
-    cfg, _ = migrate(data)
+    cfg, _ = migrate(read_json(path))  # 损坏 / 顶层不是对象 → CorruptJSON（ValueError 子类）
     return cfg
 
 
@@ -122,6 +129,58 @@ def write_json(path: Path, obj: Any, *, indent: int | None = 2) -> None:
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _corrupt(path: Path, detail: str) -> CorruptJSON:
+    return CorruptJSON(CORRUPT_JSON_MSG.format(name=path.name, detail=detail, path=path))
+
+
+def read_json(path: Path, *, default: Any = _MISSING, expect: type | None = dict) -> Any:
+    """与 write_json 对称的读取（KI-21）。
+
+    缺失 → default（没给 default 抛 FileNotFoundError）；读不了 / 不是 UTF-8 / 不是 JSON /
+    顶层类型不是 expect → CorruptJSON。报错只给行号与异常名，不带文件内容（可能是转写原文）。
+    """
+    path = Path(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if default is _MISSING:
+            raise
+        return default
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _corrupt(path, type(exc).__name__) from exc
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise _corrupt(path, f"第 {exc.lineno} 行 {exc.msg}") from exc
+    if expect is not None and not isinstance(data, expect):
+        raise _corrupt(path, "顶层应为对象" if expect is dict else f"顶层应为 {expect.__name__}")
+    return data
+
+
+_TYPE_NAMES = {list: "列表", dict: "对象", str: "文字"}
+
+
+def require_key(data: Any, key: str, path: Path, typ: type = list) -> Any:
+    """读出来的 JSON 结构对不上（缺 key / 类型不对）→ 与损坏同样的人话（带文件名），不给 KeyError。"""
+    value = data.get(key) if isinstance(data, dict) else None
+    if not isinstance(value, typ):
+        raise _corrupt(Path(path), f"缺少 {key} 或类型不对，应为{_TYPE_NAMES.get(typ, typ.__name__)}")
+    return value
+
+
+def read_field(path: Path, key: str, typ: type = list) -> Any:
+    """read_json + require_key：上一步产出的中间文件（segments.json 等）读一个必有字段。"""
+    return require_key(read_json(path), key, path, typ)
+
+
+def read_json_lenient(path: Path, default: Any = None) -> Any:
+    """只用于「显示」：缺失或损坏都给 default。损坏必须另外让人看见（notices.corrupt_files，KI-21）。"""
+    try:
+        return read_json(path, default=default)
+    except CorruptJSON:
+        return default
 
 
 def _is_safe_filename_part(text: str) -> bool:
@@ -220,6 +279,22 @@ def clean_shots(shots: Any) -> list[dict]:
         out.append({"id": s["id"], "in": t_in, "out": t_out,
                     "sub": _shot_text(s, "sub"), "note": _shot_text(s, "note")})
     return out
+
+
+SHOTS_INVALID = "分镜表 {name} 不能用：{detail}"
+
+
+def read_shots(path: Path) -> list[dict]:
+    """读分镜表并整体校验（KI-48）：读不出 / 缺 shots / 镜头不合法 → CorruptJSON（带文件名），切片前就拒绝。
+
+    注意 clean_shots 会把入出点规整成 3 位小数，手写的整数入出点会让切片缓存 key 变化而重切一次。
+    """
+    path = Path(path)
+    data = read_json(path)
+    try:
+        return clean_shots(data.get("shots"))
+    except ValueError as exc:
+        raise CorruptJSON(SHOTS_INVALID.format(name=path.name, detail=exc)) from exc
 
 
 def save(path: Path, cfg: dict) -> list[str]:

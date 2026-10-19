@@ -133,3 +133,72 @@ def test_job_modal_stays_open_when_job_warned():
     assert "'[!]'" in poll and "COPY_JOB_DONE_WITH_WARNINGS" in poll
     for const in ("COPY_JOB_DONE_WITH_WARNINGS", "COPY_JOB_ACK", "COPY_WARNBAR_TITLE"):
         assert f"const {const}" in src
+
+
+# ---------------------------------------------------------------- M8：KI-49 / KI-21
+def test_confirm_uses_as_list_and_immutable_pick():
+    src = _read("confirm.html")
+    assert "asList(" in src and "(chosen||[]).includes" not in src
+    assert ".splice(" not in src and ".push(" not in src
+    assert "answers_unreadable" in src and "COPY_ANSWERS_UNREADABLE" in src
+    save = src[src.index("async function save"):]
+    assert "e.error" in save[:save.index("\n}\n")]  # 409 / 404 的原因要显示出来，不只是「保存失败」
+
+
+def test_index_shows_state_load_error():
+    src = _read("index.html")
+    body = src[src.index("async function selectProject"):]
+    body = body[:body.index("\n}\n")]
+    assert "refreshOrWarn(name)" in body  # 失败处理（警告栏 + toast）在 refreshOrWarn 里统一做
+    assert "state.project = name" not in body  # 刷新成功后才切项目（在 refresh 里）
+
+
+# ---------------------------------------------------------------- M8 补充：刷新失败 / 预设警告 / 错误 toast
+def test_every_refresh_caller_reports_state_failure():
+    """除了 refreshOrWarn 本身，任何地方都不直接 await refresh() / refresh().catch 吞掉错误。"""
+    src = _read("index.html") + _read("jobs.js")
+    assert len(re.findall(r"(?<![\w.])refresh\(", src)) == 2  # 定义 + refreshOrWarn 里唯一一次调用
+    assert "refresh().catch(()=>{})" not in src
+    body = src[src.index("async function refreshOrWarn"):]
+    body = body[:body.index("\n}\n")]
+    assert "showProjectError(" in body
+    err = src[src.index("function showProjectError"):]
+    err = err[:err.index("\n}\n")]
+    assert "renderWarnbar(" in err and "toast(" in err and "state.project = null" in err
+
+
+def test_new_project_modal_shows_preset_warnings():
+    src = _read("index.html")
+    body = src[src.index("async function openNew"):]
+    body = body[:body.index("\n}\n")]
+    assert "warnings" in body and "esc(" in body
+
+
+def test_confirm_error_toast_stays_longer():
+    src = _read("confirm.html")
+    assert "TOAST_ERROR_MIN_MS" in src
+    save = src[src.index("async function save"):]
+    save = save[:save.index("\n}\n")]
+    assert "toastError(" in save
+
+
+# ---------------------------------------------------------------- M8 审查：浏览 / 确认页警告条，浏览页写失败回滚
+@pytest.mark.parametrize("page", ["browse.html", "confirm.html"])
+def test_page_shows_warning_strip_escaped(page):
+    src = _read(page)
+    assert 'id="warnstrip"' in src
+    body = src[src.index("function renderWarnings"):]
+    body = body[:body.index("\n}\n")]
+    assert "esc(" in body and "DATA.warnings" in src
+
+
+def test_browse_writes_check_ok_and_roll_back():
+    src = _read("browse.html")
+    helper = src[src.index("async function postOrRollback"):]
+    helper = helper[:helper.index("\n}\n")]
+    assert "r.ok" in helper and "toastError(" in helper and "rollback()" in helper
+    for fn in ("async function setLevel", "async function toggleMust"):
+        body = src[src.index(fn):]
+        body = body[:body.index("\n}\n")]
+        assert "postOrRollback(" in body and "prev" in body  # 失败时回滚乐观更新
+    assert "TOAST_ERROR_MIN_MS" in src

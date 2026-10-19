@@ -119,10 +119,6 @@ def print_report(draft_path: Path, backup: Path | None = None) -> None:
 
 
 # ------------------------------------------------------------------ 工具
-def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw)
-
-
 def write_json(path: Path, obj: dict) -> None:
     """原子写紧凑 JSON（唯一临时名，GL-18 同款）。"""
     schema.write_json(path, obj, indent=None)

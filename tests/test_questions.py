@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from pipeline import questions
 
 
@@ -88,3 +90,52 @@ def test_run_writes_questions(tmp_path):
     out = tmp_path / "q.json"
     res = questions.run(sp, cp, out, client=Fake(good_payload()))
     assert len(res["questions"]) == 3 and out.exists()
+
+
+# ---------------------------------------------------------------- M8：KI-22 兜底不固化
+def _write(path, obj):
+    path.write_text(obj if isinstance(obj, str) else json.dumps(obj, ensure_ascii=False),
+                    encoding="utf-8")
+    return path
+
+
+def test_reusable_ai_questions(tmp_path):
+    out = _write(tmp_path / "questions.json", {"fallback": False, "questions": [{"id": "q1"}]})
+    assert questions.reusable(out) is True
+
+
+def test_fallback_without_answers_not_reusable(tmp_path):
+    out = _write(tmp_path / "questions.json", {"fallback": True, "questions": [{"id": "q1"}]})
+    assert questions.reusable(out) is False
+
+
+def test_fallback_with_answers_kept(tmp_path):
+    out = _write(tmp_path / "questions.json", {"fallback": True, "questions": [{"id": "q1"}]})
+    _write(tmp_path / "brief_answers.json", {"answers": {"q1": "群像"}})
+    assert questions.reusable(out) is True
+
+
+def test_corrupt_or_missing_questions_not_reusable(tmp_path):
+    assert questions.reusable(tmp_path / "questions.json") is False
+    assert questions.reusable(_write(tmp_path / "questions.json", "{坏")) is False
+    assert questions.reusable(_write(tmp_path / "questions.json", "[]")) is False
+
+
+# ---------------------------------------------------------------- M8：KI-49 答案规整
+QS = {"questions": [{"id": "q1", "type": "single"}, {"id": "q2", "type": "multi"}]}
+
+
+@pytest.mark.parametrize("answers,expected", [
+    (None, {}), ([], {}), ("x", {}),
+    ({"q2": "a"}, {"q2": ["a"]}),
+    ({"q2": ["a", 3, "", None, "b"]}, {"q2": ["a", "b"]}),
+    ({"q2": {"x": 1}}, {"q2": []}),
+    ({"q1": ["a"]}, {}), ({"q1": ""}, {}), ({"q1": "a"}, {"q1": "a"}),
+    ({"q9": "a", "q1": "b"}, {"q1": "b"}),
+])
+def test_normalize_answers(answers, expected):
+    assert questions.normalize_answers(QS, answers) == expected
+
+
+def test_normalize_answers_without_questions():
+    assert questions.normalize_answers(None, {"q1": "a"}) == {}

@@ -27,4 +27,6 @@
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   // 来自 LLM / 磁盘的“数字”先过 num()，再拼进模板或内联事件
   window.num = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  // 磁盘上的答案可能是旧版本 / 手改的：多选值统一成数组再用（KI-49）
+  window.asList = v => Array.isArray(v) ? v : (typeof v === 'string' && v ? [v] : []);
 })();

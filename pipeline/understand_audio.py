@@ -18,6 +18,8 @@ import statistics
 import wave
 from pathlib import Path
 
+from pipeline import schema
+
 try:  # Python ≤3.12 有 C 实现的 audioop，比纯 Python 快一个数量级
     import audioop
 except ImportError:  # pragma: no cover - 3.13+ 才走这里
@@ -109,7 +111,7 @@ def analyze(wav_path: Path, segments: list[dict], *, pad: float = 0.0) -> dict:
 
 
 def run(wav_path: Path, segments_path: Path, out_path: Path) -> dict:
-    segments = json.loads(Path(segments_path).read_text(encoding="utf-8"))["segments"]
+    segments = schema.read_field(segments_path, "segments")  # 结构不对 → CorruptJSON（带文件名）
     result = analyze(Path(wav_path), segments)
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2),

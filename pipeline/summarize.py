@@ -12,6 +12,7 @@ import json
 import re
 from pathlib import Path
 
+from pipeline import applog, schema
 from pipeline.llm import DeepSeekClient, LLMError
 
 SUMMARY_SYSTEM = "你是纪录片剪辑助理，只输出 JSON。"
@@ -93,9 +94,9 @@ def _normalize(data: dict, segments: list[dict]) -> dict:
 
 def run(text_path: Path, scored_path: Path, out_path: Path,
         *, client=None, model: str | None = None, style: str = "") -> dict:
-    text = json.loads(Path(text_path).read_text(encoding="utf-8"))
-    scored = json.loads(Path(scored_path).read_text(encoding="utf-8"))
-    segments = scored["segments"]
+    text = schema.read_json(text_path)
+    scored = schema.read_json(scored_path)
+    segments = schema.require_key(scored, "segments", scored_path)
     topics = scored.get("topics") or text.get("topics") or []
 
     client = client or DeepSeekClient()
@@ -108,7 +109,8 @@ def run(text_path: Path, scored_path: Path, out_path: Path,
         result = _normalize(data, segments)
         if not result["summary"]:
             raise LLMError("摘要为空")
-    except Exception as exc:  # noqa: BLE001 - 任何失败都退回兜底
+    except Exception as exc:  # noqa: BLE001 - 任何失败都退回兜底；真实原因（含堆栈，已脱敏）进诊断日志
+        applog.get("summarize").exception("内容摘要调用失败，改用兜底")
         result = fallback(segments, topics)
         result["error"] = str(exc)[:200]
 

@@ -387,3 +387,69 @@ def test_describe_missing_from_selection_says_reselect():
     assert "在分镜表里加回" in select.describe_missing(missing)
     msg = select.describe_missing(missing, from_selection=True)
     assert "重新选段" in msg and "在分镜表里加回" not in msg and "01:10" in msg
+
+
+# ---------------------------------------------------------------- M8：KI-23 匹配不上要说出来
+def _has(res, *parts):
+    return any(all(p in w for p in parts) for w in res["warnings"])
+
+
+def test_unmatched_must_line_warned():
+    res = select.select([seg(1, 0, 6, "讲合同")], TOPICS, {"must_lines": ["不存在的原话"]}, 60)
+    assert _has(res, "不存在的原话", "找不到")
+
+
+def test_too_short_must_line_warned():
+    segs = [seg(1, 0, 6, "讲合同"), seg(2, 20, 1.0, "聊吃饭", text="退费", level=1)]
+    res = select.select(segs, TOPICS, {"must_lines": ["退费"]}, 60)
+    assert _has(res, "退费", "不足")
+    assert "S002" not in [s["segment_id"] for s in res["shots"]]
+
+
+def test_matched_must_line_no_warning():
+    segs = [seg(1, 0, 6, "讲合同"), seg(2, 20, 5, "聊吃饭", text="不白学吗", level=1)]
+    res = select.select(segs, TOPICS, {"must_lines": ["不白学吗"]}, 60)
+    assert not _has(res, "不白学吗")
+    assert "S002" in [s["segment_id"] for s in res["shots"]]
+
+
+def test_must_line_already_selected_not_warned():
+    segs = [seg(1, 0, 6, "讲合同", text="合同签了"), seg(2, 20, 6, "聊吃饭")]
+    res = select.select(segs, TOPICS, {"must_lines": ["合同签了"]}, 60)
+    assert not _has(res, "合同签了")
+
+
+def test_unmatched_must_topic_warned():
+    res = select.select([seg(1, 0, 6, "讲合同")], TOPICS, {"must_topics": ["完全无关的内容"]}, 60)
+    assert _has(res, "完全无关的内容")
+    ok = select.select([seg(1, 0, 6, "讲合同")], TOPICS, {"must_topics": ["讲合同"]}, 60)
+    assert ok["warnings"] == []
+
+
+QUESTIONS = {"questions": [
+    {"id": "q1", "type": "single", "options": [
+        {"label": "合同全额", "rule": {"kind": "must_topics", "value": ["讲合同"]}}]},
+    {"id": "q2", "type": "multi", "options": [
+        {"label": "签字收尾", "rule": {"kind": "ending", "value": "sign"}}]},
+]}
+
+
+def test_unknown_answer_label_reported():
+    rules = select._rules({"q1": "旧选项", "q2": ["签字收尾", "旧多选", ""], "q3": None}, QUESTIONS)
+    assert rules["ignored_answers"] == ["旧选项", "旧多选"]
+    assert rules["ending"] == "sign"
+
+
+def test_ignored_answers_become_warnings():
+    res = select.select([seg(1, 0, 6, "讲合同")], TOPICS, {"ignored_answers": ["旧选项"]}, 60)
+    assert _has(res, "旧选项", "不在当前的决策问题里")
+
+
+def test_run_reports_unmatched_must_line(tmp_path):
+    sp = tmp_path / "segments_scored.json"
+    sp.write_text(json.dumps({"segments": [seg(1, 0, 6, "讲合同")], "topics": TOPICS, "target": 60},
+                             ensure_ascii=False), encoding="utf-8")
+    res = select.run(sp, tmp_path / "none.json", tmp_path, calibration={"must_lines": "推费"})
+    assert _has(res, "推费", "找不到")
+    saved = json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))
+    assert any("推费" in w for w in saved["warnings"])

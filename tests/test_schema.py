@@ -227,3 +227,75 @@ def test_write_json_compact_when_indent_none(tmp_path):
     schema.write_json(p, {"a": [1, 2], "中": "文"}, indent=None)
     assert p.read_text(encoding="utf-8") == '{"a": [1, 2], "中": "文"}'
     assert [x.name for x in tmp_path.iterdir()] == ["d.json"]
+
+
+# ---------------------------------------------------------------- M8：KI-26 / KI-21
+def test_default_project_does_not_share_mutable_defaults():
+    a = schema.default_project("a", "/x")
+    a["calibration"]["tone"] = "t"
+    a["brief"]["k"] = 1
+    b = schema.default_project("b", "/y")
+    assert b["calibration"] == {} and b["brief"] == {}
+    assert schema.DEFAULTS["calibration"] == {} and schema.DEFAULTS["brief"] == {}
+
+
+def test_migrate_fills_defaults_with_fresh_copies():
+    cfg, _ = schema.migrate({"name": "n", "material": "m", "schema_version": 2})
+    assert cfg["brief"] is not schema.DEFAULTS["brief"]
+    assert cfg["calibration"] is not schema.DEFAULTS["calibration"]
+
+
+def test_read_json_missing_returns_default(tmp_path):
+    assert schema.read_json(tmp_path / "none.json", default=None) is None
+    assert schema.read_json(tmp_path / "none.json", default={"a": 1}) == {"a": 1}
+
+
+def test_read_json_missing_without_default_raises_file_not_found(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        schema.read_json(tmp_path / "none.json")
+
+
+def test_read_json_corrupt_raises_with_file_name(tmp_path):
+    p = tmp_path / "shots.json"
+    p.write_text("{坏", encoding="utf-8")
+    with pytest.raises(schema.CorruptJSON, match="shots.json"):
+        schema.read_json(p, default=None)
+    assert issubclass(schema.CorruptJSON, ValueError)
+
+
+def test_read_json_corrupt_message_does_not_leak_content(tmp_path):
+    p = tmp_path / "segments.json"
+    p.write_text('{"secret": "转写原文', encoding="utf-8")
+    with pytest.raises(schema.CorruptJSON) as exc:
+        schema.read_json(p)
+    assert "转写原文" not in str(exc.value)
+
+
+def test_read_json_wrong_top_level_type(tmp_path):
+    p = tmp_path / "a.json"
+    p.write_text("[]", encoding="utf-8")
+    with pytest.raises(schema.CorruptJSON, match="a.json"):
+        schema.read_json(p, expect=dict)
+    assert schema.read_json(p, expect=list) == []
+    assert schema.read_json(p, expect=None) == []
+
+
+def test_read_json_bad_utf8(tmp_path):
+    p = tmp_path / "a.json"
+    p.write_bytes(b"\xff\xfe")
+    with pytest.raises(schema.CorruptJSON):
+        schema.read_json(p, default=None)
+
+
+def test_read_json_unreadable_is_corrupt(tmp_path):
+    d = tmp_path / "dir.json"
+    d.mkdir()  # 读目录 → IsADirectoryError（OSError），有文件但读不了
+    with pytest.raises(schema.CorruptJSON):
+        schema.read_json(d, default=None)
+
+
+def test_load_corrupt_project_raises_corrupt_json(tmp_path):
+    p = tmp_path / "project.json"
+    p.write_text("{坏", encoding="utf-8")
+    with pytest.raises(schema.CorruptJSON, match="project.json"):
+        schema.load(p)

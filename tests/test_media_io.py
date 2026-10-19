@@ -1,5 +1,6 @@
 """pipeline/media_io：临时文件 → 原子改名 → 完成标记（GL-15）。"""
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -220,3 +221,87 @@ def test_atomic_output_without_marker(tmp_path):
         tmp.write_bytes(b"data")
     assert dst.read_bytes() == b"data" and not mio.done_marker(dst).exists()
     assert [p.name for p in tmp_path.iterdir()] == ["o.mp4"]
+
+
+# ---------------------------------------------------------------- M8：KI-19 / KI-66 严格原语
+class FakeOut:
+    def __init__(self, code=0, out="", err=""):
+        self.returncode, self.stdout, self.stderr = code, out, err
+
+
+def _runner(result, seen=None):
+    def run(cmd, **kw):
+        if seen is not None:
+            seen.append((cmd, kw))
+        if isinstance(result, BaseException):
+            raise result
+        return result
+    return run
+
+
+def test_run_analysis_returns_stderr_log():
+    seen = []
+    log = mio.run_analysis(["-i", "x.mp4", "-f", "null", "-"],
+                           runner=_runner(FakeProc(0, err="silence_start: 1"), seen))
+    assert log == "silence_start: 1"
+    cmd = seen[0][0]
+    assert cmd[:3] == ["ffmpeg", "-hide_banner", "-nostats"]
+    assert "-loglevel" not in cmd  # filter 日志在 info 级
+
+
+def test_run_analysis_nonzero_raises_with_tail():
+    with pytest.raises(mio.MediaError) as exc:
+        mio.run_analysis(["-i", "x"], runner=_runner(FakeProc(1, err="x" * 2000 + "Invalid data found")))
+    msg = str(exc.value)
+    assert "退出码 1" in msg and "Invalid data found" in msg
+    assert len(msg) < mio.STDERR_TAIL + 100
+
+
+def test_run_analysis_missing_binary():
+    with pytest.raises(mio.MediaError, match="无法运行 ffmpeg"):
+        mio.run_analysis(["-i", "x"], runner=_runner(FileNotFoundError("ffmpeg")))
+
+
+def test_run_analysis_timeout():
+    with pytest.raises(mio.MediaError, match="秒"):
+        mio.run_analysis(["-i", "x"], runner=_runner(subprocess.TimeoutExpired(["ffmpeg"], 5)),
+                         timeout=5)
+
+
+def test_probe_duration_strict_ok():
+    assert mio.probe_duration(Path("a.mp4"), runner=_runner(FakeOut(0, "12.5\n"))) == 12.5
+
+
+@pytest.mark.parametrize("result", [FakeOut(1, "", "moov atom not found"), FakeOut(0, ""),
+                                    FakeOut(0, "N/A"), FakeOut(0, "0"), FakeOut(0, "-1"),
+                                    FakeOut(0, "nan"), FileNotFoundError("ffprobe")])
+def test_probe_duration_strict_failures(result):
+    with pytest.raises(mio.MediaError, match="读不到时长"):
+        mio.probe_duration(Path("a.mp4"), runner=_runner(result))
+
+
+def test_probe_duration_strict_carries_reason():
+    with pytest.raises(mio.MediaError, match="moov atom not found"):
+        mio.probe_duration(Path("a.mp4"), runner=_runner(FakeOut(1, "", "moov atom not found")))
+
+
+def test_probe_material_ok():
+    out = '{"format":{"duration":"12.5"},"streams":[{"codec_type":"video"}]}'
+    assert mio.probe_material(Path("a.mp4"), runner=_runner(FakeOut(0, out))) == {
+        "duration": 12.5, "streams": [{"codec_type": "video"}], "warnings": []}
+
+
+@pytest.mark.parametrize("result", [
+    FakeOut(1, "", "Invalid data found when processing input"), FakeOut(0, ""),
+    FakeOut(0, "{}"), FakeOut(0, "[]"),  # 容器里只是没写时长的情况见 test_m8_review（警告不拒绝）
+    FileNotFoundError("ffprobe")])
+def test_probe_material_unrecognized(result):
+    prefix = mio.MATERIAL_UNREADABLE.split("（")[0]
+    with pytest.raises(mio.MediaError, match=prefix):
+        mio.probe_material(Path("a.mp4"), runner=_runner(result))
+
+
+def test_probe_material_reason_from_stderr():
+    with pytest.raises(mio.MediaError, match="Invalid data found"):
+        mio.probe_material(Path("a.mp4"),
+                           runner=_runner(FakeOut(1, "", "Invalid data found when processing input")))

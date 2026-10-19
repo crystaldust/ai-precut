@@ -33,8 +33,8 @@ sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
 from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
-from pipeline import applog, media_io, notices, proc, review, schema, select, style  # noqa: E402
-from gui import jobs, settings, support  # noqa: E402
+from pipeline import applog, media_io, notices, proc, questions, review, schema, select, style  # noqa: E402
+from gui import jobs, payloads, settings, support  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
     JOB_COMMANDS, JOBS, JOBS_LOCK, JobConflict, run_aicut, start_job,
 )
@@ -66,6 +66,7 @@ PAGE_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
 MAX_BODY_BYTES = 2 * 1024 * 1024  # 请求体上限：分镜表再大也到不了 2 MB
 REQUEST_TIMEOUT_S = 60            # 单次 socket 读写超时，慢速/半开连接不会永久占住线程
 NO_EXPORT_MSG = "这一版还没有导出 Windows 剪映包"
+PRESET_CORRUPT_MSG = "已跳过预设「{name}」：{reason}"
 INTERNAL_ERROR_MSG = "服务内部错误，请重试；如果反复出现请点左下角「导出诊断包」发给开发"
 LOG = applog.get("gui")
 
@@ -77,14 +78,16 @@ def set_picker(fn) -> None:
 
 # ------------------------------------------------------------------ 工具
 def jload(p: Path, default=None):
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return default
+    """只用于显示：缺失或损坏都给 default；损坏的由 notices.corrupt_files 在警告栏点名（KI-21）。"""
+    return schema.read_json_lenient(p, default)
 
 
 def jdump(p: Path, obj) -> None:
     schema.write_json(p, obj)
+
+
+class ProjectCorrupt(Exception):
+    """project.json 损坏：任何写操作都必须 409 拒绝（不是 ValueError，免得被各路由当 400 吞掉）。"""
 
 
 class BadRequest(ValueError):
@@ -103,11 +106,24 @@ def project_path(name: str) -> Path:
     return p
 
 
-def existing_project(name: str) -> Path:
+def existing_project(name: str, *, strict: bool = True) -> Path:
+    """项目存在才返回；strict（默认，所有写接口）时 project.json 必须读得懂，否则 ProjectCorrupt → 409。
+
+    只有导出诊断包用 strict=False：项目坏了正是要导出诊断包的时候。
+    """
     pdir = project_path(name)
     if not (pdir / "project.json").exists():
         raise FileNotFoundError(f"项目不存在：{name}")
+    if strict:
+        try:
+            schema.read_json(pdir / "project.json")
+        except schema.CorruptJSON as exc:
+            raise ProjectCorrupt(str(exc)) from exc
     return pdir
+
+
+def diagnostics_project(name: str) -> Path:
+    return existing_project(name, strict=False)
 
 
 def safe_name(name: str) -> str:
@@ -120,7 +136,7 @@ def preset_names() -> set[str]:
 
 def project_state(name: str) -> dict:
     pdir = project_path(name)
-    cfg = jload(pdir / "project.json")
+    cfg = schema.read_json(pdir / "project.json", default=None)  # 损坏 → CorruptJSON → 409（KI-21）
     if not cfg:
         raise FileNotFoundError(name)
     schema.ensure_supported(cfg)  # 新版程序建的项目不能让旧界面去改
@@ -170,76 +186,6 @@ def project_state(name: str) -> dict:
     }
 
 
-# ------------------------------------------------------------------ 浏览页数据
-def browse_payload(name: str) -> dict:
-    pdir = project_path(name)
-    cfg = jload(pdir / "project.json") or {}
-    try:
-        cfg = schema.load(pdir / "project.json")
-    except Exception:  # noqa: BLE001 - 旧项目读不出来就用原始 json
-        pass
-    work = pdir / "work"
-    scored = jload(work / "segments_scored.json")
-    if not scored:
-        raise FileNotFoundError("还没有三档判定，先跑 analyze/text/score")
-
-    overrides = review.load(work)
-    segments = review.apply(scored["segments"], overrides)
-
-    shots = jload(pdir / "shots.json", {}).get("shots", [])
-
-    def in_cut(s):
-        return any(max(0, min(s["end"], sh["in"] + sh["out"] - sh["in"]) -
-                       max(s["start"], sh["in"])) > 1.0 for sh in shots)
-
-    topics = {t["name"]: dict(t) for t in scored.get("topics", [])}
-    for s in segments:
-        t = topics.setdefault(s.get("topic") or "未归类",
-                             {"name": s.get("topic") or "未归类", "must": False,
-                              "count": 0, "duration": 0.0, "usable_dur": 0.0,
-                              "budget": 0})
-        t["count"] += 1
-        t["duration"] += s["end"] - s["start"]
-        if s["level"] == 3:
-            t["usable_dur"] += s["end"] - s["start"]
-
-    summary = jload(work / "content_summary.json") or {}
-    try:
-        material_duration = jload(work / "materials.json")["items"][0]["duration"]
-    except Exception:  # noqa: BLE001
-        material_duration = 0.0
-
-    for s in segments:
-        s["inCut"] = in_cut(s)
-        s["dur"] = round(s["end"] - s["start"], 2)
-
-    return {
-        "project": {"name": cfg.get("name", name), "title": cfg.get("title", name),
-                    "preset": cfg.get("preset"), "platform": cfg.get("platform"),
-                    "target_duration": cfg.get("target_duration")},
-        "material_duration": material_duration,
-        "summary": summary,
-        "counts": {k: sum(1 for s in segments if s["level"] == v)
-                   for k, v in (("waste", 1), ("pending", 2), ("usable", 3))},
-        "topics": sorted(topics.values(), key=lambda t: -t["duration"]),
-        "segments": segments,
-        "has_overrides": bool(overrides),
-    }
-
-
-def confirm_payload(name: str) -> dict:
-    pdir = project_path(name)
-    work = pdir / "work"
-    q = jload(work / "questions.json")
-    summary = jload(work / "content_summary.json") or {}
-    answers = jload(work / "brief_answers.json") or {}
-    if q is None:
-        raise FileNotFoundError("还没有决策问题，先跑 questions")
-    return {"questions": q["questions"], "fallback": q.get("fallback", False),
-            "summary": summary, "answers": answers.get("answers", {}),
-            "confirmed": answers.get("confirmed", False)}
-
-
 # ------------------------------------------------------------------ HTTP
 class Handler(BaseHTTPRequestHandler):
     server_version = "aicut-gui/1.0"
@@ -285,6 +231,11 @@ class Handler(BaseHTTPRequestHandler):
             route()
         except (BrokenPipeError, ConnectionResetError, TimeoutError):
             self.close_connection = True
+        except ProjectCorrupt as exc:  # 损坏的项目：所有写接口统一 409，不能写进去
+            if self._started:
+                self.close_connection = True
+                return
+            self._json({"error": str(exc)}, 409)
         except Exception:  # noqa: BLE001 - 未预期的错误：记到终端，给前端 500
             traceback.print_exc(file=sys.stderr)
             LOG.exception("请求处理异常：%s %s", self.command, urlparse(self.path).path)
@@ -474,20 +425,24 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"projects": items})
 
         if p == "/api/presets":
-            out = []
+            out, bad = [], []
             for f in sorted(PRESETS.glob("*.json")):
-                c = jload(f, {})
+                try:
+                    c = schema.read_json(f)
+                except schema.CorruptJSON as exc:  # 坏预设跳过，但要说出来（新建弹窗里显示）
+                    bad.append(PRESET_CORRUPT_MSG.format(name=f.stem, reason=exc))
+                    continue
                 out.append({"key": f.stem, "name": c.get("name", f.stem),
                             "platform": c.get("platform"), "duration": c.get("duration")})
-            return self._json({"presets": out})
+            return self._json({"presets": out, "warnings": bad})
 
         if p == "/api/browse":
             name = q.get("project", [""])[0]
             try:
-                return self._json(browse_payload(name))
+                return self._json(payloads.browse(project_path(name), name))
             except FileNotFoundError as exc:
                 return self._json({"error": str(exc)}, 404)
-            except review.OverridesCorrupt as exc:  # 必须在 ValueError 之前
+            except (review.OverridesCorrupt, schema.CorruptJSON) as exc:  # 必须在 ValueError 之前
                 return self._json({"error": str(exc)}, 409)
             except (ValueError, OSError) as exc:
                 return self._json({"error": str(exc)}, 400)
@@ -508,9 +463,11 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/confirm":
             name = q.get("project", [""])[0]
             try:
-                return self._json(confirm_payload(name))
+                return self._json(payloads.confirm(project_path(name)))
             except FileNotFoundError as exc:
                 return self._json({"error": str(exc)}, 404)
+            except schema.CorruptJSON as exc:  # 必须在 ValueError 之前
+                return self._json({"error": str(exc)}, 409)
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
 
@@ -520,7 +477,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(project_state(name))
             except FileNotFoundError as e:
                 return self._json({"error": f"项目不存在：{e}"}, 404)
-            except schema.SchemaTooNew as e:
+            except (schema.SchemaTooNew, schema.CorruptJSON) as e:  # CorruptJSON 必须在 ValueError 之前
                 return self._json({"error": str(e)}, 409)
             except ValueError as e:
                 return self._json({"error": str(e)}, 400)
@@ -565,7 +522,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if (hit := settings.handle_post(p, body)) is not None:
             return self._json(hit[1], hit[0])
-        if (hit := support.handle_post(p, body, existing_project)) is not None:
+        if (hit := support.handle_post(p, body, diagnostics_project)) is not None:
             return self._json(hit[1], hit[0])
 
         if p == "/api/new":
@@ -662,11 +619,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(exc)}, 404)
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
-            work = pdir / "work"
-            questions = jload(work / "questions.json")
-            answers = body.get("answers") or {}
-            from pipeline import select as selector
-            rules = selector._rules(answers, questions)
+            try:
+                questions_def = schema.read_json(pdir / "work/questions.json", default=None)
+            except schema.CorruptJSON as exc:
+                return self._json({"error": str(exc)}, 409)
+            if questions_def is None:
+                return self._json({"error": payloads.NO_QUESTIONS_MSG}, 404)
+            answers = questions.normalize_answers(questions_def, body.get("answers"))  # KI-49
+            rules = select._rules(answers, questions_def)
             data = {"answers": answers,
                     "rules": rules,
                     "confirmed": bool(body.get("confirmed", False)),

@@ -33,10 +33,13 @@ button:hover{filter:brightness(1.12)}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#2a3344;
 border:1px solid var(--line);padding:9px 16px;border-radius:20px;opacity:0;transition:.25s}
 .toast.on{opacity:1;bottom:34px}
+.warnstrip{display:none;margin:8px 0 0;padding:6px 10px;border:1px solid #f59e0b;border-radius:8px;font-size:12px;color:#f5c26b}
+.warnstrip ul{margin:4px 0 0;padding-left:18px}
 </style></head><body>
 <div class="wrap">
   <h1 id="title">确认与提问</h1>
   <div class="sub" id="sub">这一步决定后面怎么剪。答完点「保存并确认」。</div>
+  <div class="warnstrip" id="warnstrip" role="status"></div>
 
   <div class="card">
     <h2>素材讲了什么（AI 的理解）</h2>
@@ -63,6 +66,10 @@ border:1px solid var(--line);padding:9px 16px;border-radius:20px;opacity:0;trans
 <div class="toast" id="toast"></div>
 <script>
 const PROJECT = new URLSearchParams(location.search).get('project') || '';
+const COPY_ANSWERS_UNREADABLE = '上次保存的答案读不出来，请重新作答';
+const COPY_SAVE_FAILED = '保存失败';
+const COPY_WARN_TITLE = '需要你留意';
+const TOAST_MS = 1600, TOAST_ERROR_MIN_MS = 6000, TOAST_MS_PER_CHAR = 120;
 let DATA = null, ANSWERS = {};
 
 async function load(){
@@ -70,6 +77,8 @@ async function load(){
   if(!r.ok){ const e = await r.json().catch(()=>({}));
     document.getElementById('summary').textContent = e.error || '加载失败'; return; }
   DATA = await r.json(); ANSWERS = DATA.answers || {};
+  if(DATA.answers_unreadable) document.getElementById('status').textContent = COPY_ANSWERS_UNREADABLE;
+  renderWarnings(DATA.warnings);
   document.getElementById('title').textContent = '确认与提问';
   document.getElementById('sub').textContent =
     DATA.fallback ? '（问题由兜底模板生成）这一步决定后面怎么剪。' : '这一步决定后面怎么剪。答完点「保存并确认」。';
@@ -81,6 +90,12 @@ async function load(){
     ? '主要角色：' + (s.cast||[]).map(c=>`${c.name}（${c.desc}）`).join('、') : '';
   renderQuestions();
 }
+// 损坏文件 / AI 兜底等提示（与剪辑台警告栏同源，M8）
+function renderWarnings(list){
+  const el = document.getElementById('warnstrip'), items = Array.isArray(list) ? list : [];
+  el.style.display = items.length ? 'block' : 'none';
+  el.innerHTML = items.length ? `<b>${esc(COPY_WARN_TITLE)}</b><ul>${items.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>` : '';
+}
 function fmt(sec){ return String(Math.floor(sec/60)).padStart(2,'0')+':'+(sec%60).toFixed(1).padStart(4,'0'); }
 
 function renderQuestions(){
@@ -89,7 +104,7 @@ function renderQuestions(){
     const chosen = ANSWERS[q.id];
     return `<div class="q"><p><span class="n">${qi+1}.</span>${esc(q.text)}</p>`
       + q.options.map((o,oi)=>{
-          const sel = q.type==='multi' ? (chosen||[]).includes(o.label) : chosen===o.label;
+          const sel = q.type==='multi' ? asList(chosen).includes(o.label) : chosen===o.label;
           return `<label class="opt ${sel?'sel':''}" onclick="pick(${qi},${oi})">
             <input type="${q.type==='multi'?'checkbox':'radio'}" ${sel?'checked':''} onclick="event.preventDefault()">
             ${esc(o.label)}<small>选了会怎样：${esc(o.effect||'')}</small></label>`;
@@ -100,13 +115,11 @@ function renderQuestions(){
 // 内联事件只传数字下标，选项文本不进 JS 字符串（GL-07）
 function pick(qi, oi){
   const q = DATA.questions[qi], label = q.options[oi].label;
-  if(q.type==='multi'){
-    const arr = ANSWERS[q.id] || [];
-    const i = arr.indexOf(label);
-    i>=0 ? arr.splice(i,1) : arr.push(label);
-    ANSWERS[q.id] = arr;
+  if(q.type==='multi'){  // 不可变更新：不原地改磁盘读来的数组（KI-49）
+    const arr = asList(ANSWERS[q.id]);
+    ANSWERS = {...ANSWERS, [q.id]: arr.includes(label) ? arr.filter(x=>x!==label) : [...arr, label]};
   } else {
-    ANSWERS[q.id] = label;
+    ANSWERS = {...ANSWERS, [q.id]: label};
   }
   renderQuestions();
 }
@@ -114,9 +127,11 @@ async function save(confirmed){
   const r = await fetch('/api/confirm/answers', {method:'POST',headers:{'Content-Type':'application/json'},
     body: JSON.stringify({project:PROJECT, answers:ANSWERS, confirmed})});
   if(r.ok){ toast(confirmed?'已确认，可以进入选段':'已保存'); document.getElementById('status').textContent = confirmed?'已确认':'已保存'; }
-  else toast('保存失败');
+  else { const e = await r.json().catch(()=>({})); toastError(e.error || COPY_SAVE_FAILED); }
 }
-function toast(t){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('on');
-  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'),1600); }
+function toast(t, ms=TOAST_MS){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('on');
+  clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'), ms); }
+// 错误要看得完：至少 6 秒，按字数加长（KI-21）
+function toastError(t){ toast(t, Math.max(TOAST_ERROR_MIN_MS, String(t).length * TOAST_MS_PER_CHAR)); }
 load();
 </script></body></html>

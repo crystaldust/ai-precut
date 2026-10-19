@@ -1,3 +1,4 @@
+import http.client
 import json
 
 import pytest
@@ -121,3 +122,57 @@ def test_missing_key_not_retryable(monkeypatch):
     with pytest.raises(llm.LLMError) as ei:
         llm.DeepSeekClient(api_key=None).chat_json("s", "u")
     assert ei.value.retryable is False
+
+
+# ---------------------------------------------------------------- M8：KI-25 回归（走真实 default_transport）
+class _Resp:
+    def __init__(self, body):
+        self.status, self._b = 200, body.encode()
+
+    def read(self, n=-1):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+_OK_BODY = json.dumps({"choices": [{"message": {"content": '{"ok": 1}'}}]})
+
+
+def _sequenced_open(seq):
+    def fake_open(req, timeout):
+        item = seq.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+    return fake_open
+
+
+@pytest.mark.parametrize("exc", [http.client.RemoteDisconnected("closed"),
+                                 ConnectionResetError(54, "reset"),
+                                 http.client.IncompleteRead(b"")])
+def test_default_transport_retries_dropped_connection(monkeypatch, exc):
+    seq = [exc, _Resp(_OK_BODY)]
+    monkeypatch.setattr(llm, "_open", _sequenced_open(seq))
+    c = llm.DeepSeekClient(api_key="k", sleep=lambda _: None, transport=llm.default_transport)
+    assert c.chat_json("s", "u") == {"ok": 1}
+    assert seq == []
+
+
+def test_default_transport_200_html_then_json_retries(monkeypatch):
+    seq = [_Resp("<html>gateway</html>"), _Resp(_OK_BODY)]
+    monkeypatch.setattr(llm, "_open", _sequenced_open(seq))
+    c = llm.DeepSeekClient(api_key="k", sleep=lambda _: None, transport=llm.default_transport)
+    assert c.chat_json("s", "u") == {"ok": 1}
+    assert seq == []
+
+
+def test_default_transport_gives_up_after_retries(monkeypatch):
+    seq = [http.client.RemoteDisconnected("closed") for _ in range(4)]
+    monkeypatch.setattr(llm, "_open", _sequenced_open(seq))
+    c = llm.DeepSeekClient(api_key="k", sleep=lambda _: None, transport=llm.default_transport)
+    with pytest.raises(llm.LLMError, match="网络错误"):
+        c.chat_json("s", "u")

@@ -33,8 +33,8 @@ from pathlib import Path
 
 from pipeline.pyver import require_supported_python; require_supported_python()  # noqa: E702 先于新语法
 from pipeline import (applog, build_documentary, classify, cloud, consent, encode, export_draft,  # noqa: E402
-                      jy_env, media_io, proc, questions, readiness, review, schema, secrets, select, style,
-                      summarize, to_jianying, understand_audio, understand_text, understand_visual)
+                      jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
+                      select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual)
 from pipeline.llm import LLMError
 
 ROOT = proc.app_root()
@@ -79,16 +79,19 @@ PREPARE_KEYS_MISSING = ("缺少 {names}：在剪辑台「⚙ 设置 · API Key�
 DIR_NOT_EMPTY = "{pdir} 已存在且不是空目录（也不是项目），换个项目名"
 MUST_KEEP_OVER_HINT = ("必留内容共 {must}，超过目标 {target}。想剪成多长？"
                        "运行：aicut.py select {name} --target <秒>（建议 --target {suggest}）")
-
-
-def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+INGEST_FAILED = "素材读不出来：{reason}"
+PRESET_MISSING = "找不到预设 {preset}（presets/{preset}.json），可用：{names}"
+LIST_CORRUPT = "（project.json 损坏）"
 
 
 def load_json(p: Path, default=None):
-    if not p.exists():
-        return default
-    return json.loads(p.read_text(encoding="utf-8"))
+    return schema.read_json(p, default=default)  # 损坏抛 CorruptJSON，由 main() 统一变成人话（KI-21）
+
+
+def load_preset(name: str) -> dict:
+    if (preset := load_json(PRESETS / f"{name}.json")) is None:
+        die(PRESET_MISSING.format(preset=name, names=[p.stem for p in PRESETS.glob("*.json")]))
+    return preset
 
 
 def save_json(p: Path, obj) -> None:
@@ -113,15 +116,6 @@ def project_dir(name: str) -> Path:
 
 def cfg(pdir: Path) -> dict:
     return schema.load(pdir / "project.json")
-
-
-def probe_duration(path: Path) -> float:
-    r = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", str(path)])
-    try:
-        return float(r.stdout.strip())
-    except ValueError:
-        return 0.0
 
 
 def ensure_jy_python() -> str:
@@ -166,9 +160,7 @@ def cmd_new(args) -> None:
     src = Path(args.material).expanduser().resolve()
     if not src.exists():
         die(f"原片不存在：{src}")
-    preset = load_json(PRESETS / f"{args.preset}.json")
-    if preset is None:
-        die(f"找不到预设 {args.preset}，可用：{[p.stem for p in PRESETS.glob('*.json')]}")
+    preset = load_preset(args.preset)
     no_input = getattr(args, "no_input", False)  # GUI 调用：绝不 input()（GL-20）
     target = getattr(args, "target", None)
     if target is not None:  # 先校验再建目录：失败不留空项目
@@ -203,17 +195,10 @@ def cmd_new(args) -> None:
 
 def cmd_ingest(args) -> None:
     pdir = project_dir(args.name)
-    c = cfg(pdir)
-    src = Path(c["material"])
-    r = run(["ffprobe", "-v", "error", "-show_entries",
-             "format=duration,size,bit_rate",
-             "-show_entries", "stream=codec_type,codec_name,width,height,r_frame_rate",
-             "-of", "json", str(src)])
-    data = json.loads(r.stdout)
-    entry = {"path": str(src), "name": src.name,
-             "size": src.stat().st_size,
-             "duration": float(data["format"].get("duration", 0)),
-             "streams": data.get("streams", [])}
+    try:  # KI-66 / KI-19：认不出的素材给人话，不给 KeyError
+        entry = media_io.material_entry(Path(cfg(pdir)["material"]))
+    except media_io.MediaError as exc:
+        die(INGEST_FAILED.format(reason=exc))
     save_json(pdir / "work/materials.json", {"items": [entry]})
     ok(f"素材台账：{entry['duration'] / 60:.1f} 分钟，{entry['size'] / 1e9:.1f} GB")
 
@@ -238,7 +223,7 @@ def cmd_transcribe(args) -> None:
         info("获取云端转写结果（长素材要几分钟，中断后重跑会接着查）…")
         client = cloud.CloudClient()
         try:
-            client.transcribe(wav, work, duration_s=probe_duration(wav))
+            client.transcribe(wav, work, duration_s=media_io.duration_or_zero(wav))
         except cloud.CloudError as exc:
             die(f"转写失败：{exc}")
     info("整理分段文稿…")
@@ -337,8 +322,10 @@ def cmd_scenes(args) -> None:
     if not media_io.complete_or_adopt(proxy):
         die("先跑 junk（需要 work/proxy.mp4）")
     info("分析镜头切点（在代理片上跑，长素材要 1–3 分钟）…")
-    res = understand_visual.run(proxy, work / "shots_visual.json",
-                                threshold=getattr(args, "threshold", 8.0))
+    try:
+        res = understand_visual.run(proxy, work / "shots_visual.json", threshold=getattr(args, "threshold", 8.0))
+    except media_io.MediaError as exc:  # KI-19：坏素材不能得到「1 个镜头」
+        die(f"镜头切分失败：{exc}")
     ok(f"镜头 {len(res['shots'])} 个（切点 {res['cut_count']}）")
 
 
@@ -350,7 +337,10 @@ def cmd_quality(args) -> None:
     if not media_io.complete_or_adopt(proxy) or not segs.exists():
         die("先跑 junk 与 transcribe（需要 proxy.mp4 与 segments.json）")
     info("抽帧分析画面质量（1 fps，长素材约 30–90 秒）…")
-    res = understand_visual.run_quality(proxy, segs, work / "visual_quality.json")
+    try:
+        res = understand_visual.run_quality(proxy, segs, work / "visual_quality.json")
+    except media_io.MediaError as exc:  # 画面质量只是加分项：[!] 提示后继续，分档会注明没用上（M8 审查）
+        return warn(understand_visual.QUALITY_SKIPPED.format(reason=exc))
     counts: dict[str, int] = {}
     for v in res["segments"].values():
         for f in v.get("flags", []):
@@ -370,7 +360,9 @@ def cmd_summary(args) -> None:
     info("生成内容摘要…")
     pref = style.directive(cfg(pdir).get("calibration"))
     res = summarize.run(text, scored, work / "content_summary.json", style=pref)
-    ok(("（兜底）" if res["fallback"] else "") + res["summary"])
+    if res["fallback"]:  # KI-22：兜底要说出原因
+        warn(notices.fallback_notice(notices.SUMMARY_FALLBACK_NOTICE, res))
+    ok(res["summary"])
 
 
 def cmd_questions(args) -> None:
@@ -381,13 +373,16 @@ def cmd_questions(args) -> None:
     if not summary.exists() or not scored.exists():
         die("先跑 score 与 summary")
     out = work / "questions.json"
-    if out.exists() and not getattr(args, "force", False):
+    if not getattr(args, "force", False) and questions.reusable(out):  # KI-22：未作答的兜底重新生成
+        if (cached := load_json(out)).get("fallback"):
+            warn(notices.fallback_notice(notices.QUESTIONS_FALLBACK_NOTICE, cached))
         info("决策问题已存在，跳过（--force 可重新生成，但会让已保存答案失效）")
         return
     require_consent()
     res = questions.run(summary, scored, out)
-    tag = "（兜底）" if res["fallback"] else ""
-    ok(f"决策问题 {len(res['questions'])} 个{tag}")
+    if res["fallback"]:
+        warn(notices.fallback_notice(notices.QUESTIONS_FALLBACK_NOTICE, res))
+    ok(f"决策问题 {len(res['questions'])} 个")
     for q in res["questions"]:
         info(f"  {q['text']} → " + " / ".join(o["label"] for o in q["options"]))
 
@@ -458,7 +453,7 @@ def cmd_export(args) -> None:
 def cmd_brief(args) -> None:
     pdir = project_dir(args.name)
     c = cfg(pdir)
-    preset = load_json(PRESETS / f"{c['preset']}.json", {})
+    preset = load_preset(c["preset"])
     segs = load_json(pdir / "work/segments.json", {}).get("segments", [])
     junk = load_json(pdir / "work/junk_report.json", {}).get("items", [])
     lines = [f"# 策划分派单 · {c['title']}", "",
@@ -494,7 +489,7 @@ def ensure_clips(pdir: Path, c: dict, shots: list[dict]) -> Path:
     clips_dir = pdir / "work/clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = clips_dir / "manifest.json"
-    manifest = load_json(manifest_path, {})
+    manifest = media_io.read_manifest(manifest_path)  # 损坏只是缓存：提示后全部重切
     src = Path(c["material"])
     changed = 0
     for sh in shots:
@@ -521,7 +516,7 @@ def actual_durations(clips_dir: Path, shots: list[dict]) -> dict[str, float]:
     """以切片文件真实时长为准，避免"请求 10 秒、实际 8 秒"导致预览和草稿不一致。"""
     out = {}
     for sh in shots:
-        d = probe_duration(clips_dir / f"{sh['id']}.mp4")
+        d = media_io.duration_or_zero(clips_dir / f"{sh['id']}.mp4")
         out[sh["id"]] = round(d if d > 0 else sh["out"] - sh["in"], 3)
     return out
 
@@ -603,7 +598,7 @@ def next_version(pdir: Path) -> str:
 def cmd_build(args) -> None:
     pdir = project_dir(args.name)
     c = cfg(pdir)
-    preset = load_json(PRESETS / f"{c['preset']}.json", {})
+    preset = load_preset(c["preset"])
     shots_file = pdir / "shots.json"
     if not shots_file.exists():  # 用覆盖式选段的结果直接出片
         selected = pdir / "work/shots-selected.json"
@@ -612,8 +607,7 @@ def cmd_build(args) -> None:
             info("使用覆盖式选段结果：work/shots-selected.json")
     if not shots_file.exists():
         die(f"缺少分镜表 {shots_file}（先跑 brief，再写 shots.json）")
-    spec = load_json(shots_file)
-    shots = spec["shots"]
+    shots = schema.read_shots(shots_file)  # KI-48：损坏 / 缺键 / 入出点不对 → CorruptJSON，切片前由 main() 报
     if args.version:
         check_or_die(schema.check_version, args.version)
     try:  # GL-25：切片（耗时）之前确认分镜表覆盖全部必留段
@@ -823,7 +817,10 @@ def cmd_status(args) -> None:
 
 def cmd_list(args) -> None:
     for p in sorted(PROJECTS.glob("*/project.json")):
-        c = load_json(p)
+        try:
+            c = load_json(p)
+        except schema.CorruptJSON:  # 一个项目坏了不影响列出其它项目
+            c = {"name": p.parent.name, "title": LIST_CORRUPT}
         outs = sorted(x.name for x in (p.parent / "output").glob("v*"))
         print(f"{c['name']:28s} {c.get('title', ''):12s} {c.get('preset', ''):10s} {outs}")
 
@@ -915,7 +912,10 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("list"); p.set_defaults(fn=cmd_list)
 
     args = ap.parse_args(argv)
-    args.fn(args)
+    try:
+        args.fn(args)
+    except (schema.CorruptJSON, review.OverridesCorrupt) as exc:  # KI-21 / KI-56：人话，不给 traceback
+        die(str(exc))
 
 
 if __name__ == "__main__":
