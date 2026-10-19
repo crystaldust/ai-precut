@@ -53,12 +53,12 @@
 | 3 | 交付物可信 | 草稿导出不崩；校验 FAIL 不交付；注册原子；中断后不复用半成品 | GL-10 GL-11 GL-12 GL-13 GL-15 | complete | [plan](../PRPs/plans/m3-trustworthy-output.plan.md) · [report](../PRPs/reports/m3-trustworthy-output-report.md) · `ef3899f` |
 | 4 | GUI 独立完成全流程 | 剪辑师在 GUI 内配置 Key（含外发告知）、导出 Mac + Windows 草稿；任务互斥；失败可关闭、可重试 | GL-02 GL-14 GL-16 GL-17 GL-20 GL-22 | complete | [plan](../PRPs/plans/m4-gui-full-flow.plan.md) · [report](../PRPs/reports/m4-gui-full-flow-report.md) · `6f8ba02` |
 | 5 | 干净 Mac 可装可用 | 转写不依赖 Node；ffmpeg 为 LGPL + VideoToolbox 并校验哈希、附许可声明；日志落盘可导诊断包；交付说明适配 macOS 15 | GL-01 GL-03 GL-04 GL-19 | complete（待放行检查） | [plan](../PRPs/plans/m5-clean-mac-ready.plan.md) · [report](../PRPs/reports/m5-clean-mac-ready-report.md) · `ac3f15c` |
-| 6 | 成片质量 | 字幕、hook、必留原话、答题规则、情绪权重等按设计生效 | KI-01..KI-12 KI-58 KI-73 | pending | — |
-| 7 | 渲染与导出健壮 | 特殊字幕、无音轨、模板缺失等情况不崩且如实报错 | KI-13..KI-18 KI-59 KI-64 KI-76 | pending | — |
-| 8 | 失败可见 | ffmpeg/LLM/JSON 失败不再伪装成成功 | KI-19..KI-27 KI-48 KI-49 KI-56 KI-66 | pending | — |
-| 9 | 密钥与运维 | 密钥文件权限与脱敏正确；HTTP 边界校验；费用、进程、启动脚本、版本号可控 | KI-28..KI-37 KI-50..KI-55 KI-57 KI-61..KI-63 KI-65 KI-67..KI-72 KI-74 KI-75 | pending | — |
-| 10 | 测试达标 | 覆盖率 ≥ 80%；有素材 → 剪映草稿的端到端测试 | KI-38 KI-39 | pending | — |
-| 11 | 文档一致 | 指标可检验、PLAN 与 PRD 对齐、术语统一 | KI-40..KI-44 | pending | — |
+| 6 | 成片质量 | 字幕、hook、必留原话、答题规则、情绪权重等按设计生效 | KI-01..KI-12 KI-58 KI-73 | planned | [plan](../PRPs/plans/m6-cut-quality.plan.md) |
+| 7 | 渲染与导出健壮 | 特殊字幕、无音轨、模板缺失等情况不崩且如实报错 | KI-13..KI-18 KI-59 KI-64 KI-76 KI-78 | in-progress | [plan](../PRPs/plans/m7-render-export-robust.plan.md) |
+| 8 | 失败可见 | ffmpeg/LLM/JSON 失败不再伪装成成功 | KI-19..KI-27 KI-48 KI-49 KI-56 KI-66 KI-77 | planned | [plan](../PRPs/plans/m8-visible-failures.plan.md) |
+| 9 | 密钥与运维 | 密钥文件权限与脱敏正确；HTTP 边界校验；费用、进程、启动脚本、版本号可控 | KI-28..KI-37 KI-50..KI-55 KI-57 KI-61..KI-63 KI-65 KI-67..KI-72 KI-74 KI-75 | planned | [plan](../PRPs/plans/m9-secrets-ops.plan.md) |
+| 10 | 测试达标 | 覆盖率 ≥ 80%；有素材 → 剪映草稿的端到端测试 | KI-38 KI-39 | planned | [plan](../PRPs/plans/m10-test-coverage.plan.md) |
+| 11 | 文档一致 | 指标可检验、PLAN 与 PRD 对齐、术语统一 | KI-40..KI-44 | planned | [plan](../PRPs/plans/m11-docs-consistency.plan.md) |
 
 ## Open Questions
 
