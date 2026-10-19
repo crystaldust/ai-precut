@@ -24,12 +24,12 @@
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-13 | 字幕含单引号 → 预览渲染 ffmpeg 失败 | `pipeline/render_preview.py:33-36` | open |
-| KI-14 | 素材无音轨 → 预览渲染失败；声道布局不一致时 concat 失败 | `pipeline/render_preview.py:53` | open |
-| KI-15 | `pipeline/select.py`、`pipeline/secrets.py` 与标准库同名，Homebrew Python 下脚本方式运行崩溃 | `pipeline/select.py`；`pipeline/secrets.py` | open |
-| KI-16 | `aicut.py run` 在已有 shots.json 时必崩（args 缺 `version`/`no_draft`） | `aicut.py:601-605` | open |
-| KI-17 | 剪映模板/版本写死 11.0；pyJianYingDraft 只声明支持到 10.8；缺黄金草稿回归 | `pipeline/to_jianying.py:197, 308` | open |
-| KI-18 | 模板缺失只 warn 被子进程输出吞掉；Windows 包安装脚本失败仍打印 `[OK] Done`；导出后不调 `inspect_package` | `pipeline/to_jianying.py:176-178`；`packaging/build_package.py:157-221`；`pipeline/export_draft.py:39-75` | open |
+| KI-13 | 字幕含单引号 → 预览渲染 ffmpeg 失败 | `pipeline/render_preview.py:33-36` | fixed `71e44e7` |
+| KI-14 | 素材无音轨 → 预览渲染失败；声道布局不一致时 concat 失败 | `pipeline/render_preview.py:53` | fixed `71e44e7` |
+| KI-15 | `pipeline/select.py`、`pipeline/secrets.py` 与标准库同名，Homebrew Python 下脚本方式运行崩溃 | `pipeline/select.py`；`pipeline/secrets.py` | fixed `71e44e7` |
+| KI-16 | `aicut.py run` 在已有 shots.json 时必崩（args 缺 `version`/`no_draft`） | `aicut.py:601-605` | fixed `71e44e7` |
+| KI-17 | 剪映模板/版本写死 11.0；pyJianYingDraft 只声明支持到 10.8；缺黄金草稿回归 | `pipeline/to_jianying.py:197, 308` | fixed `71e44e7` |
+| KI-18 | 模板缺失只 warn 被子进程输出吞掉；Windows 包安装脚本失败仍打印 `[OK] Done`；导出后不调 `inspect_package` | `pipeline/to_jianying.py:176-178`；`packaging/build_package.py:157-221`；`pipeline/export_draft.py:39-75` | fixed `71e44e7`（Windows 实机待验证） |
 
 ## 静默失败 / 健壮性
 
@@ -100,12 +100,12 @@
 | KI-56 | `overrides.json` 损坏时 `select`/`prepare` 不捕获 `OverridesCorrupt`，打出 traceback 而非人话 | `aicut.py`（`cmd_select`）；`pipeline/select.py`（`review.load` 调用处） | open |
 | KI-57 | `createProject` 残留按 URL hash 选项目的启动代码，与随后的 `selectProject(name)` 抢切项目 | `gui/static/index.html`（`createProject`） | open |
 | KI-58 | `_level_of` 只按话题名判必留话题，按关键信息占比判出的必留话题内句子拿不到「必留→待定」保护，与 `topics[].must` 口径不一 | `pipeline/classify.py`（`_level_of`） | open |
-| KI-59 | 同名草稿重跑先拷完媒体才在 `install()` 报「已存在」，白耗时间 | `pipeline/to_jianying.py`（`install`） | open |
+| KI-59 | 同名草稿重跑先拷完媒体才在 `install()` 报「已存在」，白耗时间 | `pipeline/to_jianying.py`（`install`） | fixed `71e44e7` |
 | KI-60 | 子任务失败输出只打印末尾 600/500 字符，「草稿静态校验未通过」的开头可能被截掉 | `aicut.py`（`cmd_build` 调 to_jianying 处） | fixed `ef3899f` |
 | KI-61 | ffmpeg 调用无超时，坏素材/网络盘卡住时 GUI 任务永远 running（取消见 GL-17） | `pipeline/media_io.py`（`run_ffmpeg`） | open |
 | KI-62 | `.done` 只绑定产物大小，不绑定输入指纹：换素材后 `proxy.mp4`/`asr.wav` 仍算完成 | `pipeline/media_io.py`（`is_complete`）；`aicut.py` 音轨/代理处 | open |
 | KI-63 | `.partial-*` 临时文件与成品同目录，未来对 `clips/*.mp4` 的 glob 会读到半成品；`_clear_stale_partials` 会删并发写者的临时文件 | `pipeline/media_io.py` | open |
-| KI-64 | `zip_pkg` 打印的是临时 zip 路径（`.xxx.partial-….zip`），易误导 | `packaging/build_package.py`（`zip_pkg`） | open |
+| KI-64 | `zip_pkg` 打印的是临时 zip 路径（`.xxx.partial-….zip`），易误导 | `packaging/build_package.py`（`zip_pkg`） | fixed `71e44e7` |
 | KI-65 | 旧项目 wav 认领：无标记的旧 wav 中断残片可能被 ffprobe 按大小估出正时长而被认领 | `pipeline/media_io.py`（`complete_or_adopt`） | open |
 | KI-66 | 素材无法被 ffprobe 识别时 `cmd_ingest` 抛 `KeyError: 'format'`，用户看到 traceback | `aicut.py`（`cmd_ingest`） | open |
 | KI-67 | `secrets.mask` 长度 >8 即显示前 4 后 4，9–12 位 Key 几乎全暴露 | `pipeline/secrets.py`（`mask`） | open |
@@ -117,10 +117,10 @@
 | KI-73 | 预览字幕首选字体 `/System/Library/Fonts/PingFang.ttc` 在当前 macOS 上不存在，实际回落宋体 | `pipeline/render_preview.py:20-24` | open |
 | KI-74 | 从钥匙串/凭证文件读出的 Key 未去首尾空白，带换行时 LLM 请求头报错 | `pipeline/secrets.py`（`get`） | open |
 | KI-75 | ASR 上传缓存：云端提前作废 file_id 时要等 12h 过期才重传 | `pipeline/cloud.py`（`work/asr_upload.json`） | open |
-| KI-76 | 预览字幕 `esc()` 不转义 `%`：LGPL ffmpeg 报 `Stray %` 该条字幕静默不显示，Homebrew ffmpeg 直接失败 | `pipeline/render_preview.py:37-40` | open |
+| KI-76 | 预览字幕 `esc()` 不转义 `%`：LGPL ffmpeg 报 `Stray %` 该条字幕静默不显示，Homebrew ffmpeg 直接失败 | `pipeline/render_preview.py:37-40` | fixed `71e44e7` |
 | KI-77 | 废片判定：冻帧与静音完全重叠时只给「待定/参考」，「无语音 + 画面静止」强信号只对黑场成立 | `pipeline/junk_detect.py`（`judge`） | open |
-| KI-78 | Windows `INSTALL.bat` 遇同名草稿用 `rd /s /q` 删除已有草稿，与 README「不会动你已有的任何草稿」矛盾 | `packaging/build_package.py` 生成的 `INSTALL.bat` | open |
-| KI-79 | `INSTALL.bat` 里 `echo [!] JianYing is running…` 的 `!` 在延迟扩展下被吞，显示成 `[]` | `packaging/build_package.py:175` | open |
+| KI-78 | Windows `INSTALL.bat` 遇同名草稿用 `rd /s /q` 删除已有草稿，与 README「不会动你已有的任何草稿」矛盾 | `packaging/build_package.py` 生成的 `INSTALL.bat` | fixed `71e44e7`（Windows 实机待验证） |
+| KI-79 | `INSTALL.bat` 里 `echo [!] JianYing is running…` 的 `!` 在延迟扩展下被吞，显示成 `[]` | `packaging/build_package.py:175` | fixed `71e44e7` |
 | KI-80 | `to_jianying.py` 命令行直接传相对 `--staging` 时素材路径写成相对路径，静态校验 FAIL（aicut 调用不受影响） | `pipeline/to_jianying.py:250-270`（`bundle_media`） | open |
-| KI-81 | 研究用 `--minimal` 分支仍写死 11.0 模板路径，缺失时静默跳过 | `packaging/build_package.py:143`（`make_minimal_draft`） | open |
-| KI-82 | `ensure_jy_python` 不检查已有 venv 的 Python 版本，≤3.10 的旧 venv 不认 `-P` | `aicut.py:136` | open |
+| KI-81 | 研究用 `--minimal` 分支仍写死 11.0 模板路径，缺失时静默跳过 | `packaging/build_package.py:143`（`make_minimal_draft`） | fixed `71e44e7` |
+| KI-82 | `ensure_jy_python` 不检查已有 venv 的 Python 版本，≤3.10 的旧 venv 不认 `-P` | `aicut.py:136` | fixed `71e44e7` |
