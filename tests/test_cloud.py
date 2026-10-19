@@ -128,3 +128,18 @@ def test_transcribe_resumes_from_saved_task(tmp_path):
     # 只查了一次，没有重新提交
     assert len(calls) == 1
     assert "--task-id" in calls[0] and "saved-task" in calls[0]
+
+
+def test_transcript_raw_written_atomically(tmp_path, monkeypatch):
+    # GL-15：aicut 以 transcript_raw.json「存在」判转写完成，写到一半被杀不能留下半截文件
+    import os
+    c, _ = client([FakeProc(out=json.dumps({"task_id": "t1"}))])
+    monkeypatch.setattr(c, "wait_task", lambda *a, **k: {"utterances": []})
+
+    def killed(*a, **k):
+        raise OSError("killed")
+    monkeypatch.setattr(os, "replace", killed)
+    with pytest.raises(OSError):
+        c.transcribe(tmp_path / "a.wav", tmp_path)
+    assert not (tmp_path / "transcript_raw.json").exists()
+    assert [p.name for p in tmp_path.iterdir() if "transcript_raw" in p.name] == []

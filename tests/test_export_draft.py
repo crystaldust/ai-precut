@@ -1,6 +1,8 @@
 import json
 import zipfile
 
+import pytest
+
 from pipeline import export_draft as ex
 
 
@@ -50,3 +52,44 @@ def test_missing_timeline_raises(tmp_path):
     import pytest
     with pytest.raises(FileNotFoundError):
         ex.build_windows_package(tmp_path / "nope.json", "x", tmp_path / "o.zip")
+
+
+# ---------------------------------------------------------------- 审查修复 2：导出包校验
+def _leftovers(out_dir):
+    return [p.name for p in out_dir.iterdir()] if out_dir.exists() else []
+
+
+def test_package_missing_installer_is_rejected(tmp_path, monkeypatch):
+    d = fake_draft(tmp_path)
+    monkeypatch.setattr(ex, "write_installer", lambda pkg: None)
+    out = tmp_path / "out" / "Pkg.zip"
+    with pytest.raises(RuntimeError, match="INSTALL.bat"):
+        ex.package_draft(d, "Test_Pack", out)
+    assert _leftovers(out.parent) == []  # 不留坏 zip、不留 _pkg 临时目录
+
+
+def test_package_without_placeholder_is_rejected(tmp_path, monkeypatch):
+    d = fake_draft(tmp_path)
+    monkeypatch.setattr(ex, "rewrite_for_windows", lambda target: None)
+    out = tmp_path / "out" / "Pkg.zip"
+    with pytest.raises(RuntimeError, match="占位符"):
+        ex.package_draft(d, "Test_Pack", out)
+    assert _leftovers(out.parent) == []
+
+
+def test_package_failure_cleans_temp_dir(tmp_path, monkeypatch):
+    d = fake_draft(tmp_path)
+
+    def boom(target):
+        raise OSError("disk full")
+    monkeypatch.setattr(ex, "rewrite_for_windows", boom)
+    out = tmp_path / "out" / "Pkg.zip"
+    with pytest.raises(OSError):
+        ex.package_draft(d, "Test_Pack", out)
+    assert _leftovers(out.parent) == []
+
+
+def test_package_success_leaves_only_zip(tmp_path):
+    out = tmp_path / "out" / "Pkg.zip"
+    ex.package_draft(fake_draft(tmp_path), "Test_Pack", out)
+    assert _leftovers(out.parent) == ["Pkg.zip"]  # 用户输出目录里不放 .done 标记

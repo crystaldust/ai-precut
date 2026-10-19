@@ -31,9 +31,9 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (classify, cloud, export_draft, proc, questions, review, schema,
-                      secrets, select, style, summarize, understand_audio,
-                      understand_text, understand_visual)
+from pipeline import (build_documentary, classify, cloud, export_draft, media_io, proc,
+                      questions, review, schema, secrets, select, style, summarize,
+                      to_jianying, understand_audio, understand_text, understand_visual)
 from pipeline.llm import LLMError
 
 ROOT = proc.app_root()
@@ -41,7 +41,6 @@ PROJECTS = proc.user_data_root()
 PRESETS = proc.resource_path("presets")
 PIPELINE = proc.resource_path("pipeline")
 proc.ensure_bundled_path()
-DRAFT_ROOT = Path.home() / "Movies/JianyingPro/User Data/Projects/com.lveditor.draft"
 JY_VENV = Path.home() / ".aicut/venv"
 
 
@@ -68,6 +67,11 @@ TEXT_PARTIAL_WARNING = ("上次逐句标注没有完成（work/segments_text.par
                         "这次分档用的是上一次完整的标注结果；重新运行「处理素材」可补齐")
 TEXT_INCOMPLETE_STATUS = "未完成"
 TARGET_CHANGED = "目标时长已改为 {target}，只重跑选段"
+CLIP_VF = ("scale=1080:1920:force_original_aspect_ratio=decrease,"
+           "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
+MEDIA_SUFFIXES = (".wav", ".mp4")  # 这些产物以完成标记判定（GL-15；旧项目可被认领），其余看存在
+DRAFT_LOG_LINES = 40  # 草稿失败时打印的日志行数（按行截，不按字符，KI-60）
+DRAFT_NOT_INSTALLED = "草稿未安装（已回滚，剪映草稿库保持原样）"
 MUST_KEEP_OVER_HINT = ("必留内容共 {must}，超过目标 {target}。想剪成多长？"
                        "运行：aicut.py select {name} --target <秒>（建议 --target {suggest}）")
 
@@ -148,18 +152,6 @@ def _run_pipeline(module: str, argv: list[str]) -> None:
         die(f"{module} 执行失败")
 
 
-def _validate_draft(name: str) -> None:
-    target = DRAFT_ROOT / name
-    if proc.FROZEN:
-        code, out = proc.run_inprocess("research.validate_draft", [str(target)])
-    else:
-        r = subprocess.run([sys.executable, str(ROOT / "research/validate_draft.py"),
-                            str(target)], capture_output=True, text=True)
-        code, out = r.returncode, r.stdout
-    tail = [l for l in out.splitlines() if "结果：" in l]
-    ok(f"校验：{tail[0].strip() if tail else '见输出'}")
-
-
 def mediakit_env() -> dict:
     env = secrets.env_with_secret()
     env["MEDIAKIT_SURFACE"] = "skill"
@@ -229,11 +221,13 @@ def cmd_transcribe(args) -> None:
     work = pdir / "work"
     wav = work / "audio/asr.wav"
     raw = work / "transcript_raw.json"
-    if not wav.exists():
-        wav.parent.mkdir(parents=True, exist_ok=True)
+    if not media_io.complete_or_adopt(wav):
         info("抽音轨…")
-        run(["ffmpeg", "-y", "-loglevel", "error", "-i", c["material"],
-             "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav)], check=True)
+        try:
+            media_io.ffmpeg_to(wav, ["-i", c["material"], "-vn", "-ac", "1", "-ar", "16000",
+                                     "-c:a", "pcm_s16le"])
+        except media_io.MediaError as exc:
+            die(f"抽音轨失败：{exc}")
     if not raw.exists():
         if not secrets.get("mediakit"):
             die("未配置 MEDIAKIT_API_KEY：运行 `uv run python aicut.py config set mediakit`")
@@ -253,7 +247,7 @@ def cmd_analyze(args) -> None:
     pdir = project_dir(args.name)
     work = pdir / "work"
     wav, segs = work / "audio/asr.wav", work / "segments.json"
-    if not wav.exists() or not segs.exists():
+    if not media_io.complete_or_adopt(wav) or not segs.exists():
         die("先跑 transcribe（需要 work/audio/asr.wav 与 work/segments.json）")
     res = understand_audio.run(wav, segs, work / "segments_audio.json")
     interrupts = sum(1 for x in res["segments"] if x["signals"]["interrupt"])
@@ -318,12 +312,14 @@ def cmd_junk(args) -> None:
     c = cfg(pdir)
     work = pdir / "work"
     proxy = work / "proxy.mp4"
-    if not proxy.exists():
+    if not media_io.complete_or_adopt(proxy):
         info("生成 540p 分析代理…")
-        run(["ffmpeg", "-y", "-loglevel", "error", "-i", c["material"],
-             "-vf", "scale=-2:540,fps=30", "-c:v", "libx264", "-preset",
-             "ultrafast", "-crf", "30", "-c:a", "aac", "-b:a", "64k", str(proxy)],
-            check=True)
+        try:
+            media_io.ffmpeg_to(proxy, ["-i", c["material"], "-vf", "scale=-2:540,fps=30",
+                                       "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                                       "-c:a", "aac", "-b:a", "64k"])
+        except media_io.MediaError as exc:
+            die(f"生成分析代理失败：{exc}")
     _run_pipeline("pipeline.junk_detect", [str(proxy), "-o", str(work), "--scene"])
     ok("废片检测完成 → work/junk_report.csv")
 
@@ -333,7 +329,7 @@ def cmd_scenes(args) -> None:
     pdir = project_dir(args.name)
     work = pdir / "work"
     proxy = work / "proxy.mp4"
-    if not proxy.exists():
+    if not media_io.complete_or_adopt(proxy):
         die("先跑 junk（需要 work/proxy.mp4）")
     info("分析镜头切点（在代理片上跑，长素材要 1–3 分钟）…")
     res = understand_visual.run(proxy, work / "shots_visual.json",
@@ -346,7 +342,7 @@ def cmd_quality(args) -> None:
     pdir = project_dir(args.name)
     work = pdir / "work"
     proxy, segs = work / "proxy.mp4", work / "segments.json"
-    if not proxy.exists() or not segs.exists():
+    if not media_io.complete_or_adopt(proxy) or not segs.exists():
         die("先跑 junk 与 transcribe（需要 proxy.mp4 与 segments.json）")
     info("抽帧分析画面质量（1 fps，长素材约 30–90 秒）…")
     res = understand_visual.run_quality(proxy, segs, work / "visual_quality.json")
@@ -488,26 +484,26 @@ def ensure_clips(pdir: Path, c: dict, shots: list[dict]) -> Path:
     check_or_die(schema.check_shot_ids, shots)  # id 即切片文件名：必须安全且唯一
     clips_dir = pdir / "work/clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
-    manifest = load_json(pdir / "work/clips/manifest.json", {})
+    manifest_path = clips_dir / "manifest.json"
+    manifest = load_json(manifest_path, {})
     src = Path(c["material"])
     changed = 0
     for sh in shots:
         key = clip_key(sh, src)
         dst = clips_dir / f"{sh['id']}.mp4"
-        if manifest.get(sh["id"]) == key and dst.exists():
+        if manifest.get(sh["id"]) == key and media_io.complete_or_adopt(dst):
             continue
         info(f"切镜头 {sh['id']}（{sh['out'] - sh['in']:.1f}s）")
-        run(["ffmpeg", "-y", "-loglevel", "error",
-             "-ss", f"{sh['in']:.3f}", "-t", f"{sh['out'] - sh['in']:.3f}",
-             "-i", str(src),
-             "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,"
-                    "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-             "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-             str(dst)], check=True)
-        manifest[sh["id"]] = key
+        try:
+            media_io.ffmpeg_to(dst, ["-ss", f"{sh['in']:.3f}", "-t", f"{sh['out'] - sh['in']:.3f}",
+                                     "-i", str(src), "-vf", CLIP_VF,
+                                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                                     "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"])
+        except media_io.MediaError as exc:
+            die(f"切镜头 {sh['id']} 失败：{exc}")
+        manifest = {**manifest, sh["id"]: key}
+        save_json(manifest_path, manifest)  # 每镜落盘：中断后已切好的不重切
         changed += 1
-    save_json(pdir / "work/clips/manifest.json", manifest)
     info(f"切片：{changed} 个新切，{len(shots) - changed} 个复用")
     return clips_dir
 
@@ -567,13 +563,26 @@ def compose_timeline(c: dict, preset: dict, shots: list[dict], clips_dir: Path,
                                              "color": [1, 1, 1], "bold": True, "align": 2}})
                 ct += cd
         t += dur
-    for card in preset.get("cards", []):
-        tl["text"].append({"id": f"card_{card['at']}", "text": card["text"],
-                           "start": card["at"],
-                           "end": min(card["at"] + card["dur"], t),
-                           "style": {"size": preset.get("card", {}).get("size", 6.8),
-                                     "color": [1, 1, 1], "bold": True, "align": 5}})
+    tl["text"] += build_documentary.card_entries(
+        preset.get("cards", []), t,
+        size=preset.get("card", {}).get("size", build_documentary.CARD_SIZE))
     return tl
+
+
+def ensure_preview(vdir: Path, tl_hash: str) -> Path:
+    """预览片：哈希一致且有完成标记才复用；渲染写临时文件，成功才改名（GL-15）。"""
+    preview, stamp = vdir / "preview.mp4", vdir / ".timeline.sha"
+    if stamp.exists() and stamp.read_text().strip() == tl_hash and media_io.complete_or_adopt(preview):
+        info("预览片无变化，跳过渲染")
+        return preview
+    info("渲染预览片…")
+    try:
+        with media_io.atomic_output(preview) as tmp:
+            _run_pipeline("pipeline.render_preview", [str(vdir / "timeline.json"), "-o", str(tmp)])
+    except media_io.MediaError as exc:
+        die(f"预览片渲染失败：{exc}")
+    stamp.write_text(tl_hash)  # 必须在产物落盘之后
+    return preview
 
 
 def next_version(pdir: Path) -> str:
@@ -615,40 +624,36 @@ def cmd_build(args) -> None:
     save_json(vdir / "timeline.json", tl)
     tl_hash = hashlib.sha1(json.dumps(tl, ensure_ascii=False, sort_keys=True)
                            .encode()).hexdigest()
-    stamp = vdir / ".timeline.sha"
-    same = stamp.exists() and stamp.read_text().strip() == tl_hash
     total = sum(durations.values())
     ok(f"时间线：{len(shots)} 镜，{int(total // 60)}:{total % 60:05.2f}")
-
-    if same and (vdir / "preview.mp4").exists():
-        info("预览片无变化，跳过渲染")
-    else:
-        info("渲染预览片…")
-        _run_pipeline("pipeline.render_preview",
-                      [str(vdir / "timeline.json"), "-o", str(vdir / "preview.mp4")])
-        stamp.write_text(tl_hash)
-    ok(f"预览片：{vdir / 'preview.mp4'}")
+    ok(f"预览片：{ensure_preview(vdir, tl_hash)}")
 
     if not args.no_draft:
-        info("生成剪映草稿…")
-        draft_name = f"{c['title']}_{version}"
-        if proc.FROZEN:
-            code, out = proc.run_inprocess(
-                "pipeline.to_jianying",
-                [str(vdir / "timeline.json"), "--name", draft_name])
-            if code != 0:
-                print(out[-600:])
-                die("草稿生成失败")
-        else:
-            r = subprocess.run([ensure_jy_python(), str(PIPELINE / "to_jianying.py"),
-                                str(vdir / "timeline.json"), "--name", draft_name],
-                               capture_output=True, text=True)
-            if r.returncode != 0:
-                print(r.stdout[-500:], r.stderr[-500:])
-                die("草稿生成失败")
-        ok(f"剪映草稿：{draft_name}")
-        _validate_draft(draft_name)
+        install_draft(vdir, f"{c['title']}_{version}")
     ok(f"完成 → {vdir}")
+
+
+def install_draft(vdir: Path, draft_name: str) -> None:
+    """时间线 → 剪映草稿（安装前静态校验）。成功时把警告、草稿位置、注册表备份报出来。"""
+    info("生成剪映草稿（安装前静态校验，FAIL 不交付）…")
+    argv = [str(vdir / "timeline.json"), "--name", draft_name]
+    if proc.FROZEN:
+        code, out = proc.run_inprocess("pipeline.to_jianying", argv)
+    else:
+        r = subprocess.run([ensure_jy_python(), str(PIPELINE / "to_jianying.py"), *argv],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        code, out = r.returncode, (r.stdout or "") + (r.stderr or "")
+    if code != 0:
+        print("\n".join(out.strip().splitlines()[-DRAFT_LOG_LINES:]))
+        die(DRAFT_NOT_INSTALLED)
+    report = to_jianying.parse_report(out)
+    for w in report["warnings"]:
+        warn(w)
+    ok(f"剪映草稿：{draft_name}（已通过静态校验）")
+    if report["draft_path"]:
+        info(f"草稿位置：{report['draft_path']}")
+    if report["backup"]:
+        info(f"注册表备份：{report['backup']}")
 
 
 def cmd_prepare(args) -> None:
@@ -792,8 +797,8 @@ def cmd_status(args) -> None:
         if p.name == "segments_text.json" and text_incomplete:
             print(f"  [!] {label}：{TEXT_INCOMPLETE_STATUS}")
             continue
-        mark = "✓" if p.exists() else "·"
-        print(f"  [{mark}] {label}")
+        done = media_io.complete_or_adopt(p) if p.suffix in MEDIA_SUFFIXES else p.exists()
+        print(f"  [{'✓' if done else '·'}] {label}")
     outs = sorted(p.name for p in (pdir / "output").glob("v*") if p.is_dir())
     print(f"\n已出片：{outs or '无'}")
 
@@ -812,7 +817,7 @@ def run_cli(argv: list[str]) -> int:
         main(argv)
         return 0
     except SystemExit as exc:
-        return int(exc.code or 0)
+        return proc.exit_code(exc, sys.stdout)
     except Exception:  # noqa: BLE001
         import traceback
         traceback.print_exc()

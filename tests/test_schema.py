@@ -219,3 +219,11 @@ def test_check_target_duration_accepts(raw, expected):
 def test_check_target_duration_rejects(raw):
     with pytest.raises(ValueError, match="目标时长"):
         schema.check_target_duration(raw)
+
+
+def test_write_json_compact_when_indent_none(tmp_path):
+    # 剪映草稿沿用紧凑格式（to_jianying 复用本函数，GL-13）
+    p = tmp_path / "d.json"
+    schema.write_json(p, {"a": [1, 2], "中": "文"}, indent=None)
+    assert p.read_text(encoding="utf-8") == '{"a": [1, 2], "中": "文"}'
+    assert [x.name for x in tmp_path.iterdir()] == ["d.json"]

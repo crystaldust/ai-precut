@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -36,19 +37,44 @@ def _api_name(name: str) -> str:
     return out or "JianYing_Draft"
 
 
+def check_package(info: dict) -> None:
+    """导出包自检：安装脚本、路径修复脚本、草稿、路径占位符缺一不可（审查修复 2）。"""
+    problems = []
+    if not info["install"]:
+        problems.append("缺 INSTALL.bat")
+    if not info["fix_paths"]:
+        problems.append("缺 fix_paths.ps1")
+    if not info["drafts"]:
+        problems.append("包里没有 draft_content.json")
+    if not info["placeholder"]:
+        problems.append("素材路径没有改写成 __DRAFT_DIR__ 占位符")
+    if problems:
+        raise RuntimeError("导出包自检未通过：" + "；".join(problems))
+
+
 def package_draft(draft_dir: Path, name: str, out_zip: Path) -> Path:
-    """把一个（Mac 生成的）草稿目录打包成 Windows 导入包。"""
+    """把一个（Mac 生成的）草稿目录打包成 Windows 导入包。
+
+    zip 先写同目录临时文件、自检通过才改名；临时目录无论成败都清掉。
+    """
     name = _api_name(name)
     out_zip = Path(out_zip)
+    out_zip.parent.mkdir(parents=True, exist_ok=True)
     pkg = out_zip.parent / f"_pkg_{name}"
-    if pkg.exists():
-        shutil.rmtree(pkg)
-    target = pkg / "drafts" / name
-    shutil.copytree(draft_dir, target)
-    rewrite_for_windows(target)
-    write_installer(pkg)
-    zip_pkg(pkg, out_zip)
-    shutil.rmtree(pkg, ignore_errors=True)
+    tmp_zip = out_zip.with_name(f".{out_zip.stem}.partial-{uuid.uuid4().hex[:8]}.zip")
+    try:
+        if pkg.exists():
+            shutil.rmtree(pkg)
+        target = pkg / "drafts" / name
+        shutil.copytree(draft_dir, target)
+        rewrite_for_windows(target)
+        write_installer(pkg)
+        zip_pkg(pkg, tmp_zip)
+        check_package(inspect_package(tmp_zip))
+        os.replace(tmp_zip, out_zip)
+    finally:
+        shutil.rmtree(pkg, ignore_errors=True)
+        tmp_zip.unlink(missing_ok=True)
     return out_zip
 
 

@@ -55,8 +55,23 @@ def ensure_bundled_path() -> None:
         os.environ["PATH"] = os.pathsep.join([str(bin_dir), *parts])
 
 
+def exit_code(exc: SystemExit, out=None) -> int:
+    """SystemExit → 退出码。sys.exit("文字") 按 Python 语义记 1，并把文字写进 out（GL-12）。"""
+    code = exc.code
+    if code is None:
+        return 0
+    if isinstance(code, int):  # bool 是 int 的子类：True → 1
+        return int(code)
+    if out is not None:
+        out.write(f"{code}\n")
+    return 1
+
+
 def run_inprocess(module_name: str, argv: list[str]) -> tuple[int, str]:
-    """导入模块并以 argv 运行它的 main()，返回 (退出码, 输出)。"""
+    """导入模块并以 argv 运行它的 main()，返回 (退出码, 输出)。
+
+    main() 返回 int 时视为退出码（validate_draft.main 返回 1 表示 FAIL，GL-11）。
+    """
     out = io.StringIO()
     old_argv = sys.argv
     sys.argv = [module_name, *argv]
@@ -64,9 +79,11 @@ def run_inprocess(module_name: str, argv: list[str]) -> tuple[int, str]:
     try:
         module = importlib.import_module(module_name)
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            module.main()
+            ret = module.main()
+        if isinstance(ret, int):
+            code = int(ret)
     except SystemExit as exc:
-        code = int(exc.code or 0)
+        code = exit_code(exc, out)
     except Exception:  # noqa: BLE001 - 打包环境里必须把错误变成日志
         code = 1
         out.write(traceback.format_exc())

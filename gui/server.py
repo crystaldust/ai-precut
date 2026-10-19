@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
-from pipeline import notices, proc, review, schema, select, style  # noqa: E402
+from pipeline import media_io, notices, proc, review, schema, select, style  # noqa: E402
 
 proc.ensure_bundled_path()  # 打包后优先用 App 自带的 ffmpeg
 PROJECTS = proc.user_data_root()
@@ -145,7 +145,7 @@ def project_state(name: str) -> dict:
     work = pdir / "work"
     stages = [
         {"key": "ingest", "label": "素材台账", "done": (work / "materials.json").exists()},
-        {"key": "audio", "label": "抽音轨", "done": (work / "audio/asr.wav").exists()},
+        {"key": "audio", "label": "抽音轨", "done": media_io.complete_or_adopt(work / "audio/asr.wav")},
         {"key": "transcribe", "label": "语音转写", "done": (work / "transcript.md").exists()},
         {"key": "junk", "label": "废片检测", "done": (work / "junk_report.csv").exists()},
         {"key": "brief", "label": "策划分派单", "done": (work / "brief.md").exists()},
@@ -161,7 +161,7 @@ def project_state(name: str) -> dict:
             total = max((s["timeline_in"] + s["out"] - s["in"]) for s in tl["video"])
         versions.append({
             "name": d.name,
-            "preview": (d / "preview.mp4").exists(),
+            "preview": media_io.complete_or_adopt(d / "preview.mp4"),
             "shots": len(tl.get("video", [])),
             "duration": round(total, 1),
             "draft": f"{cfg.get('title', name)}_{d.name}",
@@ -181,7 +181,7 @@ def project_state(name: str) -> dict:
         "warnings": notices.project_warnings(work),
         "junk": jload(work / "junk_report.json", {}).get("items", []),
         "material_duration": (jload(work / "materials.json", {}).get("items") or [{}])[0].get("duration", 0),
-        "has_proxy": (work / "proxy.mp4").exists(),
+        "has_proxy": media_io.complete_or_adopt(work / "proxy.mp4"),
         "has_transcript": (work / "transcript.md").exists(),
     }
 

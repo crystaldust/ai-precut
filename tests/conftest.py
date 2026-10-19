@@ -1,4 +1,4 @@
-"""GUI 服务测试脚手架：在随机端口起一个真实的剪辑台服务，PROJECTS 指向 tmp_path。"""
+"""测试脚手架：剪映草稿库隔离（autouse）+ GUI 服务（随机端口、PROJECTS 指向 tmp_path）。"""
 import http.client
 import json
 import threading
@@ -6,6 +6,12 @@ from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_jianying(tmp_path, monkeypatch):
+    """任何测试都不许碰真实剪映草稿库：默认把草稿根指向一个不存在的临时目录。"""
+    monkeypatch.setenv("AI_CUT_DRAFT_ROOT", str(tmp_path / "jy_guard_root"))
 
 
 @pytest.fixture

@@ -7,7 +7,7 @@ validate_draft.py —— 静态校验一份剪映旧格式草稿（不做 GUI �
     python3 validate_draft.py <草稿目录> [--ref-schema base_template_11.0.json]
 
 检查项：
-  A. 必需文件是否存在：draft_content.json / draft_meta_info.json
+  A. 必需文件是否存在：draft_content.json / draft_meta_info.json / draft_info.json（Mac 入口；非明文只 WARN）
   B. draft_content.json 顶层必需字段
   C. id 唯一性 & 格式（草稿 id 大写带连字符；素材 id 32 hex）
   D. segment.material_id 与 extra_material_refs 是否可解析
@@ -16,6 +16,7 @@ validate_draft.py —— 静态校验一份剪映旧格式草稿（不做 GUI �
   F. 素材 path 是否为绝对路径且文件存在
   G. 文本素材 content 是否为合法 JSON 且含 text/styles
   H. 与参考 schema（剪映 11.0 自己写出的 template.tmp）对比 materials 分类是否齐全
+  I. 至少有一个视频片段；给了 expect 时与时间线核对视频/文字片段数与成片时长
 
 退出码：0 = 全部通过（可能有 WARN）；1 = 有 FAIL
 """
@@ -29,6 +30,8 @@ REQUIRED_TOP = ["canvas_config", "config", "duration", "fps", "id", "materials",
                 "tracks", "version", "new_version", "keyframes"]
 ALLOWED_TRACK = {"video", "audio", "text", "effect", "filter", "sticker", "adjust"}
 HEX32 = re.compile(r"^[0-9a-f]{32}$")
+# 成片时长核对容差：切片实际时长可能比请求短 1 帧左右，再加微秒取整
+VIDEO_END_TOLERANCE_US = 100_000
 
 fails, warns, oks = [], [], []
 
@@ -45,25 +48,45 @@ def fail(msg):
     fails.append(msg)
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("draft_dir")
-    ap.add_argument("--ref-schema", default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                                         "base_template_11.0.json"))
-    args = ap.parse_args()
-    d = os.path.abspath(args.draft_dir)
+DEFAULT_REF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "base_template_11.0.json")
+
+
+def _result():
+    return {"fails": list(fails), "warns": list(warns), "oks": list(oks)}
+
+
+def check(draft_dir, ref_schema=DEFAULT_REF, expect=None, relocate=None):
+    """校验一个草稿目录，返回 {"fails", "warns", "oks"}（不打印）。
+
+    expect：{"videos", "texts", "video_end_us"}，与时间线核对（可选）。
+    relocate：(安装后前缀, 实际目录)，dry-run 时素材路径指向尚不存在的安装位置，
+    校验 F 段按映射后的路径检查存在性。
+    模块级列表在冻结版里会被同进程重复调用累积，所以每次先清空（GL-11）。
+    并发调用仍不安全（GL-17）。
+    """
+    fails.clear()
+    warns.clear()
+    oks.clear()
+    d = os.path.abspath(draft_dir)
 
     # ---------- A. 文件
     fc = os.path.join(d, "draft_content.json")
     fm = os.path.join(d, "draft_meta_info.json")
-    for p in (fc, fm):
+    fi = os.path.join(d, "draft_info.json")
+    for p in (fc, fm, fi):
         if os.path.exists(p):
             ok("存在 %s (%d bytes)" % (os.path.basename(p), os.path.getsize(p)))
         else:
             fail("缺少 %s" % os.path.basename(p))
+    if os.path.exists(fi):
+        try:
+            with open(fi, "r", encoding="utf-8") as f:
+                json.load(f)
+        except Exception:
+            # 剪映打开过的草稿会把 draft_info.json 改写成加密格式（实测 九月一号_v3），只提示
+            warn("draft_info.json 不是明文 JSON（剪映打开过后会改写为加密格式）")
     if not os.path.exists(fc):
-        report(d)
-        return 1
+        return _result()
 
     # ---------- 解析
     try:
@@ -71,8 +94,7 @@ def main() -> int:
             c = json.load(f)
     except Exception as e:
         fail("draft_content.json 不是合法 UTF-8 JSON：%r" % (e,))
-        report(d)
-        return 1
+        return _result()
     ok("draft_content.json 可解析为 JSON")
 
     # ---------- B. 顶层字段
@@ -177,7 +199,7 @@ def main() -> int:
     # ---------- F. 素材路径
     for cat in ("videos", "audios", "images"):
         for it in mats.get(cat, []):
-            p = it.get("path") or ""
+            p = _relocated(it.get("path") or "", relocate)
             if not p:
                 warn("materials.%s[%s] 没有 path" % (cat, it.get("id")))
             elif not os.path.isabs(p):
@@ -207,8 +229,8 @@ def main() -> int:
         ok("字幕内容：%r（%d 字，%d 个 style）" % (inner["text"][:20], n, len(inner["styles"])))
 
     # ---------- H. 与 11.0 schema 对比
-    if os.path.exists(args.ref_schema):
-        with open(args.ref_schema, "r", encoding="utf-8") as f:
+    if os.path.exists(ref_schema):
+        with open(ref_schema, "r", encoding="utf-8") as f:
             ref = json.load(f)
         missing_cat = sorted(set(ref.get("materials", {})) - set(mats))
         missing_top = sorted(set(ref) - set(c))
@@ -221,8 +243,50 @@ def main() -> int:
         if "version" in ref and c.get("version") != ref["version"]:
             warn("version=%r 与 11.0 的 %r 不同" % (c.get("version"), ref["version"]))
 
-    report(d)
-    return 1 if fails else 0
+    # ---------- I. 内容完整性
+    _check_contents(c, expect)
+    return _result()
+
+
+def _relocated(path, relocate):
+    if relocate and path.startswith(relocate[0] + os.sep):
+        return relocate[1] + path[len(relocate[0]):]
+    return path
+
+
+def _segments(c, track_type):
+    return [s for t in c.get("tracks", []) if t.get("type") == track_type
+            for s in t.get("segments", [])]
+
+
+def _check_contents(c, expect):
+    videos, texts = _segments(c, "video"), _segments(c, "text")
+    if not videos:
+        fail("草稿里没有任何视频片段")
+    if not expect:
+        return
+    if len(videos) != expect["videos"]:
+        fail("视频片段数 %d 与时间线 %d 不一致" % (len(videos), expect["videos"]))
+    if len(texts) != expect["texts"]:
+        fail("文字片段数 %d 与时间线 %d 不一致" % (len(texts), expect["texts"]))
+    ends = [(s.get("target_timerange") or {}).get("start", 0)
+            + (s.get("target_timerange") or {}).get("duration", 0) for s in videos]
+    end = max(ends) if ends else 0
+    if abs(end - expect["video_end_us"]) > VIDEO_END_TOLERANCE_US:
+        fail("视频成片时长 %.3fs 与时间线 %.3fs 不一致"
+             % (end / 1e6, expect["video_end_us"] / 1e6))
+    else:
+        ok("与时间线一致：视频 %d 段、文字 %d 段、成片 %.2fs" % (len(videos), len(texts), end / 1e6))
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("draft_dir")
+    ap.add_argument("--ref-schema", default=DEFAULT_REF)
+    args = ap.parse_args()
+    res = check(args.draft_dir, args.ref_schema)
+    report(os.path.abspath(args.draft_dir))  # report 读模块级列表，必须在 check 之后
+    return 1 if res["fails"] else 0
 
 
 def report(d):

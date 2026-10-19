@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pipeline import secrets
+from pipeline import schema, secrets
 
 NETWORK_HINTS = (
     "timeout", "timed out", "connection", "reset by peer", "temporarily",
@@ -178,9 +178,8 @@ class CloudClient:
         except CloudError as exc:
             record_failure(workdir, "asr", str(exc), {"audio": str(audio)})
             raise
-        raw = Path(workdir) / "transcript_raw.json"
-        raw.parent.mkdir(parents=True, exist_ok=True)
-        raw.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        # aicut 以"存在"判转写完成，必须原子写（GL-15）
+        schema.write_json(Path(workdir) / "transcript_raw.json", data)
         return data
 
 

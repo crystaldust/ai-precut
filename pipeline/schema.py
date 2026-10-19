@@ -111,13 +111,13 @@ _VERSION_RE = re.compile(r"v[0-9]{1,4}")  # 只认 ASCII 数字，\d 会放过 v
 _SHOT_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 
 
-def write_json(path: Path, obj: Any) -> None:
-    """原子写：每次用唯一临时文件，并发写同一路径不会互相踩。"""
+def write_json(path: Path, obj: Any, *, indent: int | None = 2) -> None:
+    """原子写：每次用唯一临时文件，并发写同一路径不会互相踩。indent=None 写紧凑 JSON。"""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
-        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=indent), encoding="utf-8")
         os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
