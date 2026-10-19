@@ -76,3 +76,48 @@ def test_api_key_not_in_error_message():
     with pytest.raises(llm.LLMError) as ei:
         c.chat_json("s", "u")
     assert "sk-secret-value" not in str(ei.value)
+
+
+# ---------------------------------------------------------------- M2 审查：坏响应一律 LLMError
+def test_truncated_200_body_is_llm_error_and_retried():
+    calls = []
+
+    def _t(url, headers, body, timeout):
+        calls.append(1)
+        return 200, '{"choices": [{"message": '  # 截断
+    c = llm.DeepSeekClient(api_key="k", retries=2, sleep=lambda _: None, transport=_t)
+    with pytest.raises(llm.LLMError):
+        c.chat_json("s", "u")
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("payload", ['[]', '{"choices": null}', '{"choices": [{"message": 5}]}',
+                                     '{"choices": [{"message": {"content": 7}}]}', '"x"'])
+def test_malformed_choices_is_llm_error(payload):
+    c = llm.DeepSeekClient(api_key="k", sleep=lambda _: None,
+                           transport=lambda *a: (200, payload))
+    with pytest.raises(llm.LLMError):
+        c.chat_json("s", "u")
+
+
+def test_llm_error_exposes_status():
+    c = llm.DeepSeekClient(api_key="k", sleep=lambda _: None,
+                           transport=lambda *a: (401, "unauthorized"))
+    with pytest.raises(llm.LLMError) as ei:
+        c.chat_json("s", "u")
+    assert ei.value.status == 401 and ei.value.retryable is False
+
+
+def test_exhausted_retry_error_is_retryable():
+    c = llm.DeepSeekClient(api_key="k", retries=1, sleep=lambda _: None,
+                           transport=lambda *a: (503, "busy"))
+    with pytest.raises(llm.LLMError) as ei:
+        c.chat_json("s", "u")
+    assert ei.value.status == 503 and ei.value.retryable is True
+
+
+def test_missing_key_not_retryable(monkeypatch):
+    monkeypatch.setattr(llm.secrets, "get", lambda name: None)
+    with pytest.raises(llm.LLMError) as ei:
+        llm.DeepSeekClient(api_key=None).chat_json("s", "u")
+    assert ei.value.retryable is False

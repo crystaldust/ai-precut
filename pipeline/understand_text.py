@@ -8,14 +8,37 @@
 设计取舍：
   * 不让模型自由发挥，只让它做"分类 + 抽取"，输出必须能落到枚举里；
   * key_info 的判定标准写在 prompt 里，而且是可验证的（金额/期限/条件/承诺/资格/数字/专名）；
-  * 批处理失败只丢那一批，其余照常，结果文件里记下失败批次。
+  * 批处理失败先重试；仍失败的句子标 annotation_failed、结果落盘后报错，重跑只补这些句子。
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import time
 from pathlib import Path
 
+from pipeline import schema
 from pipeline.llm import DeepSeekClient, LLMError
+
+ANNOTATE_RETRIES = 2  # 每批在客户端 HTTP 重试之外，再整批/补漏重试的次数（覆盖 JSON 解析失败、漏 id）
+ANNOTATION_RETRY_HINT = "结果已保存；检查网络/额度后重新运行「处理素材」，只会重跑这 {n} 句"
+ANNOTATE_BACKOFF = (2.0, 5.0)  # 批次重试前等待的秒数（第 1 次、第 2 次…）
+ANNOTATION_MISSING_ERROR = "模型漏标 {n} 句"
+ANNOTATION_SHAPE_ERROR = "标注结果结构异常：{detail}"
+ANNOTATION_SKIPPED_ERROR = "前面的批次遇到无法重试的错误，未调用：{error}"
+_sleep = time.sleep  # 测试里替换成空操作
+_ANN_KEYS = ("info_type", "key_info", "entities", "reason")
+
+
+class AnnotationIncomplete(LLMError):
+    """逐句标注重试后仍有句子没拿到结果——不能当作「无关键信息」继续往下走。"""
+
+    def __init__(self, ids: list[str]) -> None:
+        self.ids = ids
+        head = ", ".join(ids[:10]) + ("…" if len(ids) > 10 else "")
+        super().__init__(f"{len(ids)} 句逐句标注失败（每批已重试 {ANNOTATE_RETRIES} 次）：{head}；"
+                         + ANNOTATION_RETRY_HINT.format(n=len(ids)))
+
 
 TOPIC_SYSTEM = "你是纪录片剪辑助理。只输出 JSON，不要解释。"
 
@@ -156,45 +179,105 @@ def segment_topics(client, segments: list[dict]) -> list[dict]:
     return _split_large(out)
 
 
-def annotate(client, segments: list[dict], *, batch: int = 40,
-             style: str = "") -> tuple[dict, list[dict]]:
+def _normalize(item: dict) -> dict:
+    """模型给的形状不对（如 entities 是数字）→ LLMError，让这一批重试，而不是让整个任务崩掉。"""
+    entities = item.get("entities") or []
+    if not isinstance(entities, list):
+        raise LLMError(ANNOTATION_SHAPE_ERROR.format(detail=f"entities={entities!r}"[:80]))
+    return {"info_type": str(item.get("info_type") or "事实陈述")[:12],
+            "key_info": bool(item.get("key_info")),
+            "entities": [str(e)[:30] for e in entities][:8],
+            "reason": str(item.get("reason") or "")[:40]}
+
+
+def _annotate_once(client, chunk: list[dict], style: str) -> dict[str, dict]:
+    prompt = ANNOTATE_USER.format(listing=_listing(chunk))
+    if style:
+        prompt = f"{prompt}\n\n{style}"
+    data = client.chat_json(ANNOTATE_SYSTEM, prompt, temperature=0.1, max_tokens=4000)
+    items = data.get("segments") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not all(isinstance(x, dict) for x in items):
+        raise LLMError(ANNOTATION_SHAPE_ERROR.format(detail=str(data)[:80]))
+    wanted = {s["id"] for s in chunk}
+    return {item["id"]: _normalize(item) for item in items
+            if isinstance(item.get("id"), str) and item["id"] in wanted}
+
+
+def annotate(client, segments: list[dict], *, batch: int = 40, style: str = "",
+             retries: int = ANNOTATE_RETRIES, sleep=None) -> tuple[dict, list[dict]]:
+    """逐批标注；失败整批重试（带退避），漏标的 id 单独补问；仍拿不到的记进 failures。
+
+    遇到不可重试的错误（鉴权/参数/余额）立刻停：这一批和后面的批次都记为失败，不再调用。
+    """
+    sleep = sleep or _sleep
     result: dict[str, dict] = {}
     failures: list[dict] = []
+    fatal = ""
     for chunk in _chunks(segments, batch):
-        prompt = ANNOTATE_USER.format(listing=_listing(chunk))
-        if style:
-            prompt = f"{prompt}\n\n{style}"
-        try:
-            data = client.chat_json(ANNOTATE_SYSTEM, prompt, temperature=0.1, max_tokens=4000)
-        except LLMError as exc:
-            failures.append({"ids": [s["id"] for s in chunk], "error": str(exc)[:200]})
+        if fatal:
+            failures.append({"ids": [s["id"] for s in chunk],
+                             "error": ANNOTATION_SKIPPED_ERROR.format(error=fatal)})
             continue
-        for item in data.get("segments") or []:
-            sid = item.get("id")
-            if sid:
-                result[sid] = {
-                    "info_type": str(item.get("info_type") or "事实陈述")[:12],
-                    "key_info": bool(item.get("key_info")),
-                    "entities": [str(e)[:30] for e in (item.get("entities") or [])][:8],
-                    "reason": str(item.get("reason") or "")[:40],
-                }
+        todo, error = list(chunk), ""
+        for attempt in range(retries + 1):
+            if attempt:
+                sleep(ANNOTATE_BACKOFF[min(attempt - 1, len(ANNOTATE_BACKOFF) - 1)])
+            try:
+                got = _annotate_once(client, todo, style)
+            except LLMError as exc:
+                error = str(exc)[:200]
+                if not exc.retryable:
+                    fatal = error
+                    break
+                continue
+            result = {**result, **got}
+            todo = [s for s in todo if s["id"] not in got]
+            if not todo:
+                break
+            error = ANNOTATION_MISSING_ERROR.format(n=len(todo))
+        if todo:
+            failures.append({"ids": [s["id"] for s in todo], "error": error})
     return result, failures
 
 
-def run(segments_path: Path, out_path: Path, *, client=None,
-        batch: int = 40, model: str | None = None, style: str = "") -> dict:
-    segments = json.loads(Path(segments_path).read_text(encoding="utf-8"))["segments"]
-    # 只把有文本的句子送进模型
-    usable = [s for s in segments if (s.get("text") or "").strip()]
-    client = client or DeepSeekClient()
-    topics = segment_topics(client, usable)
-    annotations, failures = annotate(client, usable, batch=batch, style=style)
+def _fingerprint(segments: list[dict], style: str, model: str) -> str:
+    payload = json.dumps([[s["id"], s.get("text", "")] for s in segments] + [style, model],
+                         ensure_ascii=False)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
-    topic_of: dict[str, str] = {}
-    for topic in topics:
-        for sid in topic["segment_ids"]:
-            topic_of[sid] = topic["name"]
 
+def partial_path(out_path: Path) -> Path:
+    """未完成的结果单独存：不覆盖上一次完整的 segments_text.json，重跑时从这里续。"""
+    out_path = Path(out_path)
+    return out_path.with_name(f"{out_path.stem}.partial{out_path.suffix}")
+
+
+def is_incomplete(out_path: Path) -> bool:
+    """逐句标注是否还有没完成的句子（含旧版程序留下的 failures）。"""
+    if partial_path(out_path).exists():
+        return True
+    try:
+        data = json.loads(Path(out_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and (data.get("complete") is False
+                                       or bool(data.get("failures")))
+
+
+def _resumable(partial: Path, fingerprint: str) -> dict | None:
+    """上次未完成且输入没变 → 可以只补失败句子。"""
+    try:
+        prev = json.loads(Path(partial).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    ok = (isinstance(prev, dict) and prev.get("complete") is False
+          and prev.get("input_hash") == fingerprint)
+    return prev if ok else None
+
+
+def _merge(segments: list[dict], topics: list[dict], annotations: dict,
+           failed: set[str]) -> list[dict]:
+    topic_of = {sid: t["name"] for t in topics for sid in t["segment_ids"]}
     merged = []
     for s in segments:
         ann = annotations.get(s["id"], {})
@@ -206,17 +289,49 @@ def run(segments_path: Path, out_path: Path, *, client=None,
             "key_info": ann.get("key_info", False),
             "entities": ann.get("entities", []),
             "reason": ann.get("reason", ""),
+            "annotation_failed": s["id"] in failed,
         })
+    return merged
+
+
+def run(segments_path: Path, out_path: Path, *, client=None,
+        batch: int = 40, model: str | None = None, style: str = "",
+        sleep=None) -> dict:
+    segments = json.loads(Path(segments_path).read_text(encoding="utf-8"))["segments"]
+    # 只把有文本的句子送进模型
+    usable = [s for s in segments if (s.get("text") or "").strip()]
+    client = client or DeepSeekClient()
+    label = model or getattr(client, "model", "")
+    fp = _fingerprint(segments, style, label)
+    partial = partial_path(out_path)
+    prev = _resumable(partial, fp)
+    if prev:
+        topics = prev["topics"]
+        done = {s["id"]: {k: s[k] for k in _ANN_KEYS}
+                for s in prev["segments"] if not s.get("annotation_failed")}
+        fresh, failures = annotate(client, [s for s in usable if s["id"] not in done],
+                                   batch=batch, style=style, sleep=sleep)
+        annotations = {**done, **fresh}
+    else:
+        topics = segment_topics(client, usable)
+        annotations, failures = annotate(client, usable, batch=batch, style=style,
+                                         sleep=sleep)
+    failed = {sid for f in failures for sid in f["ids"]}
 
     result = {
-        "model": model or getattr(client, "model", ""),
+        "model": label,
         "topics": topics,
         "failures": failures,
-        "segments": merged,
+        "complete": not failed,
+        "input_hash": fp,
+        "resumed": bool(prev),
+        "segments": _merge(segments, topics, annotations, failed),
     }
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2),
-                              encoding="utf-8")
+    if failed:  # 先落盘（单独的 partial 文件）再报错：重跑时只补这些句子
+        schema.write_json(partial, result)
+        raise AnnotationIncomplete(sorted(failed))
+    schema.write_json(out_path, result)
+    partial.unlink(missing_ok=True)
     return result
 
 

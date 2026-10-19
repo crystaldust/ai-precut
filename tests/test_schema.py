@@ -205,3 +205,17 @@ def test_ensure_supported_rejects_too_new():
         schema.ensure_supported({"schema_version": schema.CURRENT_SCHEMA + 1})
     schema.ensure_supported({"schema_version": schema.CURRENT_SCHEMA})
     schema.ensure_supported({})
+
+
+# ---------------------------------------------------------------- M2 目标时长
+@pytest.mark.parametrize("raw, expected", [(175, 175), ("240", 240), (59.6, 60), (" 90 ", 90),
+                                           (10, 10), (3600, 3600)])
+def test_check_target_duration_accepts(raw, expected):
+    assert schema.check_target_duration(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [None, "", "abc", 0, -5, 9, 3601, True, float("nan"),
+                                 float("inf"), "inf", [1]])
+def test_check_target_duration_rejects(raw):
+    with pytest.raises(ValueError, match="目标时长"):
+        schema.check_target_duration(raw)

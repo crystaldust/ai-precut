@@ -27,8 +27,8 @@ default-workspace/
 ```bash
 cd ~/Documents/deepseek-harness/default-workspace
 
-# 1. 新建项目
-python3 aicut.py new 我的项目 --material ~/Movies/xxx.MOV --title "片名" --preset 纪实3min
+# 1. 新建项目（成片想剪多长由你定：--target 秒；不写会在终端里问，回车用预设时长）
+python3 aicut.py new 我的项目 --material ~/Movies/xxx.MOV --title "片名" --preset 纪实3min --target 240
 
 # 2. 跑完整流程（已完成的环节自动跳过，不会重复花钱）
 python3 aicut.py run 我的项目
@@ -41,6 +41,10 @@ python3 aicut.py build 我的项目 --version v2
 
 # 5. 剪映开着的时候，只出预览不出草稿
 python3 aicut.py build 我的项目 --no-draft
+
+# 6. 改目标时长：只重跑选段（不转写、不调 LLM）；标了必留的句子总会整段保留，
+#    必留合计超过目标时会提示「必留内容共 X，超过目标 Z」并给出建议时长
+python3 aicut.py select 我的项目 --target 300
 ```
 
 嫌长？加个别名：

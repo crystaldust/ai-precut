@@ -20,7 +20,18 @@ RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 class LLMError(RuntimeError):
-    """LLM 调用的终态失败。"""
+    """LLM 调用的终态失败。
+
+    status：HTTP 状态码（网络错误/解析错误为 None）；
+    retryable：调用方再试一次有没有意义（鉴权、参数错误、余额不足再试也没用）。
+    """
+
+    def __init__(self, msg: str, *, status: int | None = None,
+                 retryable: bool | None = None) -> None:
+        super().__init__(msg)
+        self.status = status
+        self.retryable = (status is None or status in RETRY_STATUS) if retryable is None \
+            else retryable
 
 
 def default_transport(url: str, headers: dict, body: bytes, timeout: float) -> tuple[int, str]:
@@ -59,7 +70,8 @@ class DeepSeekClient:
 
     def _post(self, payload: dict) -> dict:
         if not self.api_key:
-            raise LLMError("未配置 DEEPSEEK_API_KEY：运行 `aicut config set deepseek`")
+            raise LLMError("未配置 DEEPSEEK_API_KEY：运行 `aicut config set deepseek`",
+                           retryable=False)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
@@ -74,13 +86,18 @@ class DeepSeekClient:
                 last = exc
             else:
                 if status == 200:
-                    return json.loads(text)
-                last = LLMError(f"HTTP {status}: {text[:300]}")
-                if status not in RETRY_STATUS:
-                    raise last
+                    try:
+                        return json.loads(text)
+                    except ValueError:  # 200 但响应体被截断 / 不是 JSON：按网络抖动重试
+                        last = LLMError(f"响应不是合法 JSON：{text[:200]}")
+                else:
+                    last = LLMError(f"HTTP {status}: {text[:300]}", status=status)
+                    if not last.retryable:
+                        raise last
             if attempt < self.retries:
                 self.sleep(self.backoff[min(attempt, len(self.backoff) - 1)])
-        raise LLMError(f"重试 {self.retries} 次仍失败：{last}")
+        raise LLMError(f"重试 {self.retries} 次仍失败：{last}",
+                       status=getattr(last, "status", None))
 
     def chat_json(self, system: str, user: str, *,
                   temperature: float = 0.2, max_tokens: int = 4096) -> dict:
@@ -92,10 +109,12 @@ class DeepSeekClient:
             "max_tokens": max_tokens,
             "response_format": {"type": "json_object"},
         })
-        self.last_usage = data.get("usage") or {}
         try:
+            self.last_usage = data.get("usage") or {}
             content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError) as exc:
+            if not isinstance(content, str):
+                raise TypeError("content 不是文本")
+        except (AttributeError, KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"返回结构异常：{str(data)[:300]}") from exc
         return _parse_json(content)
 

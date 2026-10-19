@@ -155,6 +155,24 @@ def check_version(version: Any) -> str:
     return version
 
 
+TARGET_MIN, TARGET_MAX = 10, 3600  # 秒；成片时长由剪辑师决定，这里只挡明显的误输入
+TARGET_ERROR = f"目标时长应为 {TARGET_MIN}–{TARGET_MAX} 秒之间的数字"
+
+
+def check_target_duration(value: Any) -> int:
+    """剪辑师填写的目标时长（秒）→ 整数秒。bool 是 int 子类，必须先排除。"""
+    bad = ValueError(f"{TARGET_ERROR}，收到 {value!r}")
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise bad
+    try:
+        sec = float(value.strip() if isinstance(value, str) else value)
+    except ValueError as exc:
+        raise bad from exc
+    if not math.isfinite(sec) or not TARGET_MIN <= round(sec) <= TARGET_MAX:
+        raise bad
+    return int(round(sec))
+
+
 def check_shot_ids(shots: Any) -> None:
     """镜头 id 会成为切片文件名：必须是安全字符且互不重复。"""
     if not isinstance(shots, list):

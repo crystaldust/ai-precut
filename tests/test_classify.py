@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from pipeline import classify
 
 
@@ -45,10 +47,84 @@ def test_loud_emphasis_usable():
     assert "音量突出" in res["segments"][0]["level_reason"]
 
 
-def test_pending_capped_by_ratio():
+def test_non_must_pending_capped_by_ratio():
+    """GL-09：旧版用必留话题「讲解合同」断言降级，固化了缺陷；改用非必留话题。"""
+    segs = [seg(i, i * 10, dur=8, info_type="事实陈述", topic="闲聊日常") for i in range(1, 61)]
+    res = classify.classify(segs)
+    limit = max(10, int(60 * classify.MAX_PENDING_RATIO))
+    assert res["summary"]["pending"] == limit
+    assert res["pending"] == {"limit": limit, "demoted": 60 - limit}
+    assert res["warnings"] == []
+
+
+def test_must_topic_pending_never_demoted():
     segs = [seg(i, i * 10, dur=8, info_type="事实陈述", topic="讲解合同") for i in range(1, 61)]
     res = classify.classify(segs)
-    assert res["summary"]["pending"] <= int(60 * classify.MAX_PENDING_RATIO) + 1
+    assert res["summary"]["pending"] == 60
+    assert res["pending"]["demoted"] == 0
+    assert res["warnings"] and "不自动降级" in res["warnings"][0]
+
+
+def test_over_limit_demotes_only_non_must():
+    must = [seg(i, i * 10, dur=8, info_type="事实陈述", topic="讲解合同") for i in range(1, 31)]
+    other = [seg(i, i * 10, dur=8, info_type="事实陈述", topic="闲聊日常") for i in range(31, 61)]
+    res = classify.classify(must + other)
+    lv = {(s["topic"], s["level"]) for s in res["segments"]}
+    assert ("讲解合同", 1) not in lv and ("闲聊日常", 2) not in lv
+
+
+def test_key_ratio_must_topic_also_protected():
+    key = [seg(i, i * 10, key_info=True, topic="建议选养生") for i in range(1, 21)]
+    pend = [seg(i, i * 10, dur=8, info_type="事实陈述", topic="建议选养生") for i in range(21, 61)]
+    assert classify.classify(key + pend)["summary"]["pending"] == 40
+
+
+def test_annotation_failed_becomes_pending_with_reason():
+    s = classify.classify([seg(1, 0, dur=2.0, annotation_failed=True, info_type="")])["segments"][0]
+    assert s["level"] == 2 and "标注失败" in s["level_reason"]
+
+
+def test_annotation_failed_not_demoted_when_over_limit():
+    segs = [seg(i, i * 10, dur=8, annotation_failed=True, topic="闲聊日常") for i in range(1, 61)]
+    assert classify.classify(segs)["summary"]["pending"] == 60
+
+
+def test_loud_annotation_failed_segment_still_usable():
+    res = classify.classify([seg(1, 0, dur=6, annotation_failed=True)], {"S001": {"rel_db": 5.0}})
+    assert res["segments"][0]["level"] == 3
+
+
+DARK = {"S001": {"flags": ["dark"]}}
+
+
+def test_dark_must_topic_pending_stays_pending():  # GL-24
+    res = classify.classify([seg(1, 0, dur=8, info_type="事实陈述", topic="讲解合同")],
+                            visual_by_id=DARK)
+    s = res["segments"][0]
+    assert s["level"] == 2 and "画面过暗" in s["level_reason"]
+
+
+def test_dark_annotation_failed_stays_pending():  # GL-24
+    res = classify.classify([seg(1, 0, dur=8, annotation_failed=True)], visual_by_id=DARK)
+    assert res["segments"][0]["level"] == 2
+
+
+def test_dark_non_must_pending_still_waste():
+    res = classify.classify([seg(1, 0, dur=8, info_type="事实陈述", topic="闲聊日常")],
+                            visual_by_id=DARK)
+    assert res["segments"][0]["level"] == 1
+
+
+def test_dark_usable_unchanged():
+    res = classify.classify([seg(1, 0, key_info=True, topic="闲聊日常")], visual_by_id=DARK)
+    assert res["segments"][0]["level"] == 3
+
+
+def test_classify_does_not_mutate_input():
+    segs = [seg(i, i * 10, dur=8, info_type="事实陈述", topic="闲聊日常") for i in range(1, 61)]
+    before = json.dumps(segs, ensure_ascii=False, sort_keys=True)
+    classify.classify(segs, visual_by_id=DARK)
+    assert json.dumps(segs, ensure_ascii=False, sort_keys=True) == before
 
 
 def test_topic_stats_and_budget():
@@ -101,3 +177,35 @@ def test_topic_with_high_key_info_ratio_is_must():
     res = classify.classify(segs)
     topic = next(t for t in res["topics"] if t["name"] == "建议选养生")
     assert topic["must"] is True  # 50% 句子是关键信息，按内容判定为必留
+
+
+def test_dark_does_not_promote_waste_in_must_topic():
+    """保护只防「降级」：本来就是废片的句子，画面过暗也不能被抬成待定。"""
+    segs = [seg(1, 0, key_info=True, topic="建议选养生"),
+            seg(2, 10, dur=8, info_type="闲聊寒暄", topic="建议选养生")]
+    res = classify.classify(segs, visual_by_id={"S002": {"flags": ["dark"]}})
+    assert res["segments"][1]["level"] == 1
+
+
+# ---------------------------------------------------------------- M2 审查：未完成的标注
+def _write_text(tmp_path, **extra):
+    tp = tmp_path / "t.json"
+    tp.write_text(json.dumps({"segments": [seg(1, 0, dur=8, info_type="事实陈述", topic="闲聊日常"),
+                                           seg(2, 10, dur=8, info_type="", topic="闲聊日常")],
+                              **extra}, ensure_ascii=False), encoding="utf-8")
+    return tp
+
+
+def test_run_refuses_incomplete_text(tmp_path):
+    tp = _write_text(tmp_path, complete=False)
+    with pytest.raises(classify.TextIncomplete, match="标注未完成"):
+        classify.run(tp, None, tmp_path / "s.json")
+    assert not (tmp_path / "s.json").exists()
+
+
+def test_run_marks_legacy_failures_as_annotation_failed(tmp_path):
+    tp = _write_text(tmp_path, failures=[{"ids": ["S002"], "error": "x"}])
+    res = classify.run(tp, None, tmp_path / "s.json")
+    s2 = res["segments"][1]
+    assert s2["annotation_failed"] is True and s2["level"] == 2
+    assert any("1 句" in w and "标注失败" in w for w in res["warnings"])

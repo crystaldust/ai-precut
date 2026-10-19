@@ -41,6 +41,10 @@
   header h1{margin:0;font-size:19px}
   header .meta{color:var(--muted);font-size:12px;margin-top:3px}
   .steps{display:flex;gap:8px;padding:12px 20px;flex-wrap:wrap}
+  .warnbar{margin:10px 20px 0;padding:8px 12px;border:1px solid var(--warn);border-radius:8px;
+           background:rgba(255,176,32,.08);color:var(--text);font-size:13px}
+  .warnbar b{color:var(--warn)}
+  .warnbar ul{margin:4px 0 0;padding-left:18px}
   .step{font-size:12px;padding:5px 10px;border-radius:20px;background:var(--panel2);
         color:var(--muted);border:1px solid transparent}
   .step.done{color:var(--ok);border-color:#1f4a34;background:#16281f}
@@ -118,11 +122,13 @@
       <h1 id="title">还没有选择项目</h1>
       <div class="meta" id="meta">先在左边新建一个项目，或者选一个已有项目</div>
     </header>
+    <div class="warnbar" id="warnbar" role="status" style="display:none"></div>
     <div class="steps" id="steps"></div>
     <div class="actions" id="actions" style="display:none">
       <button class="primary" id="btnPrepare" onclick="startJob('prepare')">① 处理素材</button>
       <button class="primary" id="btnBuild" onclick="openBuild()">② 生成成片</button>
       <button class="ghost" onclick="openBrowse()">浏览素材</button>
+      <button class="ghost" onclick="openTarget(false)">改目标时长</button>
       <button class="ghost" onclick="openCalibrate()">剪辑偏好</button>
       <button class="ghost" onclick="openFolder()">打开文件夹</button>
       <button class="ghost" onclick="openJianying()">打开剪映</button>
@@ -156,6 +162,21 @@ const $ = s => document.querySelector(s);
 const state = { project:null, data:null, tab:'preview', sel:null, shots:[], dirty:false };
 let proxyVideo = null;
 
+/* 目标时长 / 必留超时长的界面文案（M2）：产品可直接改这里 */
+const COPY_MUST_KEEP_OVER = '必留内容共 {must}，超过目标 {target}';
+const COPY_MUST_KEEP_OVER_TITLE = '必留内容超过目标时长';
+const COPY_TARGET_TITLE = '目标时长';
+const COPY_TARGET_ASK = '想剪成多长？';
+const COPY_TARGET_BUTTON = '按这个时长重新选段';
+const COPY_TARGET_LATER = '先不改';
+const COPY_TARGET_MANUAL_NOTE = '你已经手动编辑过分镜表，重新选段的结果不会覆盖它，只会更新「浏览素材」里的建议';
+const COPY_NEW_TARGET_LABEL = '想剪成多长（秒）· 预设只是默认值';
+const COPY_RESELECT_DONE = '已按新时长重新选段';
+const COPY_WARNBAR_TITLE = '需要你留意';
+const COPY_JOB_DONE_WITH_WARNINGS = '完成了，但有需要你留意的提示（上面以 [!] 开头的行），看完再关';
+const COPY_JOB_ACK = '知道了';
+const JOB_TITLES = {prepare:'正在处理素材', build:'正在生成成片', select:'正在重新选段'};
+
 /* ---------------- 基础 ---------------- */
 function toast(msg, ms=1800){
   const t = $('#toast'); t.textContent = msg; t.classList.add('on');
@@ -171,6 +192,10 @@ function fmt(sec){
   sec = Math.max(0, sec||0);
   const m = Math.floor(sec/60), s = sec%60;
   return `${String(m).padStart(2,'0')}:${s.toFixed(1).padStart(4,'0')}`;
+}
+function fmtMinSec(sec){
+  sec = Math.round(num(sec));
+  return sec>=60 ? `${Math.floor(sec/60)} 分 ${sec%60} 秒` : `${sec} 秒`;
 }
 function fmtLong(sec){
   const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.floor(sec%60);
@@ -207,7 +232,8 @@ async function refresh(){
   const d = state.data, c = d.project;
   $('#title').textContent = c.title || c.name;
   const md = d.material_duration ? `素材 ${fmtLong(d.material_duration)} · ` : '';
-  $('#meta').textContent = `${md}预设 ${c.preset} · 平台 ${c.platform} · 目标 ${c.target_duration||'—'} 秒`;
+  $('#meta').textContent = `${md}预设 ${c.preset} · 平台 ${c.platform} · 目标 ${c.target_duration ? fmtLong(num(c.target_duration)) : '—'}`;
+  renderWarnbar(d.warnings);
   $('#steps').innerHTML = d.stages.map(s=>`<div class="step ${s.done?'done':''}">${s.done?'✓':'○'} ${esc(s.label)}</div>`).join('');
   $('#actions').style.display='flex';
   $('#tabs').style.display='flex';
@@ -215,6 +241,13 @@ async function refresh(){
   $('#shotCount').textContent = state.shots.length? `(${state.shots.length})` : '';
   $('#btnPrepare').textContent = d.stages.filter(s=>s.done).length>=4 ? '① 重新处理（会跳过已完成）' : '① 处理素材';
   renderTab();
+}
+
+function renderWarnbar(list){
+  const bar = $('#warnbar'), items = Array.isArray(list) ? list : [];
+  bar.style.display = items.length ? 'block' : 'none';
+  bar.innerHTML = items.length
+    ? `<b>${esc(COPY_WARNBAR_TITLE)}</b><ul>${items.map(w=>`<li>${esc(w)}</li>`).join('')}</ul>` : '';
 }
 
 /* ---------------- Tab ---------------- */
@@ -450,7 +483,7 @@ function startJob(task, extra){
   if(!state.project){ toast('先选项目'); return; }
   if(task==='build' && !state.shots.length){ toast('分镜表是空的，先生成镜头'); return; }
   const body = {project: state.project, task, ...(extra||{})};
-  showModal(task==='prepare'?'正在处理素材':'正在生成成片', '<div class="log" id="log">准备中…</div>');
+  showModal(JOB_TITLES[task] || task, '<div class="log" id="log">准备中…</div>');
   api('/api/job', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
     .then(({job_id})=> pollJob(job_id, task))
     .catch(e=>{ logLine('[错误] '+e.message); });
@@ -465,13 +498,26 @@ function pollJob(id, task){
       if(j.status==='running'){ setTimeout(tick, 900); return; }
       if(j.status==='done'){
         logLine('\n[完成]');
-        setTimeout(async ()=>{ closeModal(); await refresh(); toast(task==='build'?'新版本已生成':'处理完成'); }, 700);
+        const warned = (j.log||[]).some(l=>String(l).startsWith('[!]'));
+        setTimeout(async ()=>{
+          await refresh();
+          // 必留合计超过目标：任务结束后自动问一次想剪成多长
+          if(task!=='build' && state.data?.selection?.over_target){ openTarget(true); return; }
+          // 有警告：日志留着让人看完，不自动关
+          if(warned){ logLine(COPY_JOB_DONE_WITH_WARNINGS); showJobAck(); return; }
+          closeModal();
+          toast(task==='build'?'新版本已生成':(task==='select'?COPY_RESELECT_DONE:'处理完成'));
+        }, 700);
       } else {
         logLine('\n[失败] 看上面的报错；也可以把这段日志发给开发者');
       }
     }catch(e){ logLine('[连接中断] '+e.message); }
   };
   setTimeout(tick, 500);
+}
+function showJobAck(){
+  $('#modalBody').insertAdjacentHTML('beforeend',
+    `<button class="primary" style="margin-top:10px" onclick="closeModal()">${esc(COPY_JOB_ACK)}</button>`);
 }
 function logLine(t){ const el=$('#log'); if(el){ el.textContent += (el.textContent?'\n':'')+t; el.scrollTop=el.scrollHeight; } }
 function showModal(title, html){
@@ -497,9 +543,35 @@ function doBuild(){
   startJob('build', {no_draft: noDraft});
 }
 
+/* ---------------- 目标时长 ---------------- */
+function openTarget(fromOverrun){
+  if(!state.project) return toast('先选项目');
+  const sel = state.data?.selection || {};
+  const cur = num(state.data?.project?.target_duration);
+  const over = fromOverrun && sel.over_target;
+  const value = over ? num(sel.suggested_target) : cur;
+  const head = over ? COPY_MUST_KEEP_OVER.replace('{must}', fmtMinSec(sel.must_keep_total))
+                                         .replace('{target}', fmtMinSec(cur)) : '';
+  const manual = state.data?.shots_from_selection === false && state.shots.length;
+  showModal(over ? COPY_MUST_KEEP_OVER_TITLE : COPY_TARGET_TITLE, `
+    ${head ? `<p>${esc(head)}</p>` : ''}
+    <div class="field"><label>${esc(COPY_TARGET_ASK)}（秒）</label>
+      <input id="tgtInput" type="number" min="10" max="3600" value="${num(value) || ''}"></div>
+    ${manual ? `<p class="hint">${esc(COPY_TARGET_MANUAL_NOTE)}</p>` : ''}
+    <button class="primary" onclick="saveTarget()">${esc(COPY_TARGET_BUTTON)}</button>
+    <button class="ghost" onclick="closeModal()">${esc(COPY_TARGET_LATER)}</button>`);
+}
+function saveTarget(){
+  const t = num($('#tgtInput')?.value);
+  if(!t) return toast(COPY_TARGET_ASK);
+  closeModal();
+  startJob('select', {target: t});
+}
+
 /* ---------------- 新建项目 ---------------- */
 async function openNew(){
   const {presets} = await api('/api/presets');
+  state.presets = presets;
   showModal('新建项目', `
     <div class="field"><label>素材文件</label>
       <div style="display:flex;gap:8px">
@@ -509,10 +581,17 @@ async function openNew(){
     <div class="field"><label>项目名（文件夹名，别用斜杠）</label><input id="npName" placeholder="例如 2026-09-15_探店"></div>
     <div class="field"><label>片名（会显示在剪映草稿上）</label><input id="npTitle" placeholder="例如 九月一号"></div>
     <div class="field"><label>风格预设</label>
-      <select id="npPreset">${presets.map(p=>`<option value="${esc(p.key)}">${esc(p.name)}（${esc(p.duration)}s·${esc(p.platform)}）</option>`).join('')}</select>
+      <select id="npPreset" onchange="syncTarget()">${presets.map(p=>`<option value="${esc(p.key)}">${esc(p.name)}（${esc(p.duration)}s·${esc(p.platform)}）</option>`).join('')}</select>
     </div>
+    <div class="field"><label>${esc(COPY_NEW_TARGET_LABEL)}</label>
+      <input id="npTarget" type="number" min="10" max="3600"></div>
     <button class="primary" onclick="createProject()">创建</button>
     <button class="ghost" onclick="closeModal()">取消</button>`);
+  syncTarget();
+}
+function syncTarget(){
+  const p = (state.presets||[]).find(x=>x.key===$('#npPreset')?.value);
+  if($('#npTarget')) $('#npTarget').value = num(p?.duration) || '';
 }
 async function pickFile(){
   const {path} = await api('/api/pick', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
@@ -522,12 +601,13 @@ async function pickFile(){
 }
 async function createProject(){
   const material=$('#npPath').value, name=$('#npName').value.trim(), title=$('#npTitle').value.trim();
-  const preset=$('#npPreset').value;
+  const preset=$('#npPreset').value, target=num($('#npTarget').value);
   if(!material) return toast('先选素材');
+  if(!target) return toast(COPY_TARGET_ASK);
   if(!name) return toast('填个项目名');
   try{
     await api('/api/new', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({material, name, title, preset})});
+      body: JSON.stringify({material, name, title, preset, target})});
     closeModal(); await loadProjects().then(()=>{
   const h = new URLSearchParams(location.hash.slice(1));
   const p = h.get('project');

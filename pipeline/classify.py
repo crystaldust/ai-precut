@@ -24,6 +24,20 @@ MUST_TOPIC_WORDS = ("合同", "退费", "费用", "价格", "就业", "工作", 
 WASTE_TYPES = {"闲聊寒暄"}
 
 MAX_PENDING_RATIO = 0.28  # 待定不超过总段数的 28%（60 分钟约 40 段）
+KEY_RATIO_MUST = 0.30     # 话题内关键信息句占比 ≥30% 也算必留话题
+ANNOTATION_FAILED_REASON = "AI 标注失败，需要你判断"
+PENDING_DEMOTED_REASON = "待定队列超限，按信息量判定为废片"
+DARK_REASON = "画面过暗，不可用"
+TEXT_INCOMPLETE_ERROR = ("逐句标注未完成（segments_text.json 标记为未完成），不能据此分档："
+                         "先重新运行「处理素材」或 `aicut.py text` 补齐")
+LEGACY_FAILED_WARNING = ("{n} 句 AI 标注失败（旧版结果），已放进待定由你判断；"
+                         "想让 AI 补标注，删掉 work/segments_text.json 后重新运行「处理素材」")
+PENDING_OVER_WARNING = ("待定 {left} 段超过上限 {limit} 段：其中 {kept} 段属于必留话题或 AI 标注失败，"
+                        "不自动降级，需要你逐条裁决")
+
+
+class TextIncomplete(ValueError):
+    """文本标注结果不完整：分档会把没标注的句子当成「无关键信息」。"""
 
 
 def _topic_must(name: str) -> bool:
@@ -49,6 +63,8 @@ def _level_of(seg: dict, audio: dict | None, must_topic: bool) -> tuple[int, str
         return 3, "出现抢话/被打断"
     if rel_db >= 4.0 and dur >= 4:
         return 3, f"音量突出（高于中位 {rel_db:+.1f} dB），可能是强调"
+    if seg.get("annotation_failed"):  # GL-09：没拿到标注 ≠ 没有关键信息，交给人判断
+        return 2, ANNOTATION_FAILED_REASON
     if must_topic:
         return 2, "属于必留话题，需要你判断是否采用"
     if info_type in WASTE_TYPES:
@@ -62,40 +78,75 @@ def _level_of(seg: dict, audio: dict | None, must_topic: bool) -> tuple[int, str
     return 2, "有信息但主体混杂，需要你判断"
 
 
+def _must_topic_names(scored: list[dict]) -> set[str]:
+    """必留话题 = 名称命中关键词，或话题内关键信息句占比 ≥ KEY_RATIO_MUST。"""
+    count: dict[str, int] = {}
+    keys: dict[str, int] = {}
+    for s in scored:
+        name = s.get("topic") or "未归类"
+        count[name] = count.get(name, 0) + 1
+        keys[name] = keys.get(name, 0) + (1 if s.get("key_info") else 0)
+    return {n for n in count if _topic_must(n) or keys[n] / count[n] >= KEY_RATIO_MUST}
+
+
+def _protected(s: dict, must_names: set[str]) -> bool:
+    """必留话题段、标注失败段：只能由人判废片（GL-09 / GL-24）。"""
+    return (s.get("topic") or "未归类") in must_names or bool(s.get("annotation_failed"))
+
+
+def _apply_dark(s: dict, must_names: set[str]) -> dict:
+    if "dark" not in s["visual_flags"] or s["level"] == 3:
+        return s
+    if s["level"] == 2 and _protected(s, must_names):  # 只防降级，不把废片抬成待定
+        return {**s, "level": 2, "level_reason": f"画面过暗；{s['level_reason']}"}
+    return {**s, "level": 1, "level_reason": DARK_REASON}
+
+
+def _cap_pending(scored: list[dict], must_names: set[str],
+                 audio_by_id: dict) -> tuple[list[dict], dict, list[str]]:
+    """待定过多时，把非保护段里「信息最弱」的降为废片；保护段超限只给警告。"""
+    limit = max(10, int(len(scored) * MAX_PENDING_RATIO))
+
+    def weakness(s: dict) -> tuple:
+        a = audio_by_id.get(s["id"], {})
+        return (a.get("rel_db", 0), len(s.get("text", "")))
+
+    pending = [s for s in scored if s["level"] == 2]
+    excess = max(0, len(pending) - limit)
+    demotable = sorted((s for s in pending if not _protected(s, must_names)), key=weakness)
+    demote = {s["id"] for s in demotable[:excess]}
+    out = [{**s, "level": 1, "level_reason": PENDING_DEMOTED_REASON}
+           if s["id"] in demote else s for s in scored]
+    left = sum(1 for s in out if s["level"] == 2)
+    kept = sum(1 for s in out if s["level"] == 2 and _protected(s, must_names))
+    warnings = ([PENDING_OVER_WARNING.format(left=left, limit=limit, kept=kept)]
+                if left > limit else [])
+    return out, {"limit": limit, "demoted": len(demote)}, warnings
+
+
 def classify(segments: list[dict], audio_by_id: dict | None = None,
              topics: list[dict] | None = None,
              total_target: float = 175.0,
              visual_by_id: dict | None = None) -> dict:
     audio_by_id = audio_by_id or {}
+    visual_by_id = visual_by_id or {}
     topic_of = {}
     for t in topics or []:
         for sid in t.get("segment_ids", []):
             topic_of[sid] = t["name"]
 
-    visual_by_id = visual_by_id or {}
-    scored = []
+    base = []
     for seg in segments:
         topic = seg.get("topic") or topic_of.get(seg["id"], "")
         lv, why = _level_of(seg, audio_by_id.get(seg["id"]), _topic_must(topic))
-        vis = visual_by_id.get(seg["id"], {})
-        flags = vis.get("flags") or []
-        if "dark" in flags and lv != 3:
-            lv, why = 1, "画面过暗，不可用"
-        scored.append({**seg, "topic": topic, "level": lv, "level_reason": why,
-                       "visual_flags": flags})
-
-    # 待定过多时，把"信息最弱"的待定降为废片，保证人的工作量可控
-    pending = [s for s in scored if s["level"] == 2]
-    limit = max(10, int(len(scored) * MAX_PENDING_RATIO))
-    if len(pending) > limit:
-        def weakness(s):
-            a = audio_by_id.get(s["id"], {})
-            return (a.get("rel_db", 0), len(s.get("text", "")))
-        for s in sorted(pending, key=weakness)[:len(pending) - limit]:
-            s["level"] = 1
-            s["level_reason"] = "待定队列超限，按信息量判定为废片"
-
-    return _assemble(scored, total_target)
+        flags = visual_by_id.get(seg["id"], {}).get("flags") or []
+        base.append({**seg, "topic": topic, "level": lv, "level_reason": why,
+                     "visual_flags": flags})
+    must_names = _must_topic_names(base)
+    scored = [_apply_dark(s, must_names) for s in base]
+    scored, pending, warnings = _cap_pending(scored, must_names, audio_by_id)
+    result = _assemble(scored, total_target, must_names)
+    return {**result, "pending": pending, "warnings": warnings}
 
 
 def allocate_budget(topics: list[dict], total: float,
@@ -134,7 +185,9 @@ def allocate_budget(topics: list[dict], total: float,
     return topics
 
 
-def _assemble(scored: list[dict], total_target: float = 175.0) -> dict:
+def _assemble(scored: list[dict], total_target: float = 175.0,
+              must_names: set[str] | None = None) -> dict:
+    must_names = _must_topic_names(scored) if must_names is None else must_names
     topics: dict[str, dict] = {}
     for s in scored:
         name = s.get("topic") or "未归类"
@@ -151,8 +204,7 @@ def _assemble(scored: list[dict], total_target: float = 175.0) -> dict:
 
     topic_list = []
     for item in topics.values():
-        ratio = item["key_hits"] / max(1, item["count"])
-        item["must"] = _topic_must(item["name"]) or ratio >= 0.30
+        item["must"] = item["name"] in must_names
         topic_list.append({**item, "duration": round(item["duration"], 1),
                            "usable_dur": round(item["usable_dur"], 1), "budget": 0})
     allocate_budget(topic_list, total_target)
@@ -166,7 +218,12 @@ def _assemble(scored: list[dict], total_target: float = 175.0) -> dict:
 def run(text_path: Path, audio_path: Path | None, out_path: Path,
         total_target: float = 175.0, visual_path: Path | None = None) -> dict:
     text = json.loads(Path(text_path).read_text(encoding="utf-8"))
-    segments = text["segments"]
+    if text.get("complete") is False:
+        raise TextIncomplete(TEXT_INCOMPLETE_ERROR)
+    # 旧版程序：失败批次只记在 failures 里，句子本身看不出来 → 补上标记
+    legacy_failed = {sid for f in text.get("failures") or [] for sid in f.get("ids") or []}
+    segments = [{**s, "annotation_failed": True} if s["id"] in legacy_failed else s
+                for s in text["segments"]]
     audio_by_id: dict[str, dict] = {}
     if audio_path and Path(audio_path).exists():
         audio = json.loads(Path(audio_path).read_text(encoding="utf-8"))
@@ -175,6 +232,10 @@ def run(text_path: Path, audio_path: Path | None, out_path: Path,
     if visual_path and Path(visual_path).exists():
         visual_by_id = json.loads(Path(visual_path).read_text(encoding="utf-8"))["segments"]
     result = classify(segments, audio_by_id, text.get("topics"), total_target, visual_by_id)
+    marked = sum(1 for s in segments if s["id"] in legacy_failed)
+    if marked:
+        result = {**result, "warnings": [LEGACY_FAILED_WARNING.format(n=marked),
+                                         *result["warnings"]]}
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

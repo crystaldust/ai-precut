@@ -83,3 +83,48 @@ def test_renumber_not_position_based():
     src = _read("index.html")
     assert "'sh'+String(i+1)" not in src
     assert "function nextShotId" in src
+
+
+# ---------------------------------------------------------------- M2 目标时长
+def test_new_project_asks_target():
+    src = _read("index.html")
+    assert 'id="npTarget"' in src
+    create = src[src.index("async function createProject"):]
+    assert "target" in create[:create.index("\n}")]
+
+
+def test_target_copy_in_named_constants():
+    src = _read("index.html")
+    for const in ("COPY_MUST_KEEP_OVER", "COPY_TARGET_ASK", "COPY_TARGET_BUTTON",
+                  "COPY_TARGET_LATER", "COPY_TARGET_MANUAL_NOTE"):
+        assert f"const {const}" in src
+    assert "startJob('select'" in src
+    assert 'onclick="openTarget(false)"' in src
+
+
+def test_target_modal_uses_num_for_numbers():
+    src = _read("index.html")
+    body = src[src.index("function openTarget"):src.index("function saveTarget")]
+    assert "num(" in body and "${sel." not in body
+
+
+def test_over_target_modal_opened_after_job():
+    src = _read("index.html")
+    poll = src[src.index("function pollJob"):src.index("function logLine")]
+    assert "over_target" in poll and "openTarget(true)" in poll
+
+
+# ---------------------------------------------------------------- M2 审查：警告条
+def test_index_has_persistent_warning_bar():
+    src = _read("index.html")
+    assert 'id="warnbar"' in src
+    body = src[src.index("async function refresh"):src.index("/* ---------------- Tab")]
+    assert "warnbar" in body and "esc(" in body
+
+
+def test_job_modal_stays_open_when_job_warned():
+    src = _read("index.html")
+    poll = src[src.index("function pollJob"):src.index("function logLine")]
+    assert "'[!]'" in poll and "COPY_JOB_DONE_WITH_WARNINGS" in poll
+    for const in ("COPY_JOB_DONE_WITH_WARNINGS", "COPY_JOB_ACK", "COPY_WARNBAR_TITLE"):
+        assert f"const {const}" in src

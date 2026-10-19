@@ -1,7 +1,14 @@
 import json
 import re
 
+import pytest
+
 from pipeline import understand_text as ut
+
+
+@pytest.fixture(autouse=True)
+def _no_backoff(monkeypatch):
+    monkeypatch.setattr(ut, "_sleep", lambda _s: None)
 
 
 class FakeClient:
@@ -66,7 +73,7 @@ def test_missing_segments_fall_back_to_last_topic(tmp_path):
             ids = re.findall(r"^(S\d{3}) ", user, flags=re.M)
             if "归并成" in user:
                 return {"topics": [{"name": "只有前半", "segment_ids": ids[:2]}]}
-            return {"segments": []}
+            return FakeClient.chat_json(self, system, user, **kw)  # 本测试只验证话题兜底
 
     sp = tmp_path / "segments.json"
     sp.write_text(json.dumps({"segments": make_segments(5)}), encoding="utf-8")
@@ -75,12 +82,120 @@ def test_missing_segments_fall_back_to_last_topic(tmp_path):
     assert covered == {f"S{i:03d}" for i in range(1, 6)}
 
 
-def test_failed_batch_recorded_but_others_kept(tmp_path):
+def test_failed_batch_retried_then_succeeds(tmp_path):
+    """GL-09：旧断言「失败批次被记录、其余照常」固化了静默丢弃；现在先整批重试。"""
     sp = tmp_path / "segments.json"
     sp.write_text(json.dumps({"segments": make_segments(50)}), encoding="utf-8")
-    res = ut.run(sp, tmp_path / "o.json", client=FakeClient(fail_batches={0}), batch=40)
-    assert res["failures"], "失败批次应被记录"
-    assert any(s["info_type"] == "金额价格" for s in res["segments"])
+    client = FakeClient(fail_batches={0})
+    res = ut.run(sp, tmp_path / "o.json", client=client, batch=40)
+    assert res["failures"] == [] and res["complete"] is True
+    assert not any(s["annotation_failed"] for s in res["segments"])
+    assert client.annotate_calls == 3  # 第 1 批失败 1 次 + 重试 1 次 + 第 2 批 1 次
+
+
+class StubbornClient(FakeClient):
+    """含指定 id 的批次永远失败 / 永远漏标指定 id，并附带一个编造的 id。"""
+
+    def __init__(self, *, fail_if=(), omit=()):
+        super().__init__()
+        self.fail_if, self.omit = set(fail_if), set(omit)
+
+    def chat_json(self, system, user, **kw):
+        ids = re.findall(r"^(S\d{3}) ", user, flags=re.M)
+        if "归并成" not in user and self.fail_if & set(ids):
+            self.calls += 1
+            self.annotate_calls += 1
+            from pipeline.llm import LLMError
+            raise LLMError("mock persistent failure")
+        data = super().chat_json(system, user, **kw)
+        if "segments" in data:
+            data = {"segments": [x for x in data["segments"] if x["id"] not in self.omit]
+                    + [{"id": "S999", "info_type": "金额价格", "key_info": True}]}
+        return data
+
+
+def test_persistent_failure_saves_then_raises(tmp_path):
+    sp = tmp_path / "segments.json"
+    sp.write_text(json.dumps({"segments": make_segments(50)}), encoding="utf-8")
+    out = tmp_path / "o.json"
+    with pytest.raises(ut.AnnotationIncomplete) as exc:
+        ut.run(sp, out, client=StubbornClient(fail_if={"S001"}), batch=40)
+    assert exc.value.ids[0] == "S001" and len(exc.value.ids) == 40
+    assert "只会重跑" in str(exc.value)
+    assert not out.exists()  # 未完成的结果不写主文件
+    saved = json.loads(ut.partial_path(out).read_text(encoding="utf-8"))  # 先落盘
+    assert saved["complete"] is False and saved["input_hash"]
+    flags = {s["id"]: s["annotation_failed"] for s in saved["segments"]}
+    assert flags["S001"] is True and flags["S041"] is False
+
+
+def test_rerun_only_reannotates_failed_segments(tmp_path):
+    sp = tmp_path / "segments.json"
+    sp.write_text(json.dumps({"segments": make_segments(50)}), encoding="utf-8")
+    out = tmp_path / "o.json"
+    with pytest.raises(ut.AnnotationIncomplete):
+        ut.run(sp, out, client=StubbornClient(fail_if={"S001"}), batch=40)
+    first_topics = json.loads(ut.partial_path(out).read_text(encoding="utf-8"))["topics"]
+    healthy = FakeClient()
+    res = ut.run(sp, out, client=healthy, batch=40)
+    assert res["complete"] is True and res["resumed"] is True
+    assert healthy.calls == 1  # 不再做话题分段，只补 1 批（S001–S040）
+    assert res["topics"] == first_topics  # 沿用上次的话题分段
+    assert not any(s["annotation_failed"] for s in res["segments"])
+    assert res["segments"][45]["info_type"] == "金额价格"  # 上次成功的标注保留
+
+
+def test_rerun_with_changed_input_does_full_run(tmp_path):
+    sp = tmp_path / "segments.json"
+    sp.write_text(json.dumps({"segments": make_segments(50)}), encoding="utf-8")
+    out = tmp_path / "o.json"
+    with pytest.raises(ut.AnnotationIncomplete):
+        ut.run(sp, out, client=StubbornClient(fail_if={"S001"}), batch=40)
+    healthy = FakeClient()
+    ut.run(sp, out, client=healthy, batch=40, style="新偏好")  # 输入变了 → 不能复用旧结果
+    assert healthy.calls == 1 + 2  # 1 次话题分段 + 2 批标注（全量）
+
+
+def test_old_result_without_complete_flag_does_full_run(tmp_path):
+    sp = tmp_path / "segments.json"
+    sp.write_text(json.dumps({"segments": make_segments(5)}), encoding="utf-8")
+    out = tmp_path / "o.json"
+    out.write_text(json.dumps({"topics": [], "segments": []}), encoding="utf-8")
+    healthy = FakeClient()
+    res = ut.run(sp, out, client=healthy)
+    assert healthy.calls == 2 and res["resumed"] is False
+
+
+def test_retry_count_bounded():
+    client = StubbornClient(fail_if={"S001"})
+    _, failures = ut.annotate(client, make_segments(5), batch=40)
+    assert client.annotate_calls == ut.ANNOTATE_RETRIES + 1
+    assert "mock persistent failure" in failures[0]["error"]
+
+
+def test_missing_ids_rerequested_only_for_gaps():
+    class OnceOmit(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.listings = []
+
+        def chat_json(self, system, user, **kw):
+            self.listings.append(re.findall(r"^(S\d{3}) ", user, flags=re.M))
+            data = super().chat_json(system, user, **kw)
+            if self.annotate_calls == 1:
+                data = {"segments": [x for x in data["segments"] if x["id"] != "S003"]}
+            return data
+
+    client = OnceOmit()
+    result, failures = ut.annotate(client, make_segments(5), batch=40)
+    assert failures == [] and "S003" in result and client.annotate_calls == 2
+    assert client.listings[1] == ["S003"]  # 补问只问漏掉的句子
+
+
+def test_permanently_missing_id_flagged_alone():
+    result, failures = ut.annotate(StubbornClient(omit={"S003"}), make_segments(5), batch=40)
+    assert [f["ids"] for f in failures] == [["S003"]] and "漏标" in failures[0]["error"]
+    assert "S999" not in result  # 模型编造的 id 不进结果
 
 
 class MergeClient(FakeClient):
@@ -140,3 +255,90 @@ def test_style_is_injected_into_annotate_prompt(tmp_path):
     client = Recorder()
     ut.run(sp, tmp_path / "o.json", client=client, style="剪辑偏好：观众是准备报名的家长")
     assert any("准备报名的家长" in p for p in client.prompts)
+
+
+# ---------------------------------------------------------------- M2 审查
+class ShapeClient(FakeClient):
+    """第一次标注返回错误形状（entities 是数字 / segments 不是列表），之后正常。"""
+
+    def __init__(self, bad):
+        super().__init__()
+        self.bad = bad
+
+    def chat_json(self, system, user, **kw):
+        data = super().chat_json(system, user, **kw)
+        if "segments" in data and self.annotate_calls == 1:
+            return self.bad(data)
+        return data
+
+
+@pytest.mark.parametrize("bad", [
+    lambda d: {"segments": [{**x, "entities": 5} for x in d["segments"]]},
+    lambda d: {"segments": "oops"},
+    lambda d: {"segments": [5, None]},
+    lambda d: ["not", "a", "dict"],
+])
+def test_wrong_shape_is_retried_not_crash(bad):
+    client = ShapeClient(bad)
+    result, failures = ut.annotate(client, make_segments(5), batch=40, sleep=lambda _: None)
+    assert failures == [] and len(result) == 5 and client.annotate_calls == 2
+
+
+def test_fatal_status_not_retried_and_stops_later_batches():
+    from pipeline.llm import LLMError
+
+    class Unauthorized(FakeClient):
+        def chat_json(self, system, user, **kw):
+            self.annotate_calls += 1
+            raise LLMError("HTTP 401: unauthorized", status=401)
+
+    client = Unauthorized()
+    _, failures = ut.annotate(client, make_segments(90), batch=40, sleep=lambda _: None)
+    assert client.annotate_calls == 1  # 鉴权错误重试没用，后面的批次也不用再试
+    assert sorted(i for f in failures for i in f["ids"]) == [f"S{i:03d}" for i in range(1, 91)]
+    assert "401" in failures[0]["error"]
+
+
+def test_retry_backoff_uses_injected_sleep():
+    slept = []
+    ut.annotate(StubbornClient(fail_if={"S001"}), make_segments(5), batch=40,
+                sleep=slept.append)
+    assert slept == list(ut.ANNOTATE_BACKOFF[:ut.ANNOTATE_RETRIES])
+
+
+def _paths(tmp_path, n=50):
+    sp = tmp_path / "segments_text_src.json"
+    sp.write_text(json.dumps({"segments": make_segments(n)}), encoding="utf-8")
+    return sp, tmp_path / "segments_text.json"
+
+
+def test_incomplete_rerun_does_not_clobber_complete_main_file(tmp_path):
+    sp, out = _paths(tmp_path)
+    good = ut.run(sp, out, client=FakeClient(), batch=40)
+    with pytest.raises(ut.AnnotationIncomplete):
+        ut.run(sp, out, client=StubbornClient(fail_if={"S001"}), batch=40, style="新偏好")
+    assert json.loads(out.read_text(encoding="utf-8"))["segments"] == good["segments"]
+    partial = ut.partial_path(out)
+    assert json.loads(partial.read_text(encoding="utf-8"))["complete"] is False
+    assert ut.is_incomplete(out) is True
+
+
+def test_resume_uses_partial_then_replaces_main_and_removes_partial(tmp_path):
+    sp, out = _paths(tmp_path)
+    with pytest.raises(ut.AnnotationIncomplete):
+        ut.run(sp, out, client=StubbornClient(fail_if={"S001"}), batch=40)
+    assert not out.exists()
+    healthy = FakeClient()
+    res = ut.run(sp, out, client=healthy, batch=40)
+    assert res["resumed"] is True and healthy.calls == 1
+    assert json.loads(out.read_text(encoding="utf-8"))["complete"] is True
+    assert not ut.partial_path(out).exists() and ut.is_incomplete(out) is False
+
+
+def test_is_incomplete_detects_legacy_failures(tmp_path):
+    out = tmp_path / "segments_text.json"
+    out.write_text(json.dumps({"segments": [], "failures": [{"ids": ["S001"]}]}),
+                   encoding="utf-8")
+    assert ut.is_incomplete(out) is True
+    out.write_text(json.dumps({"segments": [], "failures": []}), encoding="utf-8")
+    assert ut.is_incomplete(out) is False

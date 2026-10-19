@@ -36,10 +36,11 @@ uv run python aicut.py list
 ```bash
 cd ~/Documents/deepseek-harness/default-workspace
 
-python3 aicut.py new 项目名 --material ~/Movies/xxx.MOV --preset 纪实3min
+python3 aicut.py new 项目名 --material ~/Movies/xxx.MOV --preset 纪实3min --target 240  # 成片时长（秒），不写会问
 python3 aicut.py run 项目名          # 转写 → 切片 → 废片表 → 策划分派单
 python3 aicut.py status 项目名        # 看进度
 python3 aicut.py build 项目名 --version v2   # 改完 shots.json 后重出
+python3 aicut.py select 项目名 --target 300  # 改目标时长，只重跑选段
 ```
 
 ## 目录

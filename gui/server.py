@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
-from pipeline import proc, review, schema, style  # noqa: E402
+from pipeline import notices, proc, review, schema, select, style  # noqa: E402
 
 proc.ensure_bundled_path()  # 打包后优先用 App 自带的 ffmpeg
 PROJECTS = proc.user_data_root()
@@ -78,7 +78,7 @@ def run_aicut(args: list[str]) -> tuple[int, str]:
         finally:
             sys.argv = old_argv
         return code, buf.getvalue()
-    r = subprocess.run([PY, str(AICUT), *args], cwd=str(ROOT),
+    r = subprocess.run([PY, str(AICUT), *args], cwd=str(ROOT), stdin=subprocess.DEVNULL,
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
@@ -167,12 +167,18 @@ def project_state(name: str) -> dict:
             "draft": f"{cfg.get('title', name)}_{d.name}",
             "mtime": time.strftime("%m-%d %H:%M", time.localtime(d.stat().st_mtime)),
         })
+    manual = jload(pdir / "shots.json", {}).get("shots", [])
+    selected = jload(work / "shots-selected.json", {}).get("shots", [])
     return {
         "project": cfg,
         "stages": stages,
         "versions": list(reversed(versions)),
         "segments": jload(work / "segments.json", {}).get("segments", []),
-        "shots": jload(pdir / "shots.json", {}).get("shots", []),
+        # 没有手存分镜表时用选段结果预填；有就不覆盖（M2）
+        "shots": manual or selected,
+        "shots_from_selection": not manual and bool(selected),
+        "selection": select.summary(jload(work / "selection.json")),
+        "warnings": notices.project_warnings(work),
         "junk": jload(work / "junk_report.json", {}).get("items", []),
         "material_duration": (jload(work / "materials.json", {}).get("items") or [{}])[0].get("duration", 0),
         "has_proxy": (work / "proxy.mp4").exists(),
@@ -251,17 +257,17 @@ def confirm_payload(name: str) -> dict:
 
 
 # ------------------------------------------------------------------ 任务
+JOB_COMMANDS = {"prepare": ["prepare"], "build": ["build"], "select": ["select"]}
+
+
 def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
+    if task not in JOB_COMMANDS:  # 先校验再登记，未知任务不留幽灵 running
+        raise ValueError("未知任务")
+    argv = [*JOB_COMMANDS[task], name, *(extra or [])]
     job_id = uuid.uuid4().hex[:8]
     with JOBS_LOCK:
         JOBS[job_id] = {"status": "running", "log": [], "exit": None,
                         "started": time.time(), "task": task, "project": name}
-    cmds = {
-        "prepare": ["prepare", name],
-        "build": ["build", name] + (extra or []),
-    }
-    if task not in cmds:
-        raise ValueError("未知任务")
 
     if proc.FROZEN:
         class _JobLog:
@@ -294,7 +300,7 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
             old_argv = sys.argv
             try:
                 with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-                    code = run_cli([task, name, *(extra or [])])
+                    code = run_cli(argv)
             except Exception as exc:  # noqa: BLE001
                 code = -1
                 sink.write(f"[错误] {exc}\n")
@@ -314,7 +320,8 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
         env["PYTHONUNBUFFERED"] = "1"
         env["PATH"] = "/opt/homebrew/bin:" + env.get("PATH", "")
         try:
-            proc = subprocess.Popen([PY, str(AICUT), *cmds[task]], cwd=str(ROOT),
+            proc = subprocess.Popen([PY, str(AICUT), *argv], cwd=str(ROOT),
+                                    stdin=subprocess.DEVNULL,  # input() 不能卡住任务
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     text=True, bufsize=1, env=env)
             for line in proc.stdout:
@@ -652,8 +659,14 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(preset, str) or preset not in preset_names():
                 return self._json({"error": f"未知预设：{preset}"}, 400)
             # --x=value 形式：以 - 开头的值不会被 argparse 当成选项
-            code, out = run_aicut(["new", name, f"--material={material}",
-                                   f"--preset={preset}", f"--title={title}"])
+            args = ["new", name, f"--material={material}", f"--preset={preset}",
+                    f"--title={title}"]
+            if body.get("target") is not None:  # GUI 总是传，CLI 就不会停在 input() 上
+                try:
+                    args.append(f"--target={schema.check_target_duration(body['target'])}")
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+            code, out = run_aicut(args)
             if code != 0:
                 return self._json({"error": out[-500:] or "创建失败"}, 400)
             return self._json({"ok": True, "name": name})
@@ -705,6 +718,8 @@ class Handler(BaseHTTPRequestHandler):
                         extra += ["--version", schema.check_version(v)]
                     if body.get("no_draft"):
                         extra.append("--no-draft")
+                if task == "select" and body.get("target") is not None:
+                    extra += ["--target", str(schema.check_target_duration(body["target"]))]
                 job_id = start_job(name, task, extra)
             except (ValueError, FileNotFoundError) as e:
                 return self._json({"error": str(e)}, 400)

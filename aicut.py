@@ -9,12 +9,13 @@
   4. 版本不覆盖：每次出片进 output/v1 v2 v3，剪映草稿名也带版本号
 
 命令：
-  new <项目名> --material <原片> [--title 片名] [--preset 纪实3min]
+  new <项目名> --material <原片> [--title 片名] [--preset 纪实3min] [--target 秒]
   run <项目名>                 全流程（已完成的自动跳过）
   ingest <项目名>              素材台账
   transcribe <项目名>          抽音轨 + 云端转写 + 分段文稿
   junk <项目名>                代理片 + 规则层废片检测
   brief <项目名>               生成"给 AI/给人看"的策划分派单
+  select <项目名> [--target 秒]  改目标时长后只重跑选段（不转写、不调 LLM）
   build <项目名> [--version v2] [--no-draft]   分镜表 → 切片 → 预览 → 剪映草稿
   status <项目名>              看每个环节的状态
   list                         列出所有项目
@@ -30,9 +31,10 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (classify, cloud, export_draft, proc, questions, schema,
+from pipeline import (classify, cloud, export_draft, proc, questions, review, schema,
                       secrets, select, style, summarize, understand_audio,
                       understand_text, understand_visual)
+from pipeline.llm import LLMError
 
 ROOT = proc.app_root()
 PROJECTS = proc.user_data_root()
@@ -55,6 +57,19 @@ def info(msg: str) -> None:
 
 def ok(msg: str) -> None:
     print(f"[✓] {msg}")
+
+
+def warn(msg: str) -> None:
+    print(f"[!] {msg}")
+
+
+TARGET_PROMPT = "想剪成多长的片子？（秒，回车用预设 {default} 秒）"
+TEXT_PARTIAL_WARNING = ("上次逐句标注没有完成（work/segments_text.partial.json），"
+                        "这次分档用的是上一次完整的标注结果；重新运行「处理素材」可补齐")
+TEXT_INCOMPLETE_STATUS = "未完成"
+TARGET_CHANGED = "目标时长已改为 {target}，只重跑选段"
+MUST_KEEP_OVER_HINT = ("必留内容共 {must}，超过目标 {target}。想剪成多长？"
+                       "运行：aicut.py select {name} --target <秒>（建议 --target {suggest}）")
 
 
 def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
@@ -164,6 +179,12 @@ def cmd_new(args) -> None:
     preset = load_json(PRESETS / f"{args.preset}.json")
     if preset is None:
         die(f"找不到预设 {args.preset}，可用：{[p.stem for p in PRESETS.glob('*.json')]}")
+    target = getattr(args, "target", None)
+    if target is not None:  # 先校验再建目录：失败不留空项目
+        check_or_die(schema.check_target_duration, target)
+        target = schema.check_target_duration(target)
+    else:
+        target = ask_target(schema.check_target_duration(preset.get("duration") or 175))
     pdir.mkdir(parents=True)
     calibration = {"tone": args.tone, "audience": args.audience,
                    "must_lines": args.must_lines}
@@ -176,7 +197,7 @@ def cmd_new(args) -> None:
         title=args.title or args.name,
         preset=args.preset,
         platform=preset.get("platform", "douyin"),
-        target_duration=preset.get("duration"),
+        target_duration=target,
         created=time.strftime("%Y-%m-%d %H:%M:%S"),
         calibration=calibration,
     )
@@ -255,13 +276,14 @@ def cmd_text(args) -> None:
     pref = style.directive(cfg(pdir).get("calibration"))
     if pref:
         info("已应用剪辑偏好：" + pref)
-    res = understand_text.run(segs, work / "segments_text.json",
-                              batch=batch, model=model, style=pref)
+    try:
+        res = understand_text.run(segs, work / "segments_text.json",
+                                  batch=batch, model=model, style=pref)
+    except LLMError as exc:  # GL-09：含 AnnotationIncomplete；不能当成功往下走
+        die(str(exc))
     key = sum(1 for x in res["segments"] if x["key_info"])
-    msg = f"话题 {len(res['topics'])} 个 · 关键信息 {key} 句"
-    if res["failures"]:
-        msg += f" · {len(res['failures'])} 批失败（详见 segments_text.json）"
-    ok(msg)
+    ok(f"话题 {len(res['topics'])} 个 · 关键信息 {key} 句"
+       + (" · 已补齐上次失败的句子" if res.get("resumed") else ""))
 
 
 def cmd_score(args) -> None:
@@ -272,14 +294,23 @@ def cmd_score(args) -> None:
     if not text.exists():
         die("先跑 text（需要 work/segments_text.json）")
     c = cfg(pdir)
-    res = classify.run(text, work / "segments_audio.json",
-                       work / "segments_scored.json",
-                       total_target=float(c.get("target_duration") or 175),
-                       visual_path=work / "visual_quality.json")
+    if understand_text.partial_path(text).exists():
+        warn(TEXT_PARTIAL_WARNING)
+    try:
+        res = classify.run(text, work / "segments_audio.json",
+                           work / "segments_scored.json",
+                           total_target=float(c.get("target_duration") or 175),
+                           visual_path=work / "visual_quality.json")
+    except classify.TextIncomplete as exc:
+        die(str(exc))
     s = res["summary"]
     flagged = sum(1 for x in res["segments"] if x.get("visual_flags"))
+    demoted = (res.get("pending") or {}).get("demoted", 0)
     ok(f"废片 {s['waste']} · 待定 {s['pending']} · 可用 {s['usable']}"
-       + (f" · 画面异常 {flagged}" if flagged else ""))
+       + (f" · 画面异常 {flagged}" if flagged else "")
+       + (f" · 自动降级 {demoted}" if demoted else ""))
+    for w in res.get("warnings") or []:
+        warn(w)
 
 
 def cmd_junk(args) -> None:
@@ -365,17 +396,37 @@ def cmd_select(args) -> None:
     if not (work / "segments_scored.json").exists():
         die("先跑 score")
     c = cfg(pdir)
-    res = select.run(work / "segments_scored.json", work / "brief_answers.json", work,
-                     questions_path=work / "questions.json",
-                     title=c.get("title", args.name), material=c["material"],
-                     weights=style.weights(c.get("calibration")),
-                     calibration=c.get("calibration"),
-                     target=float(c.get("target_duration") or 175))
-    missing = res["missing_must_topics"]
-    msg = f"选段 {res['stats']['shots']} 镜 · {res['total']:.0f}s / 目标 {res['target']:.0f}s"
-    if missing:
-        msg += f" · 未覆盖必留话题 {len(missing)}"
-    ok(msg)
+    new_target = None
+    if getattr(args, "target", None) is not None:  # prepare 透传的 args 没有 target
+        check_or_die(schema.check_target_duration, args.target)
+        new_target = schema.check_target_duration(args.target)
+        c = {**c, "target_duration": new_target}
+    try:
+        res = select.run(work / "segments_scored.json", work / "brief_answers.json", work,
+                         questions_path=work / "questions.json",
+                         title=c.get("title", args.name), material=c["material"],
+                         weights=style.weights(c.get("calibration")),
+                         calibration=c.get("calibration"),
+                         target=float(c.get("target_duration") or 175))
+    except select.SelectionError as exc:
+        die(str(exc))
+    if new_target is not None:  # 选段成功后才保存新目标
+        schema.save(pdir / "project.json", c)
+        info(TARGET_CHANGED.format(target=select.fmt_duration(new_target)))
+    _report_selection(res, args.name)
+
+
+def _report_selection(res: dict, name: str) -> None:
+    missing, must_n = res["missing_must_topics"], res["stats"].get("must_keep", 0)
+    ok(f"选段 {res['stats']['shots']} 镜 · {res['total']:.0f}s / 目标 {res['target']:.0f}s"
+       + (f" · 必留 {must_n} 段" if must_n else "")
+       + (f" · 未覆盖必留话题 {len(missing)}" if missing else ""))
+    if res.get("over_target"):
+        warn(MUST_KEEP_OVER_HINT.format(must=select.fmt_duration(res["must_keep_total"]),
+                                        target=select.fmt_duration(res["target"]),
+                                        name=name, suggest=res["suggested_target"]))
+    for w in res.get("warnings") or []:
+        warn(w)
 
 
 def cmd_export(args) -> None:
@@ -547,6 +598,12 @@ def cmd_build(args) -> None:
     shots = spec["shots"]
     if args.version:
         check_or_die(schema.check_version, args.version)
+    try:  # GL-25：切片（耗时）之前确认分镜表覆盖全部必留段
+        missing = select.missing_must_keep(pdir / "work", shots)
+    except review.OverridesCorrupt as exc:
+        die(str(exc))
+    if missing:
+        die(select.describe_missing(missing, from_selection=shots_file != pdir / "shots.json"))
 
     clips_dir = ensure_clips(pdir, c, shots)
     version = args.version or next_version(pdir)
@@ -614,6 +671,20 @@ def cmd_run(args) -> None:
         cmd_build(args)
     else:
         info("还没有 shots.json —— 让 AI 按 work/brief.md 写一版，或手动写，然后跑 build")
+
+
+def ask_target(default: int) -> int:
+    """在终端里问成片时长；非交互环境（含 GUI）直接用预设值。"""
+    if not sys.stdin.isatty():
+        return default
+    while True:
+        raw = input(TARGET_PROMPT.format(default=default) + "\n  > ").strip()
+        if not raw:
+            return default
+        try:
+            return schema.check_target_duration(raw)
+        except ValueError as exc:
+            print(f"  {exc}")
 
 
 def ask_calibration(existing: dict) -> dict:
@@ -716,7 +787,11 @@ def cmd_status(args) -> None:
     ]
     print(f"\n项目：{c['title']}（{c['name']}）")
     print(f"预设：{c['preset']}　平台：{c['platform']}　目标：{c['target_duration']}s\n")
+    text_incomplete = understand_text.is_incomplete(pdir / "work/segments_text.json")
     for label, p in checks:
+        if p.name == "segments_text.json" and text_incomplete:
+            print(f"  [!] {label}：{TEXT_INCOMPLETE_STATUS}")
+            continue
         mark = "✓" if p.exists() else "·"
         print(f"  [{mark}] {label}")
     outs = sorted(p.name for p in (pdir / "output").glob("v*") if p.is_dir())
@@ -754,6 +829,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--tone", choices=list(style.TONES))
     p.add_argument("--audience", default=None)
     p.add_argument("--must-lines", dest="must_lines", default=None)
+    p.add_argument("--target", default=None, help="成片目标时长（秒），默认用预设")
     p.set_defaults(fn=cmd_new)
 
     for name, fn in [("run", cmd_run), ("prepare", cmd_prepare),
@@ -777,6 +853,7 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=cmd_export)
 
     p = sub.add_parser("select"); p.add_argument("name")
+    p.add_argument("--target", default=None, help="改目标时长（秒）后只重跑选段")
     p.set_defaults(fn=cmd_select)
 
     p = sub.add_parser("questions"); p.add_argument("name")

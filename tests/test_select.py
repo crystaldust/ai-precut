@@ -1,4 +1,5 @@
 import json
+import random
 
 import pytest
 
@@ -175,3 +176,214 @@ def test_target_comes_from_scored_result(tmp_path):
     ap.write_text(json.dumps({"answers": {}}), encoding="utf-8")
     res = select.run(sp, ap, tmp_path)
     assert res["target"] == 30
+
+
+# ---------------------------------------------------------------- GL-08 必留整段进片
+def _ids(res):
+    return [s["segment_id"] for s in res["shots"]]
+
+
+def test_must_keep_survives_zero_topic_budget():
+    segs = [seg(1, 0, 6, "聊吃饭", level=2, must=True)]  # level=3 会被补齐阶段捞回，测不出
+    topics = [{"name": "讲合同", "budget": 20}, {"name": "聊吃饭", "budget": 0}]
+    assert "S001" in _ids(select.select(segs, topics, {}, 60))
+
+
+def test_must_keep_survives_excluded_topic():
+    segs = [seg(1, 0, 6, "聊吃饭", must=True)]
+    res = select.select(segs, TOPICS, {"exclude_topics": ["聊吃饭"]}, 60)
+    assert "S001" in _ids(res)  # 必留优先于「哪些不能出现」
+
+
+def test_must_keep_survives_budget_exhaustion():
+    segs = [seg(i, i * 10, 6, "讲合同", must=True) for i in range(1, 6)]
+    res = select.select(segs, [{"name": "讲合同", "budget": 10}], {}, 120)
+    assert set(_ids(res)) >= {f"S{i:03d}" for i in range(1, 6)}
+
+
+def test_must_keep_over_target_never_trimmed_and_reported():
+    segs = [seg(i, i * 10, 6, "讲合同", must=True) for i in range(1, 6)]
+    res = select.select(segs, [{"name": "讲合同", "budget": 100}], {}, 12)  # 必留 30s > 目标 12s
+    assert set(_ids(res)) == {f"S{i:03d}" for i in range(1, 6)}
+    assert res["must_keep_total"] == 30.0
+    assert res["over_target"] is True
+    assert res["suggested_target"] == 30
+    assert "必留内容共" in res["over_target_warning"]
+    assert res["warnings"] == []  # 超目标提示单独一个字段，不靠下标切片
+
+
+def test_suggested_target_rounds_up_to_step():
+    segs = [seg(1, 0, 31.2, "讲合同", must=True)]
+    res = select.select(segs, TOPICS, {}, 12)
+    assert res["suggested_target"] == 35  # 向上取整到 TARGET_ROUND_STEP=5
+
+
+def test_must_keep_kept_whole_not_clipped_by_budget_or_max_shot():
+    res = select.select([seg(1, 0, 30, "讲合同", must=True)], [{"name": "讲合同", "budget": 10}],
+                        {}, 60)
+    shot = next(s for s in res["shots"] if s["segment_id"] == "S001")
+    assert (shot["start"], shot["end"]) == (0.0, 30.0)
+
+
+def test_short_must_keep_not_dropped_by_min_shot():
+    res = select.select([seg(1, 0, 1.0, "讲合同", must=True), seg(2, 10, 6, "讲合同")],
+                        TOPICS, {}, 60)
+    assert "S001" in _ids(res)
+
+
+def test_must_keep_shot_marked_forced_with_reason():
+    res = select.select([seg(1, 0, 6, "讲合同", must=True)], TOPICS, {}, 60)
+    shot = next(s for s in res["shots"] if s["segment_id"] == "S001")
+    assert shot["forced"] is True and shot["must_keep"] is True
+    assert shot["reason"].startswith(select.MUST_KEEP_REASON)
+    assert res["must_keep_ids"] == ["S001"] and res["over_target"] is False
+
+
+def test_no_must_keep_reports_empty():
+    res = select.select([seg(1, 0, 6, "讲合同")], TOPICS, {}, 60)
+    assert res["must_keep_ids"] == [] and res["must_keep_total"] == 0
+    assert res["over_target"] is False and res["suggested_target"] is None
+    assert res["stats"]["must_keep"] == 0
+
+
+def test_within_target_has_no_warning():
+    res = select.select([seg(1, 0, 6, "讲合同", must=True), seg(2, 10, 6, "讲合同")],
+                        TOPICS, {}, 12)
+    assert res["warnings"] == [] and res["over_target_warning"] is None
+
+
+def test_guard_raises_when_must_keep_lost(monkeypatch):
+    monkeypatch.setattr(select, "_ensure_must_keep", lambda segs, shots, w: shots)
+    segs = [seg(1, 0, 6, "聊吃饭", level=2, must=True)]
+    with pytest.raises(select.SelectionError, match="S001"):
+        select.select(segs, [{"name": "聊吃饭", "budget": 0}], {}, 60)
+
+
+def test_markdown_lists_warnings():
+    segs = [seg(i, i * 10, 6, "讲合同", must=True) for i in range(1, 6)]
+    res = select.select(segs, [{"name": "讲合同", "budget": 100}], {}, 12)
+    assert "## 警告" in select.markdown(res)
+
+
+def test_fmt_duration():
+    assert select.fmt_duration(214) == "3 分 34 秒"
+    assert select.fmt_duration(45.4) == "45 秒"
+
+
+def test_must_keep_invariant_randomized():
+    rng = random.Random(20261019)
+    names = ["讲合同", "聊吃饭", "谈价格", "未归类"]
+    for _ in range(300):
+        segs = [seg(i, i * 12.0, round(rng.uniform(0.5, 40), 1), rng.choice(names),
+                    level=rng.choice([1, 2, 3]), key=rng.random() < 0.3,
+                    must=rng.random() < 0.2) for i in range(1, rng.randint(2, 40))]
+        topics = [{"name": n, "budget": rng.choice([0, 5, 10, 30, 80])} for n in names[:3]]
+        rules = {"exclude_topics": rng.sample(names[:3], rng.randint(0, 2)),
+                 "must_topics": rng.sample(names[:3], rng.randint(0, 1)),
+                 "ending": rng.choice([None, "sign", "emotion"])}
+        res = select.select(segs, topics, rules, rng.choice([10, 30, 60, 175]))
+        must = {s["id"] for s in segs if s["must_keep"]}
+        assert must <= set(_ids(res)), "必留进片率必须 100%"
+        whole = {s["id"]: (s["start"], s["end"]) for s in segs if s["must_keep"]}
+        for shot in res["shots"]:
+            if shot["segment_id"] in whole:
+                assert (shot["start"], shot["end"]) == tuple(
+                    round(x, 2) for x in whole[shot["segment_id"]])
+
+
+def test_run_reallocates_budget_when_target_changed(tmp_path, monkeypatch):
+    topics = [{"name": "讲合同", "must": True, "usable_dur": 120, "budget": 20}]
+    scored = {"target": 30, "topics": topics, "segments": [seg(1, 0, 6, "讲合同")]}
+    sp = tmp_path / "s.json"
+    sp.write_text(json.dumps(scored, ensure_ascii=False), encoding="utf-8")
+    seen = {}
+    real = select.select
+
+    def fake_select(segments, topics, rules, target, weights=None):
+        seen["budget"], seen["target"] = topics[0]["budget"], target
+        return real(segments, topics, rules, target, weights)
+
+    monkeypatch.setattr(select, "select", fake_select)
+    select.run(sp, tmp_path / "a.json", tmp_path, target=300)
+    assert seen["target"] == 300 and seen["budget"] > 20  # 按新目标重分，不需要重跑 score
+    assert json.loads(sp.read_text(encoding="utf-8"))["topics"][0]["budget"] == 20
+
+
+def test_uncovered_must_keep_reports_missing_segments():
+    segs = [seg(1, 0, 6, "讲合同", must=True), seg(2, 10, 6, "讲合同", must=True),
+            seg(3, 20, 6, "讲合同")]
+    shots = [{"id": "sh01", "in": 0.0, "out": 6.0}, {"id": "sh02", "in": 10.0, "out": 12.0}]
+    missing = select.uncovered_must_keep(segs, shots)
+    assert [m["id"] for m in missing] == ["S002"]  # 只覆盖 2/6 秒不算进片
+
+
+def test_uncovered_must_keep_accepts_split_coverage():
+    segs = [seg(1, 0, 10, "讲合同", must=True)]
+    shots = [{"id": "a", "in": 0.0, "out": 5.0}, {"id": "b", "in": 5.0, "out": 9.9}]
+    assert select.uncovered_must_keep(segs, shots) == []  # 两镜拼起来只差 0.1 秒
+
+
+@pytest.mark.parametrize("dur, covered, missing", [
+    (20.0, 18.0, True),    # 比例阈值会放过 2 秒的缺口，绝对容差不会
+    (10.0, 9.5, True),
+    (3.0, 2.75, True),
+    (3.0, 2.8, False),     # 帧/取整误差以内
+    (3.0, 3.0, False),
+])
+def test_uncovered_must_keep_absolute_tolerance(dur, covered, missing):
+    segs = [seg(1, 0, dur, "讲合同", must=True)]
+    shots = [{"id": "a", "in": 0.0, "out": covered}]
+    assert bool(select.uncovered_must_keep(segs, shots)) is missing
+
+
+def test_uncovered_must_keep_overlapping_shots_not_double_counted():
+    segs = [seg(1, 0, 10, "讲合同", must=True)]
+    shots = [{"id": "a", "in": 0.0, "out": 5.0}, {"id": "b", "in": 0.0, "out": 5.0}]
+    assert [m["id"] for m in select.uncovered_must_keep(segs, shots)] == ["S001"]
+
+
+# ---------------------------------------------------------------- M2 审查
+def test_over_target_drops_all_non_forced_shots():
+    segs = [seg(1, 0, 30, "讲合同", must=True), seg(2, 40, 6, "讲合同", key=True)]
+    res = select.select(segs, [{"name": "讲合同", "budget": 100}], {}, 12)
+    assert _ids(res) == ["S001"]  # 必留已超目标，非必留镜头一个都不该留
+
+
+def test_trim_still_keeps_one_shot_without_must_keep():
+    segs = [seg(i, i * 10, 8, "讲合同") for i in range(1, 4)]
+    res = select.select(segs, [{"name": "讲合同", "budget": 100}], {}, 2)
+    assert len(res["shots"]) == 1
+
+
+def test_zero_length_must_keep_skipped_with_warning():
+    segs = [seg(1, 5, 0, "讲合同", must=True), seg(2, 10, 6, "讲合同", must=True)]
+    res = select.select(segs, TOPICS, {}, 60)
+    assert "S001" not in _ids(res) and "S002" in _ids(res)
+    assert all(s["dur"] > 0 for s in res["shots"])
+    assert res["must_keep_ids"] == ["S002"] and res["must_keep_skipped"] == ["S001"]
+    assert any("S001" in w for w in res["warnings"])
+
+
+def test_run_warns_when_legacy_topics_cannot_be_reallocated(tmp_path):
+    scored = {"target": 30, "topics": [{"name": "讲合同", "budget": 20}],
+              "segments": [seg(1, 0, 6, "讲合同")]}
+    sp = tmp_path / "s.json"
+    sp.write_text(json.dumps(scored, ensure_ascii=False), encoding="utf-8")
+    res = select.run(sp, tmp_path / "a.json", tmp_path, target=300)
+    assert any(select.BUDGET_LEGACY_WARNING in w for w in res["warnings"])
+
+
+def test_summary_includes_warnings_and_missing_topics():
+    sel = {"total": 1, "target": 2, "must_keep_total": 0, "over_target": False,
+           "suggested_target": None, "warnings": ["w"], "missing_must_topics": ["讲合同"],
+           "over_target_warning": None, "shots": [{"x": 1}]}
+    got = select.summary(sel)
+    assert got["warnings"] == ["w"] and got["missing_must_topics"] == ["讲合同"]
+    assert "shots" not in got
+
+
+def test_describe_missing_from_selection_says_reselect():
+    missing = [seg(1, 70, 6, "讲合同", must=True, text="九千八")]
+    assert "在分镜表里加回" in select.describe_missing(missing)
+    msg = select.describe_missing(missing, from_selection=True)
+    assert "重新选段" in msg and "在分镜表里加回" not in msg and "01:10" in msg

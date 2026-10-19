@@ -14,16 +14,39 @@ import json
 import re
 from pathlib import Path
 
-from pipeline import review
+from pipeline import classify, review
 
 HARD_TYPES = {"金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑"}
 MIN_SHOT = 1.5      # 最短镜头
 MAX_SHOT = 25.0     # 最长镜头，超过就截断（访谈镜头可以长一点）
+MUST_KEEP_REASON = "剪辑师标记必留"
+TOTAL_TOLERANCE = 1.10       # PRD FR-7：总时长 ±10%
+TARGET_ROUND_STEP = 5        # 建议目标时长向上取整到 5 秒
+MUST_KEEP_EDGE_TOLERANCE = 0.2  # 秒：必留段没被分镜表覆盖的总时长只容许帧/取整误差
+_EPS = 1e-6
+MUST_KEEP_OVER_WARNING = "必留内容共 {must}，超过目标 {target}：已全部保留，请重新设定成片时长"
+TOTAL_OVER_WARNING = "成片 {total} 超出目标 {target} 的 +10%"
+MUST_KEEP_EMPTY_WARNING = "必留段 {ids} 时长为 0，无法进片：请检查转写时间码，或在「浏览素材」取消★"
+BUDGET_LEGACY_WARNING = "话题数据是旧版本，没能按新目标重新分配话题时长；重新运行 score（或「处理素材」）后再选段"
+MUST_KEEP_MISSING = "分镜表缺少 {n} 段必留内容：{items}；{remedy}"
+MUST_KEEP_REMEDY_MANUAL = "在分镜表里加回，或在「浏览素材」取消★后再出片"
+MUST_KEEP_REMEDY_SELECTED = "重新选段（「改目标时长」或重新「处理素材」）后再出片，或在「浏览素材」取消★"
+MUST_KEEP_MISSING_SHOWN = 5  # 报错里最多列几段
 END_KEYWORDS = {
     "sign": ("签", "缴费", "转账", "落笔"),
     "leave": ("走", "离开", "出门", "下楼"),
     "emotion": ("谢", "信", "钱", "白学", "放心"),
 }
+
+
+class SelectionError(RuntimeError):
+    """选段结果违反硬约束（必留段丢失）。"""
+
+
+def fmt_duration(sec: float) -> str:
+    """给人看的时长：「3 分 34 秒」/「45 秒」。"""
+    sec = int(round(sec))
+    return f"{sec // 60} 分 {sec % 60} 秒" if sec >= 60 else f"{sec} 秒"
 
 
 def _norm_ending(value: str | None) -> str | None:
@@ -130,12 +153,124 @@ def _trim(shots: list[dict], target: float) -> tuple[list[dict], float]:
         pool = [x for x in shots
                 if not x.get("forced") and x.get("role") != "hook"
                 and "指定" not in (x.get("reason") or "")]
-        if len(pool) <= 1:
+        if not pool or len(shots) <= 1:  # 有必留/强制镜头时，非强制的可以全部丢掉
             break
         worst = min(pool, key=lambda x: (x["score"], -x["dur"]))
         shots.remove(worst)
         total -= worst["dur"]
     return shots, total
+
+
+def _has_length(seg: dict) -> bool:
+    return round(float(seg["end"]), 2) > round(float(seg["start"]), 2)
+
+
+def _must_keep_shot(seg: dict, weights: dict | None) -> dict:
+    start, end = round(float(seg["start"]), 2), round(float(seg["end"]), 2)
+    why = seg.get("level_reason") or ""
+    return {"segment_id": seg["id"], "topic": seg.get("topic") or "未归类",
+            "start": start, "end": end, "dur": round(end - start, 2),
+            "sub": (seg.get("text") or "")[:28],
+            "reason": MUST_KEEP_REASON + (f"；{why}" if why else ""),
+            "score": _score(seg, weights), "forced": True, "must_keep": True}
+
+
+def _ensure_must_keep(segments: list[dict], shots: list[dict],
+                      weights: dict | None) -> list[dict]:
+    """GL-08：必留段无视档位/话题/预算/exclude/镜头长度，一律整段进片；已入选但被截短的恢复整段。"""
+    must = {s["id"]: s for s in segments if s.get("must_keep")}
+    kept = [x for x in shots if x["segment_id"] not in must]
+    restored = [_must_keep_shot(seg, weights) for seg in must.values() if _has_length(seg)]
+    return sorted(kept + restored, key=lambda x: x["start"])
+
+
+def _merge_spans(spans: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    merged: list[tuple[float, float]] = []
+    for a, b in sorted(spans):
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    return merged
+
+
+def uncovered_must_keep(segments: list[dict], shots: list[dict]) -> list[dict]:
+    """GL-25：按时间核对分镜表（in/out）是否覆盖每个必留段，返回没覆盖到的段。"""
+    spans = _merge_spans([(float(s["in"]), float(s["out"])) for s in shots])
+    missing = []
+    for seg in (s for s in segments if s.get("must_keep")):
+        start, end = float(seg["start"]), float(seg["end"])
+        covered = sum(max(0.0, min(end, b) - max(start, a)) for a, b in spans)
+        if (end - start) - covered > MUST_KEEP_EDGE_TOLERANCE + _EPS:
+            missing.append(seg)
+    return missing
+
+
+def missing_must_keep(workdir: Path, shots: list[dict]) -> list[dict]:
+    """GL-25：出片前核对分镜表；没有分析结果（纯手工流程）就不查。
+
+    overrides.json 损坏时抛 review.OverridesCorrupt，由调用方报错。
+    """
+    scored_path = Path(workdir) / "segments_scored.json"
+    if not scored_path.exists():
+        return []
+    scored = json.loads(scored_path.read_text(encoding="utf-8"))
+    segments = review.apply(scored.get("segments") or [], review.load(workdir))
+    return uncovered_must_keep(segments, shots)
+
+
+SUMMARY_KEYS = ("total", "target", "must_keep_total", "over_target", "suggested_target",
+                "over_target_warning", "warnings", "missing_must_topics")
+
+
+def summary(selection: dict | None) -> dict | None:
+    """selection.json → 界面需要的摘要（不带整张镜头表）。"""
+    if not isinstance(selection, dict) or not selection:
+        return None
+    return {k: selection.get(k) for k in SUMMARY_KEYS}
+
+
+def describe_missing(missing: list[dict], *, from_selection: bool = False) -> str:
+    """缺失必留段 → 给剪辑师看的一句话（时间码 + 原话开头 + 怎么补救）。
+
+    from_selection：分镜表来自自动选段（没有手存的 shots.json），补救办法是重新选段。
+    """
+    def tc(sec: float) -> str:
+        return f"{int(sec // 60):02d}:{int(sec % 60):02d}"
+    items = "；".join(f'{tc(float(s["start"]))} "{(s.get("text") or "")[:20]}"'
+                     for s in missing[:MUST_KEEP_MISSING_SHOWN])
+    if len(missing) > MUST_KEEP_MISSING_SHOWN:
+        items += "…"
+    remedy = MUST_KEEP_REMEDY_SELECTED if from_selection else MUST_KEEP_REMEDY_MANUAL
+    return MUST_KEEP_MISSING.format(n=len(missing), items=items, remedy=remedy)
+
+
+def _must_keep_report(segments: list[dict], shots: list[dict], covered: list[str],
+                      target: float, total: float) -> dict:
+    """守卫 + 汇总：必留段必须全部进片；必留合计超过目标时给出建议时长。"""
+    used = {x["segment_id"] for x in shots}
+    must = [s for s in segments if s.get("must_keep")]
+    must_ids = [s["id"] for s in must if _has_length(s)]
+    skipped = [s["id"] for s in must if not _has_length(s)]
+    lost = [i for i in must_ids if i not in used]
+    if lost:
+        raise SelectionError(f"必留段未进片：{', '.join(lost)}")
+    must_total = round(sum(x["dur"] for x in shots if x.get("must_keep")), 2)
+    for topic in dict.fromkeys(x["topic"] for x in shots if x.get("must_keep")):
+        if topic not in covered:
+            covered.append(topic)
+    over = must_total > target
+    warnings = [MUST_KEEP_EMPTY_WARNING.format(ids="、".join(skipped))] if skipped else []
+    if not over and total > target * TOTAL_TOLERANCE:
+        warnings.append(TOTAL_OVER_WARNING.format(total=fmt_duration(total),
+                                                  target=fmt_duration(target)))
+    over_msg = (MUST_KEEP_OVER_WARNING.format(must=fmt_duration(must_total),
+                                              target=fmt_duration(target)) if over else None)
+    suggested = int(-(-must_total // TARGET_ROUND_STEP) * TARGET_ROUND_STEP) if over else None
+    return {"must_keep_ids": must_ids, "must_keep_skipped": skipped,
+            "must_keep_total": must_total, "over_target": over,
+            "over_target_warning": over_msg, "suggested_target": suggested,
+            "warnings": warnings}
 
 
 def _force_lines(segments: list[dict], shots: list[dict], lines: list[str],
@@ -275,6 +410,7 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
 
     shots.sort(key=lambda x: x["start"])
 
+    shots = _ensure_must_keep(segments, shots, weights)
     shots, total = _trim(shots, target)
     shots = _force_lines(segments, shots, rules.get("must_lines") or [], target, weights)
     total = sum(x["dur"] for x in shots)
@@ -290,8 +426,10 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
                           else "不在候选池")}
               for s in segments
               if s.get("level") == 3 and s["id"] not in used_ids]
+    report = _must_keep_report(segments, shots, covered, target, total)
 
     return {
+        **report,
         "target": target, "total": round(total, 2),
         "rules": rules,
         "covered_topics": covered,
@@ -300,7 +438,8 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
         "unused": unused,
         "stats": {"shots": len(shots),
                   "usable_total": sum(1 for s in segments if s.get("level") == 3),
-                  "used": len(used_ids)},
+                  "used": len(used_ids),
+                  "must_keep": len(report["must_keep_ids"])},
     }
 
 
@@ -363,6 +502,11 @@ def markdown(selection: dict) -> str:
     for s in selection["shots"]:
         lines.append(f'| {s["id"]} | {tc(s["start"])}–{tc(s["end"])} | {s["dur"]:.1f}s | '
                      f'{s["topic"]} | {s["sub"]} | {s["reason"]} |')
+    notes = [w for w in [selection.get("over_target_warning"), *(selection.get("warnings") or [])]
+             if w]
+    if notes:
+        lines += ["", "## 警告", ""]
+        lines += [f"- {w}" for w in notes]
     if selection["missing_must_topics"]:
         lines += ["", "## 未覆盖的必留话题", ""]
         lines += [f"- {t}" for t in selection["missing_must_topics"]]
@@ -391,12 +535,22 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
     overrides = review.load(out_dir)
     segments = review.apply(scored["segments"], overrides)
     target = float(target or scored.get("target") or 175)
+    topics = scored.get("topics", [])
+    extra_warnings = []
+    if target != float(scored.get("target") or 0):
+        if all("must" in t and "usable_dur" in t for t in topics):
+            # 剪辑师改了目标时长：按新目标重分话题预算（副本，不改 scored 文件），不必重跑 score
+            topics = classify.allocate_budget([dict(t) for t in topics], target)
+        else:
+            extra_warnings.append(BUDGET_LEGACY_WARNING)
     rules = stored_rules or _rules(answers, questions)
     lines = [x.strip() for x in str((calibration or {}).get("must_lines") or "")
              .replace("，", ",").replace("；", ",").split(",") if x.strip()]
     if lines:
         rules["must_lines"] = lines
-    result = select(segments, scored.get("topics", []), rules, target, weights)
+    result = select(segments, topics, rules, target, weights)
+    if extra_warnings:
+        result = {**result, "warnings": [*result["warnings"], *extra_warnings]}
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "selection.json").write_text(
