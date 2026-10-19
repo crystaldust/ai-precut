@@ -13,8 +13,8 @@
 | GL-05 | 本地服务无 Host/Origin/token 校验、POST 不验 Content-Type → 任意网页可跨站调用全部 API，DNS rebinding 可读数据 | `gui/server.py:323-330, 380-622` | fixed `624e979` |
 | GL-06 | 路径穿越：`version` 参数可在任意位置建目录写文件；镜头 `id` 可让 ffmpeg 覆盖任意 .mp4；`project` 未经校验传给 aicut | `gui/server.py:530-556` → `aicut.py:437-443, 543-545` | fixed `624e979` |
 | GL-07 | XSS：LLM / 转写内容直接 innerHTML；`confirm.html` 内联 JS 拼接未完整转义 | `gui/static/browse.html:116-175`；`index.html:186,419,429,498`；`confirm.html:92,99` | fixed `624e979` |
-| GL-08 | 「必留进片率 100%」无保证：话题预算为 0/用尽、`_trim`、exclude 都会丢 must_keep 段 | `pipeline/select.py:129-133, 173, 183-187` | open |
-| GL-09 | 必留/关键信息被静默丢弃：LLM 标注批次失败或漏 id 时该批句子被判废片且流程显示成功；待定超限时把必留话题段降为废片 | `pipeline/understand_text.py:167-181`；`pipeline/classify.py:56-59, 87-96` | open |
+| GL-08 | 「必留进片率 100%」无保证：话题预算为 0/用尽、`_trim`、exclude 都会丢 must_keep 段 | `pipeline/select.py:129-133, 173, 183-187` | fixed `ebabfcc` |
+| GL-09 | 必留/关键信息被静默丢弃：LLM 标注批次失败或漏 id 时该批句子被判废片且流程显示成功；待定超限时把必留话题段降为废片 | `pipeline/understand_text.py:167-181`；`pipeline/classify.py:56-59, 87-96` | fixed `ebabfcc` |
 | GL-10 | 导出剪映草稿崩溃：片头字幕卡与普通字幕同轨重叠抛 `SegmentOverlap`；`card.at` 超总时长产生负时长 | `pipeline/to_jianying.py:99-113`；`pipeline/build_documentary.py:103-108` | open |
 | GL-11 | 坏草稿照样交付：校验 FAIL 也打印 `[✓]`；打包版 `run_inprocess` 丢弃 `main()` 返回值 | `aicut.py:131-140`；`pipeline/proc.py:64-69` | open |
 | GL-12 | 打包版错误信息丢失：`int(exc.code)` 遇 `sys.exit("文字")` 抛 ValueError | `pipeline/proc.py:69` | open |
@@ -29,5 +29,5 @@
 | GL-21 | 中文/空格项目名视频全部 404（服务端未 percent-decode） | `gui/server.py` 路由；`gui/static/index.html:204,230,262,430` | fixed `624e979` |
 | GL-22 | 字幕框点不进（点击冒泡触发整表重绘）；任务失败后模态层无法关闭，只能杀 App | `gui/static/index.html:344-370, 435-468` | open |
 | GL-23 | 前端镜头 id 重复（删一个再加一个）→ 切片互相覆盖，成片重复内容 | `gui/static/index.html:388` | fixed `624e979` |
-| GL-24 | 画面过暗分支把必留话题段、标注失败的待定段直接判废片（与 GL-09 同类静默丢弃） | `pipeline/classify.py:82-83` | open |
-| GL-25 | build 不检查分镜表是否含全部必留段；GUI 手存的 `shots.json` 优先于 `shots-selected.json`，漏必留照样出片 | `aicut.py:531-536` | open |
+| GL-24 | 画面过暗分支把必留话题段、标注失败的待定段直接判废片（与 GL-09 同类静默丢弃） | `pipeline/classify.py:82-83` | fixed `ebabfcc` |
+| GL-25 | build 不检查分镜表是否含全部必留段；GUI 手存的 `shots.json` 优先于 `shots-selected.json`，漏必留照样出片 | `aicut.py:531-536` | fixed `ebabfcc` |
