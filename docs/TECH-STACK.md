@@ -17,7 +17,7 @@
 | 媒体处理 | **ffmpeg / ffprobe 静态二进制** | 8.1.3（LGPL 自建，`packaging/build_ffmpeg.sh`） | 静态包不依赖用户机器；通过 subprocess 调用；H.264 一律 `h264_videotoolbox`（`pipeline/encode.py`） |
 | 剪映草稿 | `pyJianYingDraft`（锁定版本） | 0.3.x | 生成 5.9 格式时间线，再适配各平台 |
 | 语音转写 | 火山引擎 MediaKit HTTPS API（`pipeline/cloud.py`，标准库 urllib 直连） | 协议同 mediakit-cli 0.2.1 | 云端 ASR，带时间戳与说话人；**唯一允许上传素材的地方（仅音轨）**；不依赖 Node |
-| 视频理解 / OCR | MediaKit（可选，未接入） | — | 按需启用，默认关闭以控成本 |
+| 视频理解 / OCR | 未接入 | — | PRD FR-2 列为 P2；画面帧不出本机（PRD §7），如做须本地实现 |
 | LLM | DeepSeek API（OpenAI 兼容） | — | 话题分段、信息类型、提问生成 |
 | 存储 | JSON 文件 | — | 单机、单用户、可 diff、可手改 |
 | 打包 | PyInstaller `onedir` | — | 目录式，启动快、不易被杀软误报 |
@@ -34,7 +34,7 @@
 | Python | 内嵌（PyInstaller 打包） | 用户不需要安装 |
 | ffmpeg / ffprobe | 随包附带静态二进制 | 约 40–90 MB，见交付调研 |
 | WebView | 系统自带 | macOS WKWebView；Win10/11 WebView2（缺失时安装器引导） |
-| 网络 | 可选 | 仅 ASR / LLM 需要；断网时降级为"本地规则 + 手改" |
+| 网络 | 处理素材时需要 | 仅 ASR / LLM 需要；断网时云端步骤明确失败可重试，浏览、裁决、改分镜、预览、导出离线可用（PRD §7「断网与服务失败」） |
 
 ---
 
@@ -88,13 +88,12 @@ uv run pyinstaller packaging/ai-cut.spec --noconfirm --clean
 
 ## 4. 外部服务
 
-| 服务 | 调用方式 | 凭证 | 失败时的降级 |
+| 服务 | 调用方式 | 凭证 | 失败时怎么办（PRD §7「断网与服务失败」） |
 |---|---|---|---|
-| MediaKit ASR | HTTPS：申请上传地址 → PUT 音轨 → `POST /api/v1/tools/asr-subtitles` → 轮询 `GET /api/v1/tasks/{id}` | `MEDIAKIT_API_KEY`（Keychain，Bearer） | 提示"未配置 Key"，转写用手改文稿 |
-| MediaKit 视频理解 / OCR | 同上 | 同上 | 默认关闭，不影响主链 |
-| DeepSeek API | HTTPS `POST /chat/completions` | `DEEPSEEK_API_KEY`（Keychain） | 退回规则模板（分类名、提问可为空） |
+| MediaKit ASR | HTTPS：申请上传地址 → PUT 音轨 → `POST /api/v1/tools/asr-subtitles` → 轮询 `GET /api/v1/tasks/{id}` | `MEDIAKIT_API_KEY`（Keychain，Bearer） | 缺 Key：处理前拦截并引导去设置（GL-02）；网络 / 服务失败：任务失败给中文原因，可重试；已提交任务续查、绑定音频指纹（GL-16） |
+| DeepSeek API | HTTPS `POST /chat/completions` | `DEEPSEEK_API_KEY`（Keychain） | 话题分段 / 逐句标注失败：任务失败，已标注部分落盘，重试只补失败句（GL-09）；内容摘要 / 决策问题失败：退回兜底并在界面标明（KI-22）；超出项目 token 预算（默认 300 万，`AI_CUT_LLM_BUDGET_TOKENS`）：停止调用并说明（KI-32） |
 
-**隐私边界**：只上传 16k 单声道音轨与抽帧图；原片永不出本机。
+**隐私边界**：只上传 16k 单声道音轨（→ 火山引擎 ASR）与转写文本（→ DeepSeek）；原片与画面帧永不出本机（PRD §7）。首次使用前须确认外发告知（GL-02）。
 
 ---
 
@@ -162,7 +161,7 @@ default-workspace/          ← 代码根目录（git 仓库）
 
 | 能力 | 由谁提供 | 本方案是否用 |
 |---|---|---|
-| 语音转字幕 / 视频理解 / OCR / 抽帧 | `byted-mediakit-video` | ✅ ASR 必用；其余可选 |
+| 语音转字幕 / 视频理解 / OCR / 抽帧 | `byted-mediakit-video` | ✅ ASR 协议参照（运行时 HTTPS 直连）；视频理解 / OCR 不用（画面帧不出本机） |
 | 音频转码 / 人声分离 / 语音端点 | `byted-mediakit-audio` | ⏳ 远场收音差时再启用 |
 | 裁剪 / 拼接 / 字幕压制 | `byted-mediakit-editing` | ❌ 直接用 ffmpeg，少一层依赖 |
 | 图片处理 / OCR | `byted-mediakit-image` | ❌ 不需要 |
