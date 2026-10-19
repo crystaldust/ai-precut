@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 from packaging.build_package import (  # noqa: E402
     rewrite_for_windows, write_installer, zip_pkg,
 )
+from pipeline import proc  # noqa: E402
 
 
 def _api_name(name: str) -> str:
@@ -86,13 +87,15 @@ def build_windows_package(timeline: Path, name: str, out_zip: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="aicut-export-") as tmp:
         tmp_root = Path(tmp)
         env = dict(os.environ, AI_CUT_DRAFT_ROOT=str(tmp_root / "draft_root"))
-        proc = subprocess.run(
-            [sys.executable, str(ROOT / "pipeline/to_jianying.py"), str(timeline),
-             "--name", _api_name(name), "--staging", str(tmp_root / "staging"),
-             "--dry-run"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", env=env)
-        if proc.returncode != 0:
-            raise RuntimeError(f"生成草稿失败：{proc.stdout[-800:]} {proc.stderr[-800:]}")
+        # 必须是新进程：to_jianying 在 import 时读 AI_CUT_DRAFT_ROOT；
+        # 打包后 sys.executable 是 App 本身，所以走 proc.module_cmd 自启（GL-14）
+        cmd = proc.module_cmd("pipeline.to_jianying", [
+            str(timeline), "--name", _api_name(name),
+            "--staging", str(tmp_root / "staging"), "--dry-run"])
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", env=env, stdin=subprocess.DEVNULL)
+        if result.returncode != 0:
+            raise RuntimeError(f"生成草稿失败：{result.stdout[-800:]} {result.stderr[-800:]}")
         draft_dir = tmp_root / "staging" / _api_name(name)
         if not draft_dir.exists():
             raise RuntimeError(f"没找到草稿目录：{draft_dir}")

@@ -210,7 +210,7 @@ def test_new_uses_equals_form(gui_server, recorder, preset_dir):
                          "title": "-片名"})
     assert status == 200
     assert recorder["run_aicut"] == [
-        ["new", "ok", "--material=-x.mp4", "--preset=测试预设", "--title=-片名"]]
+        ["new", "ok", "--no-input", "--material=-x.mp4", "--preset=测试预设", "--title=-片名"]]
 
 
 def test_new_title_defaults_to_name(gui_server, recorder, preset_dir):

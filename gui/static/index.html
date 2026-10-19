@@ -5,6 +5,8 @@
 <title>剪辑台</title>
 <meta name="aicut-token" content="__AICUT_TOKEN__">
 <script src="/static/common.js"></script>
+<script src="/static/jobs.js"></script>
+<script src="/static/settings.js"></script>
 <style>
   :root{
     --bg:#16181d; --panel:#1e2128; --panel2:#252932; --line:#2f3440;
@@ -107,6 +109,13 @@
   .sticky video{width:200px;max-height:120px;border-radius:8px}
   .sub-edit{min-height:30px;font-size:12.5px}
   td{padding:4px 8px}
+  .job-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .key-row{display:flex;gap:8px}
+  .key-row input{flex:1}
+  .key-status{margin-bottom:4px}
+  .consent-flows{line-height:2;padding-left:18px}
+  .ver-export{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  #btnSettings{margin-top:10px}
 </style>
 </head>
 <body>
@@ -115,6 +124,7 @@
     <div class="brand">剪辑台<small>素材 → 粗剪 → 剪映</small></div>
     <button class="primary" onclick="openNew()">＋ 新建项目</button>
     <ul id="projects"></ul>
+    <button class="ghost" id="btnSettings" onclick="openSettings()"></button>
   </aside>
 
   <main>
@@ -171,11 +181,8 @@ const COPY_TARGET_BUTTON = '按这个时长重新选段';
 const COPY_TARGET_LATER = '先不改';
 const COPY_TARGET_MANUAL_NOTE = '你已经手动编辑过分镜表，重新选段的结果不会覆盖它，只会更新「浏览素材」里的建议';
 const COPY_NEW_TARGET_LABEL = '想剪成多长（秒）· 预设只是默认值';
-const COPY_RESELECT_DONE = '已按新时长重新选段';
 const COPY_WARNBAR_TITLE = '需要你留意';
-const COPY_JOB_DONE_WITH_WARNINGS = '完成了，但有需要你留意的提示（上面以 [!] 开头的行），看完再关';
-const COPY_JOB_ACK = '知道了';
-const JOB_TITLES = {prepare:'正在处理素材', build:'正在生成成片', select:'正在重新选段'};
+/* 任务弹窗文案在 /static/jobs.js，设置与外发告知文案在 /static/settings.js */
 
 /* ---------------- 基础 ---------------- */
 function toast(msg, ms=1800){
@@ -185,7 +192,9 @@ function toast(msg, ms=1800){
 async function api(path, opt){
   const r = await fetch(path, opt);
   const j = await r.json().catch(()=>({}));
-  if(!r.ok) throw new Error(j.error || ('请求失败 '+r.status));
+  if(!r.ok){  // 状态码和响应体挂在 Error 上：任务弹窗要据此区分 409 冲突 / 缺告知 / 缺 Key
+    const e = new Error(j.error || ('请求失败 '+r.status)); e.status = r.status; e.data = j; throw e;
+  }
   return j;
 }
 function fmt(sec){
@@ -241,6 +250,7 @@ async function refresh(){
   $('#shotCount').textContent = state.shots.length? `(${state.shots.length})` : '';
   $('#btnPrepare').textContent = d.stages.filter(s=>s.done).length>=4 ? '① 重新处理（会跳过已完成）' : '① 处理素材';
   renderTab();
+  attachRunningJob(d.job);
 }
 
 function renderWarnbar(list){
@@ -401,7 +411,12 @@ function viewShots(){
     <p class="hint">选中一行 → 用上面的播放器定位 → 点「设为入点/出点」。改动会自动保存。</p>`;
 }
 function goScript(){ state.tab='script'; document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x.dataset.tab==='script')); renderTab(); }
-function pick(i){ state.sel = i; renderTab(); if(state.shots[i]) seekNoSwitch(state.shots[i].in); }
+// GL-22：选中行只切高亮，不重绘整表，字幕框才不会在点进去时失焦
+function pick(i){
+  state.sel = i;
+  document.querySelectorAll('#body tbody tr').forEach((tr, j)=>tr.classList.toggle('sel', j===i));
+  if(state.shots[i]) seekNoSwitch(state.shots[i].in);
+}
 function seekNoSwitch(t){ ['#pv','#pv2'].forEach(s=>{ const v=$(s); if(v) v.currentTime = t; }); }
 let saveTimer=null;
 function edit(i, key, val){ state.shots[i][key]=val; scheduleSave(); }
@@ -471,54 +486,15 @@ function viewVersions(){
   const vs = state.data.versions || [];
   if(!vs.length) return `<div class="empty">还没有出过片<br><br>
     <button class="primary" onclick="startJob('build')">生成第一版</button></div>`;
-  return vs.map(v=>`<div class="ver">
+  return vs.map((v, i)=>`<div class="ver">
     <h3>${esc(v.name)} <span class="hint">${num(v.shots)} 镜 · ${fmtLong(num(v.duration))} · ${esc(v.mtime)}</span></h3>
-    <div class="m">剪映草稿名：<b>${esc(v.draft)}</b></div>
+    <div class="m">${esc(COPY_MAC_DRAFT)}<b>${esc(v.draft)}</b></div>
+    ${versionExportHtml(v, i)}
     ${v.preview? `<video src="/media/${encodeURIComponent(state.project)}/preview/${encodeURIComponent(v.name)}" controls preload="metadata"></video>` : '<p class="hint">这一版只有工程，没有预览片</p>'}
   </div>`).join('');
 }
 
-/* ---------------- 任务 ---------------- */
-function startJob(task, extra){
-  if(!state.project){ toast('先选项目'); return; }
-  if(task==='build' && !state.shots.length){ toast('分镜表是空的，先生成镜头'); return; }
-  const body = {project: state.project, task, ...(extra||{})};
-  showModal(JOB_TITLES[task] || task, '<div class="log" id="log">准备中…</div>');
-  api('/api/job', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
-    .then(({job_id})=> pollJob(job_id, task))
-    .catch(e=>{ logLine('[错误] '+e.message); });
-}
-function pollJob(id, task){
-  const tick = async ()=>{
-    try{
-      const j = await api('/api/job/'+id);
-      const el = $('#log');
-      if(el) el.textContent = j.log.join('\n') || '…';
-      el && (el.scrollTop = el.scrollHeight);
-      if(j.status==='running'){ setTimeout(tick, 900); return; }
-      if(j.status==='done'){
-        logLine('\n[完成]');
-        const warned = (j.log||[]).some(l=>String(l).startsWith('[!]'));
-        setTimeout(async ()=>{
-          await refresh();
-          // 必留合计超过目标：任务结束后自动问一次想剪成多长
-          if(task!=='build' && state.data?.selection?.over_target){ openTarget(true); return; }
-          // 有警告：日志留着让人看完，不自动关
-          if(warned){ logLine(COPY_JOB_DONE_WITH_WARNINGS); showJobAck(); return; }
-          closeModal();
-          toast(task==='build'?'新版本已生成':(task==='select'?COPY_RESELECT_DONE:'处理完成'));
-        }, 700);
-      } else {
-        logLine('\n[失败] 看上面的报错；也可以把这段日志发给开发者');
-      }
-    }catch(e){ logLine('[连接中断] '+e.message); }
-  };
-  setTimeout(tick, 500);
-}
-function showJobAck(){
-  $('#modalBody').insertAdjacentHTML('beforeend',
-    `<button class="primary" style="margin-top:10px" onclick="closeModal()">${esc(COPY_JOB_ACK)}</button>`);
-}
+/* ---------------- 任务弹窗：见 /static/jobs.js ---------------- */
 function logLine(t){ const el=$('#log'); if(el){ el.textContent += (el.textContent?'\n':'')+t; el.scrollTop=el.scrollHeight; } }
 function showModal(title, html){
   $('#modalTitle').textContent = title;
@@ -526,6 +502,14 @@ function showModal(title, html){
   $('#mask').classList.add('on');
 }
 function closeModal(){ $('#mask').classList.remove('on'); }
+// 与其它弹窗一致：Esc / 点遮罩空白处关闭（任务运行中除外，见 jobs.js 的 modalDismissable）
+document.addEventListener('keydown', e=>{
+  if(e.key === 'Escape' && $('#mask').classList.contains('on') && modalDismissable()) closeModal();
+});
+$('#mask').addEventListener('click', e=>{
+  const mask = $('#mask');
+  if(e.target === mask && modalDismissable()) closeModal();
+});
 
 /* ---------------- 生成成片弹窗 ---------------- */
 function openBuild(){
@@ -629,11 +613,13 @@ function openBrowse(){
 async function openFolder(){ await api('/api/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project:state.project, target:'project'})}); }
 async function openJianying(){ await api('/api/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project:state.project, target:'jianying'})}); }
 
+$('#btnSettings').textContent = COPY_SETTINGS_ENTRY;
 loadProjects().then(()=>{
   const h = new URLSearchParams(location.hash.slice(1));
   const p = h.get('project');
   if(p) selectProject(p).then(()=>{ const t=h.get('tab'); if(t) switchTab(t); });
 });
+checkFirstRun();
 </script>
 </body>
 </html>

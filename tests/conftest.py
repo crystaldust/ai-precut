@@ -1,7 +1,8 @@
-"""测试脚手架：剪映草稿库隔离（autouse）+ GUI 服务（随机端口、PROJECTS 指向 tmp_path）。"""
+"""测试脚手架：剪映草稿库 / 凭证隔离（autouse）+ GUI 服务（随机端口、PROJECTS 指向 tmp_path）。"""
 import http.client
 import json
 import threading
+import time
 from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
 
@@ -14,16 +15,60 @@ def _isolate_jianying(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_CUT_DRAFT_ROOT", str(tmp_path / "jy_guard_root"))
 
 
+@pytest.fixture(autouse=True)
+def _isolate_secrets(tmp_path, monkeypatch):
+    """任何测试都不许碰真实钥匙串和 ~/.config/ai-cut：凭证与告知记录一律落在 tmp。"""
+    from pipeline import secrets
+    monkeypatch.setenv("AI_CUT_SECRETS", "file")
+    monkeypatch.setenv("AI_CUT_CONFIG_DIR", str(tmp_path / "cfg_guard"))
+    # 本机环境变量 / 旧版 key 文件里的真实 Key 不能漏进测试（开发机与 CI 结果要一致）
+    for var in secrets.ENV_KEYS.values():
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(secrets, "LEGACY_FILES", {}, raising=False)
+
+
+@pytest.fixture
+def no_keys():
+    """显式声明「本测试不带任何 Key」；隔离本身已由 _isolate_secrets 统一完成。"""
+    from pipeline import secrets
+    return secrets
+
+
+@pytest.fixture
+def consented():
+    """已阅读数据外发说明（记录写在本测试的临时配置目录里）。"""
+    from pipeline import consent
+    consent.accept()
+    return consent
+
+
+def _stop_jobs(jobs, timeout=10.0):
+    """收尾：取消还在跑的任务并等它退出，免得串到下一个测试（全局互斥）。"""
+    for jid in [j for j, v in list(jobs.JOBS.items()) if v["status"] == "running"]:
+        jobs.cancel_job(jid)
+    deadline = time.time() + timeout
+    while time.time() < deadline and jobs.active_job() is not None:
+        time.sleep(0.05)
+    for job in list(jobs.JOBS.values()):  # 等任务线程真正收尾，再清表
+        thread = job.get("thread")
+        if thread is not None and thread.is_alive():
+            thread.join(max(0.0, deadline - time.time()))
+    with jobs.JOBS_LOCK:
+        jobs.JOBS.clear()
+
+
 @pytest.fixture
 def gui_server(tmp_path, monkeypatch):
-    from gui import server
+    from gui import jobs, server
     monkeypatch.setattr(server, "PROJECTS", tmp_path)
+    _stop_jobs(jobs)
     srv = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
     threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.01},
                      daemon=True).start()
     try:
         yield SimpleNamespace(module=server, port=srv.server_address[1], root=tmp_path)
     finally:
+        _stop_jobs(jobs)
         srv.shutdown()
         srv.server_close()
 

@@ -14,6 +14,8 @@ BIN = ROOT / "vendor" / "bin"
 
 hidden = [
     "aicut",
+    "gui.jobs", "gui.settings",
+    "pipeline.asr_state", "pipeline.consent", "pipeline.readiness",
     "pipeline.build_documentary", "pipeline.classify", "pipeline.cloud",
     "pipeline.export_draft", "pipeline.format_transcript", "pipeline.junk_detect",
     "pipeline.llm", "pipeline.media_io",

@@ -57,3 +57,62 @@ def test_status_masks(file_env):
     assert st["deepseek"]["configured"] is True
     assert "abcdefghijk" not in json.dumps(st)
     assert st["mediakit"]["configured"] is False
+
+
+# ---------------------------------------------------------------- M4 审查修复 2（LOW-10，KI-28 的创建权限部分）
+def test_cred_temp_file_created_0600_with_unique_name(file_env, monkeypatch):
+    import os
+    import stat as st
+    seen = []
+    real_replace = os.replace
+
+    def spy(src, dst):
+        seen.append((os.path.basename(src), st.S_IMODE(os.stat(src).st_mode)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(secrets.os, "replace", spy)
+    secrets.set("deepseek", "sk-one-123456")
+    secrets.set("mediakit", "AKLT-two-123456")
+    assert [m for _, m in seen] == [0o600, 0o600]  # 一创建就是 0600，没有可读窗口
+    names = [n for n, _ in seen]
+    assert len(set(names)) == 2 and "credentials.tmp" not in names
+
+
+def test_cred_write_failure_leaves_no_temp(file_env, monkeypatch):
+    def boom(*a):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(secrets.os, "replace", boom)
+    with pytest.raises(OSError):
+        secrets.set("deepseek", "sk-one-123456")
+    assert [p.name for p in file_env.iterdir() if p.name.endswith(".tmp")] == []
+
+
+class StickyKeyring:
+    """delete_password 静默失败（钥匙串被锁 / 拒绝）的钥匙串。"""
+
+    def __init__(self):
+        self.store = {}
+
+    def set_password(self, svc, k, v):
+        self.store[k] = v
+
+    def get_password(self, svc, k):
+        return self.store.get(k)
+
+    def delete_password(self, svc, k):
+        raise RuntimeError("locked")
+
+
+def test_delete_raises_when_keychain_still_has_key(file_env, monkeypatch):
+    kr = StickyKeyring()
+    monkeypatch.setattr(secrets, "_keyring", lambda: kr)
+    secrets.set("deepseek", "sk-sticky-12345")
+    with pytest.raises(secrets.SecretDeleteError):
+        secrets.delete("deepseek")
+
+
+def test_delete_ok_when_gone(file_env):
+    secrets.set("deepseek", "sk-gone-123456")
+    secrets.delete("deepseek")
+    assert secrets.get("deepseek") is None

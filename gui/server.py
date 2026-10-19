@@ -17,12 +17,12 @@ import json
 import mimetypes
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
 import time
 import traceback
-import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,6 +32,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
 from pipeline import media_io, notices, proc, review, schema, select, style  # noqa: E402
+from gui import jobs, settings  # noqa: E402
+from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
+    JOB_COMMANDS, JOBS, JOBS_LOCK, JobConflict, run_aicut, start_job,
+)
 
 proc.ensure_bundled_path()  # 打包后优先用 App 自带的 ffmpeg
 PROJECTS = proc.user_data_root()
@@ -59,38 +63,13 @@ PAGE_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
             "base-uri 'none'; frame-ancestors 'none'")
 MAX_BODY_BYTES = 2 * 1024 * 1024  # 请求体上限：分镜表再大也到不了 2 MB
 REQUEST_TIMEOUT_S = 60            # 单次 socket 读写超时，慢速/半开连接不会永久占住线程
+NO_EXPORT_MSG = "这一版还没有导出 Windows 剪映包"
 INTERNAL_ERROR_MSG = "服务内部错误，请重试；如果反复出现请把终端里的报错发给开发"
-
-
-def run_aicut(args: list[str]) -> tuple[int, str]:
-    """执行一条 aicut 命令；打包后必须同进程，不能再拉起 App 自身。"""
-    if proc.FROZEN:
-        import contextlib
-        import io
-        from aicut import run_cli
-        buf = io.StringIO()
-        old_argv = sys.argv
-        try:
-            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                code = run_cli(args)
-        except Exception as exc:  # noqa: BLE001
-            code, _ = 1, buf.write(f"[错误] {exc}\n")
-        finally:
-            sys.argv = old_argv
-        return code, buf.getvalue()
-    r = subprocess.run([PY, str(AICUT), *args], cwd=str(ROOT), stdin=subprocess.DEVNULL,
-                       capture_output=True, text=True, encoding="utf-8", errors="replace")
-    return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 
 def set_picker(fn) -> None:
     global PICKER
     PICKER = fn
-AICUT = ROOT / "aicut.py"
-PY = sys.executable
-
-JOBS: dict[str, dict] = {}
-JOBS_LOCK = threading.Lock()
 
 
 # ------------------------------------------------------------------ 工具
@@ -166,6 +145,7 @@ def project_state(name: str) -> dict:
             "duration": round(total, 1),
             "draft": f"{cfg.get('title', name)}_{d.name}",
             "mtime": time.strftime("%m-%d %H:%M", time.localtime(d.stat().st_mtime)),
+            **jobs.windows_export_state(pdir, d.name, cfg.get("title")),
         })
     manual = jload(pdir / "shots.json", {}).get("shots", [])
     selected = jload(work / "shots-selected.json", {}).get("shots", [])
@@ -183,6 +163,7 @@ def project_state(name: str) -> dict:
         "material_duration": (jload(work / "materials.json", {}).get("items") or [{}])[0].get("duration", 0),
         "has_proxy": media_io.complete_or_adopt(work / "proxy.mp4"),
         "has_transcript": (work / "transcript.md").exists(),
+        "job": jobs.project_job(name),  # 切回正在跑任务的项目时，界面据此重新显示进度
     }
 
 
@@ -254,91 +235,6 @@ def confirm_payload(name: str) -> dict:
     return {"questions": q["questions"], "fallback": q.get("fallback", False),
             "summary": summary, "answers": answers.get("answers", {}),
             "confirmed": answers.get("confirmed", False)}
-
-
-# ------------------------------------------------------------------ 任务
-JOB_COMMANDS = {"prepare": ["prepare"], "build": ["build"], "select": ["select"]}
-
-
-def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
-    if task not in JOB_COMMANDS:  # 先校验再登记，未知任务不留幽灵 running
-        raise ValueError("未知任务")
-    argv = [*JOB_COMMANDS[task], name, *(extra or [])]
-    job_id = uuid.uuid4().hex[:8]
-    with JOBS_LOCK:
-        JOBS[job_id] = {"status": "running", "log": [], "exit": None,
-                        "started": time.time(), "task": task, "project": name}
-
-    if proc.FROZEN:
-        class _JobLog:
-            """把 stdout 逐行灌进任务日志，界面才能实时看到进度。"""
-            def __init__(self, jid: str) -> None:
-                self.jid = jid
-                self.buf = ""
-                self.encoding = "utf-8"
-
-            def write(self, chunk: str) -> int:
-                if not chunk:
-                    return 0
-                self.buf += chunk
-                *lines, self.buf = self.buf.split("\n")
-                if lines:
-                    with JOBS_LOCK:
-                        JOBS[self.jid]["log"].extend(lines)
-                return len(chunk)
-
-            def flush(self) -> None:
-                if self.buf:
-                    with JOBS_LOCK:
-                        JOBS[self.jid]["log"].append(self.buf)
-                    self.buf = ""
-
-        def worker_frozen():
-            import contextlib
-            from aicut import run_cli
-            sink = _JobLog(job_id)
-            old_argv = sys.argv
-            try:
-                with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
-                    code = run_cli(argv)
-            except Exception as exc:  # noqa: BLE001
-                code = -1
-                sink.write(f"[错误] {exc}\n")
-            finally:
-                sink.flush()
-                sys.argv = old_argv
-            with JOBS_LOCK:
-                JOBS[job_id]["status"] = "done" if code == 0 else "failed"
-                JOBS[job_id]["exit"] = code
-                JOBS[job_id]["log"].append(f"[退出码] {code}")
-
-        threading.Thread(target=worker_frozen, daemon=True).start()
-        return job_id
-
-    def worker():
-        env = os.environ.copy()
-        env["PYTHONUNBUFFERED"] = "1"
-        env["PATH"] = "/opt/homebrew/bin:" + env.get("PATH", "")
-        try:
-            proc = subprocess.Popen([PY, str(AICUT), *argv], cwd=str(ROOT),
-                                    stdin=subprocess.DEVNULL,  # input() 不能卡住任务
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, bufsize=1, env=env)
-            for line in proc.stdout:
-                with JOBS_LOCK:
-                    JOBS[job_id]["log"].append(line.rstrip())
-            code = proc.wait()
-        except Exception as e:  # noqa: BLE001
-            code = -1
-            with JOBS_LOCK:
-                JOBS[job_id]["log"].append(f"[错误] {e}")
-        with JOBS_LOCK:
-            JOBS[job_id]["status"] = "done" if code == 0 else "failed"
-            JOBS[job_id]["exit"] = code
-            JOBS[job_id]["log"].append(f"[退出码] {code}")
-
-    threading.Thread(target=worker, daemon=True).start()
-    return job_id
 
 
 # ------------------------------------------------------------------ HTTP
@@ -502,6 +398,25 @@ class Handler(BaseHTTPRequestHandler):
                     except (BrokenPipeError, ConnectionResetError):
                         return
 
+    # ---------- 任务（GL-17：互斥 / 取消；GL-02：处理素材前置检查）
+    def _start_job(self, body: dict) -> None:
+        name, task = body.get("project", ""), body.get("task", "")
+        try:
+            pdir = existing_project(name)
+            title = (jload(pdir / "project.json", {}) or {}).get("title")
+            extra = jobs.job_extra(pdir, task, body, title)
+            if task == "prepare":
+                settings.check_prepare_ready(pdir)
+            job_id = start_job(name, task, extra)
+        except JobConflict as e:  # 含 StaleJob（job_id 为 None：上次留下的进程，界面无法接管）
+            return self._json({"error": str(e), "job_id": e.job_id, "task": e.task,
+                               "project": e.project}, 409)
+        except settings.PrepareBlocked as e:
+            return self._json({"error": str(e), "need": e.need, "missing": e.missing}, 409)
+        except (ValueError, FileNotFoundError) as e:
+            return self._json({"error": str(e)}, 400)
+        return self._json({"job_id": job_id})
+
     # ---------- 路由
     def _route_get(self) -> None:
         u = urlparse(self.path)
@@ -540,6 +455,9 @@ class Handler(BaseHTTPRequestHandler):
                 "ffmpeg": ff, "ffmpeg_version": ver,
                 "ffprobe": _shutil.which("ffprobe"),
             })
+
+        if (hit := settings.handle_get(p)) is not None:
+            return self._json(hit[1], hit[0])
 
         if p == "/api/projects":
             items = []
@@ -604,13 +522,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(e)}, 400)
 
         if p.startswith("/api/job/"):
-            job_id = p.rsplit("/", 1)[-1]
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                if not job:
-                    return self._json({"error": "job not found"}, 404)
-                return self._json({"status": job["status"], "log": job["log"],
-                                   "exit": job["exit"], "task": job["task"]})
+            view = jobs.job_view(p.rsplit("/", 1)[-1])
+            if view is None:
+                return self._json({"error": "job not found"}, 404)
+            return self._json(view)
 
         if p.startswith("/media/"):
             # /media/<project>/proxy  |  /media/<project>/preview/v2
@@ -644,6 +559,9 @@ class Handler(BaseHTTPRequestHandler):
         except BadRequest as exc:
             return self._json({"error": str(exc)}, exc.code)
 
+        if (hit := settings.handle_post(p, body)) is not None:
+            return self._json(hit[1], hit[0])
+
         if p == "/api/new":
             try:
                 name = safe_name(body.get("name", ""))  # 首尾空格直接拒绝，不偷偷 strip
@@ -659,7 +577,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(preset, str) or preset not in preset_names():
                 return self._json({"error": f"未知预设：{preset}"}, 400)
             # --x=value 形式：以 - 开头的值不会被 argparse 当成选项
-            args = ["new", name, f"--material={material}", f"--preset={preset}",
+            # GL-20：--no-input，绝不停在 input() 上
+            args = ["new", name, "--no-input", f"--material={material}", f"--preset={preset}",
                     f"--title={title}"]
             if body.get("target") is not None:  # GUI 总是传，CLI 就不会停在 input() 上
                 try:
@@ -707,23 +626,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "count": len(clean)})
 
         if p == "/api/job":
-            name = body.get("project", "")
-            task = body.get("task", "")
-            extra = []
+            return self._start_job(body)
+
+        if p.startswith("/api/job/") and p.endswith("/cancel"):
             try:
-                existing_project(name)
-                if task == "build":
-                    v = body.get("version")
-                    if v:
-                        extra += ["--version", schema.check_version(v)]
-                    if body.get("no_draft"):
-                        extra.append("--no-draft")
-                if task == "select" and body.get("target") is not None:
-                    extra += ["--target", str(schema.check_target_duration(body["target"]))]
-                job_id = start_job(name, task, extra)
-            except (ValueError, FileNotFoundError) as e:
-                return self._json({"error": str(e)}, 400)
-            return self._json({"job_id": job_id})
+                return self._json({"ok": jobs.cancel_job(p[len("/api/job/"):-len("/cancel")])})
+            except KeyError:
+                return self._json({"error": "job not found"}, 404)
 
         if p == "/api/calibrate":
             try:
@@ -791,7 +700,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(exc)}, 404)
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
-            if target == "jianying":
+            if target == "export":  # GL-14：在访达中选中这一版的 Windows 包
+                try:
+                    version = schema.check_version(body.get("version"))
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
+                title = (jload(pdir / "project.json", {}) or {}).get("title")
+                zip_path = jobs.windows_zip(pdir, version, title)
+                if not zip_path.is_file():
+                    return self._json({"error": NO_EXPORT_MSG}, 404)
+                subprocess.run(["open", "-R", str(zip_path)], capture_output=True)
+            elif target == "jianying":
                 subprocess.run(["open", "-a", "/Applications/VideoFusion-macOS.app"],
                                capture_output=True)
             else:
@@ -799,6 +718,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
 
         return self._json({"error": "not found"}, 404)
+
+
+def report_stale_job() -> None:
+    """启动时发现上次留下的任务还在跑：明确告诉用户，而不是悄悄允许再起一个。"""
+    stale = jobs.stale_job()
+    if stale is not None:
+        print("[!] " + jobs.STALE_JOB_MSG.format(
+            project=stale.get("project", "?"),
+            task=jobs.TASK_LABELS.get(stale.get("task"), stale.get("task", "?")),
+            pid=stale["pid"]), file=sys.stderr)
 
 
 def serve_in_background(start_port: int = 8765) -> tuple[ThreadingHTTPServer, str]:
@@ -837,12 +766,18 @@ def main() -> None:
     url = f"http://127.0.0.1:{port}/"
     print(f"剪辑台已启动：{url}")
     print("关闭这个窗口即退出。")
+    report_stale_job()
     if args.open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    # 终端窗口被关 / kill 时也要走到 finally，停掉后台任务（不留孤儿进程继续计费）
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGHUP, lambda *_: sys.exit(0))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\n已退出")
+    finally:
+        jobs.shutdown_all()
 
 
 if __name__ == "__main__":

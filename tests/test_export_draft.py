@@ -93,3 +93,45 @@ def test_package_success_leaves_only_zip(tmp_path):
     out = tmp_path / "out" / "Pkg.zip"
     ex.package_draft(fake_draft(tmp_path), "Test_Pack", out)
     assert _leftovers(out.parent) == ["Pkg.zip"]  # 用户输出目录里不放 .done 标记
+
+
+# ---------------------------------------------------------------- GL-14：打包版也能导出
+def _capture_run(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"], seen["kw"] = argv, kw
+        return type("R", (), {"returncode": 1, "stdout": "boom", "stderr": ""})()
+
+    monkeypatch.setattr(ex.subprocess, "run", fake_run)
+    return seen
+
+
+def test_build_uses_module_cmd_when_frozen(tmp_path, monkeypatch):
+    from pipeline import proc
+    tl = tmp_path / "timeline.json"
+    tl.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(proc, "FROZEN", True)
+    seen = _capture_run(monkeypatch)
+    with pytest.raises(RuntimeError, match="生成草稿失败"):
+        ex.build_windows_package(tl, "片名_v1", tmp_path / "o.zip")
+    assert seen["argv"][1:3] == ["--aicut-module", "pipeline.to_jianying"]
+    assert seen["kw"]["stdin"] is ex.subprocess.DEVNULL
+    root = seen["kw"]["env"]["AI_CUT_DRAFT_ROOT"]
+    assert root.startswith(tempfile_root()) and "aicut-export-" in root
+
+
+def test_build_dev_runs_to_jianying_script(tmp_path, monkeypatch):
+    from pipeline import proc
+    tl = tmp_path / "timeline.json"
+    tl.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(proc, "FROZEN", False)
+    seen = _capture_run(monkeypatch)
+    with pytest.raises(RuntimeError):
+        ex.build_windows_package(tl, "x", tmp_path / "o.zip")
+    assert seen["argv"][1].endswith("to_jianying.py")
+
+
+def tempfile_root():
+    import tempfile
+    return tempfile.gettempdir()

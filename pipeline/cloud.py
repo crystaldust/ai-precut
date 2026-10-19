@@ -17,7 +17,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pipeline import schema, secrets
+from pipeline import asr_state, schema, secrets
+
+BACKEND = "mediakit-cli"  # GL-01 换 HTTP 后改成新值，旧的续查状态自动作废
+STATE_SAVE_FAILED = "[!] 没能记下云端任务号（{exc}），这次中断后重跑会重新提交"
 
 NETWORK_HINTS = (
     "timeout", "timed out", "connection", "reset by peer", "temporarily",
@@ -26,7 +29,17 @@ NETWORK_HINTS = (
 
 
 class CloudError(RuntimeError):
-    """云端调用的终态失败。"""
+    """云端调用失败。
+
+    retryable=True：超时 / 网络类，重跑可以接着查同一个任务。
+    terminal=True：云端明确说这个任务已经失败 / 取消（只有这种才清掉续查状态，GL-16）；
+    鉴权失败、找不到 mediakit-cli、返回不是 JSON 都不是任务本身的终态，任务号要留着。
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False, terminal: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+        self.terminal = terminal
 
 
 def _now() -> str:
@@ -79,7 +92,7 @@ class CloudClient:
                     raise last
             if attempt < self.retries:
                 self.sleep(self.backoff[min(attempt, len(self.backoff) - 1)])
-        raise CloudError(f"重试 {self.retries} 次仍失败：{last}")
+        raise CloudError(f"重试 {self.retries} 次仍失败：{last}", retryable=True)
 
     @staticmethod
     def _json(stdout: str) -> dict:
@@ -133,54 +146,43 @@ class CloudClient:
             if status in ("completed", "success", "succeeded"):
                 return data
             if status in ("failed", "error", "canceled", "cancelled"):
-                raise CloudError(f"任务失败：{data.get('message') or status}")
+                raise CloudError(f"任务失败：{data.get('message') or status}", terminal=True)
             if time.monotonic() > deadline:
                 raise CloudError(
                     f"任务超时（已等待 {total_timeout / 60:.0f} 分钟，最后状态 {last_status}）："
-                    f"{task_id}。任务没有丢，重跑会接着查这个任务，不会重新提交。")
+                    f"{task_id}。任务没有丢，重跑会接着查这个任务，不会重新提交。",
+                    retryable=True)
             self.sleep(interval)
-
-    # -- 任务续跑：避免超时/崩溃后重复提交、重复付费 --------------
-    @staticmethod
-    def _task_file(workdir: Path) -> Path:
-        return Path(workdir) / "asr_task.json"
-
-    def _load_task(self, workdir: Path) -> str | None:
-        path = self._task_file(workdir)
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            tid = data.get("task_id")
-            age = time.time() - float(data.get("at", 0))
-            if tid and age < 86400 * 3:
-                return tid
-        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-            pass
-        return None
-
-    def _save_task(self, workdir: Path, task_id: str) -> None:
-        path = self._task_file(workdir)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"task_id": task_id, "at": time.time()},
-                                   ensure_ascii=False, indent=2), encoding="utf-8")
 
     def transcribe(self, audio: Path, workdir: Path,
                    *, duration_s: float = 0.0) -> dict:
-        """提交 + 等待，返回字幕 JSON；失败落盘。断点续跑复用已有 task_id。"""
+        """提交 + 等待，返回字幕 JSON；失败落盘。断点续跑复用同一音频的 task_id（GL-16）。"""
         total_timeout = max(900.0, duration_s * 3 + 600)
-        task_id = self._load_task(workdir)
+        task_id = asr_state.load(workdir, audio, BACKEND)
         try:
             if task_id is None:
                 task_id = self.submit_asr(audio)
-                self._save_task(workdir, task_id)
+                _remember_task(workdir, audio, task_id)
             else:
                 print(f"[·] 续查上次的子任务：{task_id}")
             data = self.wait_task(task_id, total_timeout)
         except CloudError as exc:
+            if exc.terminal:  # 云端判任务终态失败：下次重新提交，而不是 3 天内永远失败
+                asr_state.clear(workdir)
             record_failure(workdir, "asr", str(exc), {"audio": str(audio)})
             raise
         # aicut 以"存在"判转写完成，必须原子写（GL-15）
         schema.write_json(Path(workdir) / "transcript_raw.json", data)
+        asr_state.clear(workdir)  # 结果已落盘，任务号用完即弃
         return data
+
+
+def _remember_task(workdir: Path, audio: Path, task_id: str) -> None:
+    """记下任务号供中断后续查；记不下来不影响这次转写，只是失去续查能力。"""
+    try:
+        asr_state.save(workdir, audio, BACKEND, task_id)
+    except OSError as exc:
+        print(STATE_SAVE_FAILED.format(exc=exc))
 
 
 def record_failure(workdir: Path, stage: str, error: str, context: dict) -> None:

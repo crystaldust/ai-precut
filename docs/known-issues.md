@@ -107,3 +107,10 @@
 | KI-63 | `.partial-*` 临时文件与成品同目录，未来对 `clips/*.mp4` 的 glob 会读到半成品；`_clear_stale_partials` 会删并发写者的临时文件 | `pipeline/media_io.py` | open |
 | KI-64 | `zip_pkg` 打印的是临时 zip 路径（`.xxx.partial-….zip`），易误导 | `packaging/build_package.py`（`zip_pkg`） | open |
 | KI-65 | 旧项目 wav 认领：无标记的旧 wav 中断残片可能被 ffprobe 按大小估出正时长而被认领 | `pipeline/media_io.py`（`complete_or_adopt`） | open |
+| KI-66 | 素材无法被 ffprobe 识别时 `cmd_ingest` 抛 `KeyError: 'format'`，用户看到 traceback | `aicut.py`（`cmd_ingest`） | open |
+| KI-67 | `secrets.mask` 长度 >8 即显示前 4 后 4，9–12 位 Key 几乎全暴露 | `pipeline/secrets.py`（`mask`） | open |
+| KI-68 | `JOBS` 与任务日志从不清理，长时间使用内存持续增长 | `gui/jobs.py`（`JOBS`） | open |
+| KI-69 | `cmd_new` 判空目录与建目录之间有竞争窗口（GUI 有全局互斥，影响低） | `aicut.py`（`cmd_new`） | open |
+| KI-70 | 第三方错误文本（mediakit-cli 输出前 400 字、LLM 响应体前 300 字）未按已知 Key 脱敏就进任务日志与 `failed.json`（纵深防御） | `pipeline/cloud.py`；`pipeline/llm.py` | open |
+| KI-71 | 上次退出遗留的后台任务只在点按钮时以 409 出现，界面不主动提示 | `gui/server.py`（`report_stale_job`）；`gui/static/index.html` | open |
+| KI-72 | 看门狗依赖系统 `pgrep`，缺失时跳过「先正常退出」直接 SIGKILL 整组 | `pipeline/proc.py`（`start_parent_watchdog`） | open |

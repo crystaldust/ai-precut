@@ -31,8 +31,8 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (build_documentary, classify, cloud, export_draft, media_io, proc,
-                      questions, review, schema, secrets, select, style, summarize,
+from pipeline import (build_documentary, classify, cloud, consent, export_draft, media_io, proc,
+                      questions, readiness, review, schema, secrets, select, style, summarize,
                       to_jianying, understand_audio, understand_text, understand_visual)
 from pipeline.llm import LLMError
 
@@ -72,6 +72,9 @@ CLIP_VF = ("scale=1080:1920:force_original_aspect_ratio=decrease,"
 MEDIA_SUFFIXES = (".wav", ".mp4")  # 这些产物以完成标记判定（GL-15；旧项目可被认领），其余看存在
 DRAFT_LOG_LINES = 40  # 草稿失败时打印的日志行数（按行截，不按字符，KI-60）
 DRAFT_NOT_INSTALLED = "草稿未安装（已回滚，剪映草稿库保持原样）"
+PREPARE_KEYS_MISSING = ("缺少 {names}：在剪辑台「⚙ 设置 · API Key」里填写，"
+                        "或运行 `uv run python aicut.py config set <mediakit|deepseek>`")
+DIR_NOT_EMPTY = "{pdir} 已存在且不是空目录（也不是项目），换个项目名"
 MUST_KEEP_OVER_HINT = ("必留内容共 {must}，超过目标 {target}。想剪成多长？"
                        "运行：aicut.py select {name} --target <秒>（建议 --target {suggest}）")
 
@@ -152,6 +155,12 @@ def _run_pipeline(module: str, argv: list[str]) -> None:
         die(f"{module} 执行失败")
 
 
+def require_consent() -> None:
+    """任何把数据发到云端（ASR / LLM）的步骤之前调用：没确认过外发说明就停（PRD §7）。"""
+    if not consent.accepted():
+        die(consent.CLI_REQUIRED_MSG)
+
+
 def mediakit_env() -> dict:
     env = secrets.env_with_secret()
     env["MEDIAKIT_SURFACE"] = "skill"
@@ -165,25 +174,25 @@ def cmd_new(args) -> None:
     pdir = PROJECTS / args.name
     if (pdir / "project.json").exists():
         die(f"项目已存在：{pdir}")
+    if pdir.exists() and (not pdir.is_dir() or any(pdir.iterdir())):
+        die(DIR_NOT_EMPTY.format(pdir=pdir))  # 上次失败留下的空目录可以复用（GL-20）
     src = Path(args.material).expanduser().resolve()
     if not src.exists():
         die(f"原片不存在：{src}")
     preset = load_json(PRESETS / f"{args.preset}.json")
     if preset is None:
         die(f"找不到预设 {args.preset}，可用：{[p.stem for p in PRESETS.glob('*.json')]}")
+    no_input = getattr(args, "no_input", False)  # GUI 调用：绝不 input()（GL-20）
     target = getattr(args, "target", None)
     if target is not None:  # 先校验再建目录：失败不留空项目
         check_or_die(schema.check_target_duration, target)
         target = schema.check_target_duration(target)
     else:
-        target = ask_target(schema.check_target_duration(preset.get("duration") or 175))
-    pdir.mkdir(parents=True)
-    calibration = {"tone": args.tone, "audience": args.audience,
-                   "must_lines": args.must_lines}
-    if not any(v is not None for v in calibration.values()):
-        calibration = ask_calibration({})
-    else:
-        calibration = style.normalize({k: v for k, v in calibration.items() if v is not None})
+        default = schema.check_target_duration(preset.get("duration") or 175)
+        target = default if no_input else ask_target(default)
+    given = {k: v for k, v in {"tone": args.tone, "audience": args.audience,
+                               "must_lines": args.must_lines}.items() if v is not None}
+    calibration = style.normalize(given) if given or no_input else ask_calibration({})
     project = schema.default_project(
         args.name, str(src),
         title=args.title or args.name,
@@ -193,7 +202,14 @@ def cmd_new(args) -> None:
         created=time.strftime("%Y-%m-%d %H:%M:%S"),
         calibration=calibration,
     )
-    schema.save(pdir / "project.json", project)
+    created = not pdir.exists()
+    pdir.mkdir(parents=True, exist_ok=True)
+    try:
+        schema.save(pdir / "project.json", project)
+    except BaseException:
+        if created:  # 只清自己建的目录，重试同名不会撞上空目录
+            shutil.rmtree(pdir, ignore_errors=True)
+        raise
     ok(f"项目已创建：{pdir}")
     info(f"下一步：python3 aicut.py run {args.name}")
 
@@ -229,6 +245,7 @@ def cmd_transcribe(args) -> None:
         except media_io.MediaError as exc:
             die(f"抽音轨失败：{exc}")
     if not raw.exists():
+        require_consent()
         if not secrets.get("mediakit"):
             die("未配置 MEDIAKIT_API_KEY：运行 `uv run python aicut.py config set mediakit`")
         info("获取云端转写结果（长素材要几分钟，中断后重跑会接着查）…")
@@ -262,6 +279,7 @@ def cmd_text(args) -> None:
     segs = work / "segments.json"
     if not segs.exists():
         die("先跑 transcribe（需要 work/segments.json）")
+    require_consent()
     if not secrets.get("deepseek"):
         die("未配置 DEEPSEEK_API_KEY：运行 `uv run python aicut.py config set deepseek`")
     batch = getattr(args, "batch", 40)
@@ -361,6 +379,7 @@ def cmd_summary(args) -> None:
     text, scored = work / "segments_text.json", work / "segments_scored.json"
     if not text.exists() or not scored.exists():
         die("先跑 text 与 score")
+    require_consent()
     info("生成内容摘要…")
     pref = style.directive(cfg(pdir).get("calibration"))
     res = summarize.run(text, scored, work / "content_summary.json", style=pref)
@@ -378,6 +397,7 @@ def cmd_questions(args) -> None:
     if out.exists() and not getattr(args, "force", False):
         info("决策问题已存在，跳过（--force 可重新生成，但会让已保存答案失效）")
         return
+    require_consent()
     res = questions.run(summary, scored, out)
     tag = "（兜底）" if res["fallback"] else ""
     ok(f"决策问题 {len(res['questions'])} 个{tag}")
@@ -657,12 +677,12 @@ def install_draft(vdir: Path, draft_name: str) -> None:
 
 
 def cmd_prepare(args) -> None:
-    """GUI 用：只做前期（不 build），完成后再由人挑镜头。"""
-    cmd_ingest(args); cmd_transcribe(args); cmd_analyze(args)
-    if secrets.get("deepseek"):
-        cmd_text(args)
-    else:
-        info("跳过 b 路：未配置 DEEPSEEK_API_KEY")
+    """GUI 用：只做前期（不 build），完成后再由人挑镜头。缺告知 / 缺 Key 一开始就停（GL-02）。"""
+    pdir = project_dir(args.name)
+    require_consent()
+    if missing := readiness.missing_keys(pdir / "work"):
+        die(PREPARE_KEYS_MISSING.format(names=readiness.describe(missing)))
+    cmd_ingest(args); cmd_transcribe(args); cmd_analyze(args); cmd_text(args)
     cmd_junk(args); cmd_scenes(args); cmd_quality(args)
     cmd_score(args); cmd_summary(args); cmd_questions(args); cmd_select(args)
     cmd_brief(args)
@@ -751,6 +771,12 @@ def cmd_config(args) -> None:
         if not st["mediakit"]["configured"]:
             info("设置：uv run python aicut.py config set mediakit")
         return
+    if args.action == "consent":
+        print(consent.NOTICE_TITLE)
+        print("\n".join(consent.NOTICE_LINES))
+        consent.accept()
+        ok("已记录：你已阅读数据外发说明")
+        return
     provider = args.provider
     if args.action == "set":
         if sys.stdin.isatty():
@@ -835,6 +861,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--audience", default=None)
     p.add_argument("--must-lines", dest="must_lines", default=None)
     p.add_argument("--target", default=None, help="成片目标时长（秒），默认用预设")
+    p.add_argument("--no-input", dest="no_input", action="store_true",
+                   help="不在终端提问（GUI 调用时使用）")
     p.set_defaults(fn=cmd_new)
 
     for name, fn in [("run", cmd_run), ("prepare", cmd_prepare),
@@ -888,7 +916,7 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=cmd_calibrate)
 
     p = sub.add_parser("config"); p.set_defaults(fn=cmd_config)
-    p.add_argument("action", nargs="?", choices=["set", "unset"])
+    p.add_argument("action", nargs="?", choices=["set", "unset", "consent"])
     p.add_argument("provider", nargs="?", default="mediakit",
                    choices=list(secrets.PROVIDERS))
 
@@ -899,4 +927,5 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
+    proc.start_parent_watchdog()  # 由剪辑台起的任务：剪辑台没了就带着 ffmpeg 一起退出
     main()

@@ -12,10 +12,16 @@ from pathlib import Path
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from pipeline import proc  # noqa: E402
+
+# 打包版的任务子进程是 App 带标记重启自己（GL-17）：必须在 import webview 之前分发，
+# 否则会初始化 Cocoa、多出一个 Dock 图标
+if (_code := proc.dispatch(sys.argv)) is not None:
+    sys.exit(_code)
+
 import webview  # noqa: E402
 
-from pipeline import proc  # noqa: E402
-from gui import server  # noqa: E402
+from gui import jobs, server  # noqa: E402
 
 
 def main() -> None:
@@ -32,9 +38,11 @@ def main() -> None:
         return list(result or [])
 
     server.set_picker(pick_video)
+    server.report_stale_job()
     try:
         webview.start()
     finally:
+        jobs.shutdown_all()  # 关窗口 = 停掉后台任务，不留孤儿进程继续计费
         srv.shutdown()
 
 

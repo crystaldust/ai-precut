@@ -7,6 +7,9 @@ import pytest
 import aicut
 from pipeline import select, understand_text
 
+# 这些用例会走到文本分析（LLM）这一步：先视为已确认数据外发说明（M4 审查修复）
+pytestmark = pytest.mark.usefixtures("consented")
+
 
 def _fail(*_a, **_k):
     raise AssertionError("不应该被调用")

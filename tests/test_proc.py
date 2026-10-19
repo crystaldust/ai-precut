@@ -82,3 +82,163 @@ def test_run_inprocess_restores_argv(tmp_path, monkeypatch):
     """)
     proc.run_inprocess(mod, ["a"])
     assert sys.argv == before
+
+
+# ---------------------------------------------------------------- GL-17 / GL-14：自启子进程
+def test_cli_cmd_dev_uses_aicut_py(monkeypatch):
+    monkeypatch.setattr(proc, "FROZEN", False)
+    cmd = proc.cli_cmd(["prepare", "p1"])
+    assert cmd[0] == sys.executable
+    assert cmd[1].endswith("aicut.py") and cmd[2:] == ["prepare", "p1"]
+
+
+def test_cli_cmd_frozen_relaunches_self(monkeypatch):
+    monkeypatch.setattr(proc, "FROZEN", True)
+    assert proc.cli_cmd(["prepare", "p1"]) == [sys.executable, "--aicut-cli", "prepare", "p1"]
+
+
+def test_module_cmd_dev_runs_script(monkeypatch):
+    monkeypatch.setattr(proc, "FROZEN", False)
+    cmd = proc.module_cmd("pipeline.to_jianying", ["a"])
+    assert cmd[0] == sys.executable
+    assert Path(cmd[1]) == proc.app_root() / "pipeline" / "to_jianying.py"
+    assert cmd[2:] == ["a"]
+
+
+def test_module_cmd_frozen_relaunches_self(monkeypatch):
+    monkeypatch.setattr(proc, "FROZEN", True)
+    assert proc.module_cmd("pipeline.to_jianying", ["a"]) == \
+        [sys.executable, "--aicut-module", "pipeline.to_jianying", "a"]
+
+
+def test_dispatch_returns_none_without_flag():
+    assert proc.dispatch(["app"]) is None
+    assert proc.dispatch(["app", "--other"]) is None
+
+
+def test_dispatch_runs_module_and_returns_exit_code(tmp_path, monkeypatch):
+    mod = _fake_module(tmp_path, monkeypatch, "fake_dispatch_exit", """
+        import sys
+        if __name__ == "__main__":
+            print("args", sys.argv[1:])
+            sys.exit(3)
+    """)
+    monkeypatch.setattr(proc, "_line_buffered_stdio", lambda: None)
+    monkeypatch.setattr(proc, "ALLOWED_MODULES", frozenset({mod}))
+    before = list(sys.argv)
+    assert proc.dispatch(["app", "--aicut-module", mod, "x"]) == 3
+    assert sys.argv == before
+
+
+def test_dispatch_module_text_exit_is_printed(tmp_path, monkeypatch, capsys):
+    mod = _fake_module(tmp_path, monkeypatch, "fake_dispatch_text", """
+        import sys
+        if __name__ == "__main__":
+            sys.exit("找不到剪映草稿库")
+    """)
+    monkeypatch.setattr(proc, "_line_buffered_stdio", lambda: None)
+    monkeypatch.setattr(proc, "ALLOWED_MODULES", frozenset({mod}))
+    assert proc.dispatch(["app", "--aicut-module", mod]) == 1
+    assert "找不到剪映草稿库" in capsys.readouterr().err
+
+
+def test_dispatch_module_without_name_fails(monkeypatch, capsys):
+    monkeypatch.setattr(proc, "_line_buffered_stdio", lambda: None)
+    assert proc.dispatch(["app", "--aicut-module"]) == 2
+
+
+def test_dispatch_cli_calls_run_cli(monkeypatch):
+    import aicut
+    seen = {}
+    monkeypatch.setattr(proc, "_line_buffered_stdio", lambda: None)
+    monkeypatch.setattr(aicut, "run_cli", lambda argv: seen.setdefault("argv", argv) and 5)
+    assert proc.dispatch(["app", "--aicut-cli", "list"]) == 5
+    assert seen["argv"] == ["list"]
+
+
+def test_app_entry_dispatches_before_webview_import():
+    src = (proc.app_root() / "app" / "main.py").read_text(encoding="utf-8")
+    assert "proc.dispatch(sys.argv)" in src
+    assert src.index("proc.dispatch(sys.argv)") < src.index("\nimport webview")
+
+
+# ---------------------------------------------------------------- 审查修复 2：父进程没了就自尽（HIGH-1）
+def test_parent_watchdog_kills_own_group_when_parent_dies(tmp_path):
+    """剪辑台（父）被强杀后，任务子进程连同它的孙进程都要自己退出，不能变成孤儿继续计费。"""
+    import os
+    import subprocess
+    root = proc.app_root()
+    child = ("import os,subprocess,sys,time;"
+             "sys.path.insert(0, %r);" % str(root) +
+             "from pipeline import proc;"
+             "proc.WATCHDOG_INTERVAL_S = 0.1; proc.WATCHDOG_GRACE_S = 0.3;"
+             "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+             "proc.start_parent_watchdog();"
+             "print(os.getpid(), g.pid, flush=True); time.sleep(60)")
+    parent = ("import os,subprocess,sys;"
+              "env = dict(os.environ, %s=str(os.getpid()));" % proc.PARENT_PID_ENV +
+              "c = subprocess.Popen([sys.executable, '-c', %r], env=env, stdout=subprocess.PIPE," % child +
+              " stderr=subprocess.DEVNULL,"
+              " text=True, start_new_session=True);"
+              "print(c.stdout.readline().strip(), flush=True)")
+    out = subprocess.run([sys.executable, "-c", parent], capture_output=True, text=True,
+                         timeout=20).stdout.split()
+    pids = [int(x) for x in out]
+    assert len(pids) == 2
+
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        r = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+        return bool(r.stdout.strip()) and not r.stdout.strip().startswith("Z")
+
+    import time
+    deadline = time.time() + 10
+    while time.time() < deadline and any(alive(p) for p in pids):
+        time.sleep(0.1)
+    assert not any(alive(p) for p in pids)
+
+
+def test_parent_watchdog_inactive_without_env(monkeypatch):
+    monkeypatch.delenv(proc.PARENT_PID_ENV, raising=False)
+    assert proc.start_parent_watchdog() is False
+
+
+def test_parent_watchdog_env_not_inherited_by_grandchildren(monkeypatch):
+    import os
+    monkeypatch.setenv(proc.PARENT_PID_ENV, str(os.getppid()))
+    monkeypatch.setattr(proc, "_watch_parent", lambda *a: None)
+    assert proc.start_parent_watchdog() is True
+    assert proc.PARENT_PID_ENV not in os.environ  # aicut 再拉起的 --aicut-module 不能误判
+
+
+def test_dispatch_starts_watchdog(monkeypatch):
+    import aicut
+    seen = []
+    monkeypatch.setattr(proc, "_line_buffered_stdio", lambda: None)
+    monkeypatch.setattr(proc, "start_parent_watchdog", lambda: seen.append(1) or False)
+    monkeypatch.setattr(aicut, "run_cli", lambda argv: 0)
+    proc.dispatch(["app", "--aicut-cli", "list"])
+    assert seen == [1]
+
+
+def test_aicut_script_entry_starts_watchdog():
+    src = (proc.app_root() / "aicut.py").read_text(encoding="utf-8")
+    tail = src[src.index('if __name__ == "__main__":'):]
+    assert "proc.start_parent_watchdog()" in tail
+
+
+
+# ---------------------------------------------------------------- 审查修复 2：--aicut-module 白名单（LOW-9）
+def test_dispatch_rejects_module_outside_allowlist(monkeypatch, capsys):
+    monkeypatch.setattr(proc, "_line_buffered_stdio", lambda: None)
+    monkeypatch.setattr(proc, "start_parent_watchdog", lambda: False)
+    assert proc.dispatch(["app", "--aicut-module", "os"]) == 2
+    assert "pipeline.to_jianying" in capsys.readouterr().err
+
+
+def test_module_cmd_rejects_module_outside_allowlist():
+    with pytest.raises(ValueError):
+        proc.module_cmd("pipeline.secrets", [])

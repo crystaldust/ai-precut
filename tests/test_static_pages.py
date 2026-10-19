@@ -108,9 +108,14 @@ def test_target_modal_uses_num_for_numbers():
     assert "num(" in body and "${sel." not in body
 
 
+def _job_poll_src():
+    """任务轮询与收尾在 jobs.js（M4 从 index.html 搬出）。"""
+    src = _read("jobs.js")
+    return src[src.index("function pollJob"):src.index("/* ---------------- 版本卡片")]
+
+
 def test_over_target_modal_opened_after_job():
-    src = _read("index.html")
-    poll = src[src.index("function pollJob"):src.index("function logLine")]
+    poll = _job_poll_src()
     assert "over_target" in poll and "openTarget(true)" in poll
 
 
@@ -123,8 +128,8 @@ def test_index_has_persistent_warning_bar():
 
 
 def test_job_modal_stays_open_when_job_warned():
-    src = _read("index.html")
-    poll = src[src.index("function pollJob"):src.index("function logLine")]
+    src = _read("index.html") + _read("jobs.js")
+    poll = _job_poll_src()
     assert "'[!]'" in poll and "COPY_JOB_DONE_WITH_WARNINGS" in poll
     for const in ("COPY_JOB_DONE_WITH_WARNINGS", "COPY_JOB_ACK", "COPY_WARNBAR_TITLE"):
         assert f"const {const}" in src

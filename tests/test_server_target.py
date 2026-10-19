@@ -85,6 +85,9 @@ def test_start_job_select_runs_aicut_select(gui_server, monkeypatch):
     seen = {}
 
     class FakePopen:
+        pid = 0  # 与真 Popen 同形：有 pid / returncode
+        returncode = None
+
         def __init__(self, argv, **kw):
             seen["argv"] = argv
             seen["stdin"] = kw.get("stdin")

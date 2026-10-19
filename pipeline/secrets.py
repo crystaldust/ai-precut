@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import uuid
 from pathlib import Path
 
 SERVICE = "ai-cut"
@@ -22,6 +23,18 @@ ENV_KEYS = {
     "mediakit": "MEDIAKIT_API_KEY",
     "deepseek": "DEEPSEEK_API_KEY",
 }
+
+# 界面按这个渲染 Key 输入框；GL-01 换实现时只改这里，界面不用动
+PROVIDER_LABELS = {
+    "mediakit": {"label": "语音转写（火山引擎）", "hint": "用于把素材音轨转成文字"},
+    "deepseek": {"label": "文本分析（DeepSeek）", "hint": "用于理解转写内容、找出重要片段"},
+}
+
+
+
+class SecretDeleteError(RuntimeError):
+    """清除后 Key 仍然读得到（钥匙串被锁 / 拒绝删除），不能假装已清除。"""
+
 
 # 历史遗留位置：老版本把 mediakit key 放在这里，读取时兼容
 LEGACY_FILES = {
@@ -33,6 +46,11 @@ def _config_dir() -> Path:
     if custom := os.environ.get("AI_CUT_CONFIG_DIR"):
         return Path(custom).expanduser()
     return Path.home() / ".config" / "ai-cut"
+
+
+def config_dir() -> Path:
+    """凭证与「数据外发告知」确认记录所在目录（不在项目里）。"""
+    return _config_dir()
 
 
 def _cred_file() -> Path:
@@ -65,13 +83,19 @@ def _read_file() -> dict:
 
 
 def _write_file(data: dict) -> None:
+    """原子写凭证文件：临时文件一创建就是 0600（不经过默认权限），名字随机，失败不留残渣。"""
     path = _cred_file()
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, stat.S_IRWXU)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
-    os.replace(tmp, path)
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, ensure_ascii=False, indent=2))
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def mask(value: str | None) -> str:
@@ -130,15 +154,24 @@ def set(provider: str, value: str) -> str:
 
 
 def delete(provider: str) -> None:
+    """从钥匙串和凭证文件里删掉 Key，并确认真的删掉了（环境变量 / 旧版文件不归这里管）。"""
     kr = _keyring()
     if kr is not None:
         try:
             kr.delete_password(SERVICE, provider)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - 本来就没有也会抛；下面统一核实
             pass
+        try:
+            still = kr.get_password(SERVICE, provider)
+        except Exception as exc:  # noqa: BLE001
+            raise SecretDeleteError("无法确认钥匙串里的 Key 已删除") from exc
+        if still:
+            raise SecretDeleteError("钥匙串拒绝删除这个 Key（可能被锁定），请在「钥匙串访问」里手动删除")
     data = _read_file()
     if data.pop(provider, None) is not None:
         _write_file(data)
+    if provider in _read_file():
+        raise SecretDeleteError("凭证文件里的 Key 没删掉")
 
 
 def status() -> dict[str, dict]:

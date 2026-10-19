@@ -120,14 +120,85 @@ def test_wait_times_out_with_actionable_message(monkeypatch):
     assert "不会重新提交" in msg
 
 
+def _wav(tmp_path, name="a.wav", body=b"RIFF-audio"):
+    wav = tmp_path / name
+    wav.write_bytes(body)
+    return wav
+
+
+SUBMIT = FakeProc(out=json.dumps({"task_id": "t1"}))
+DONE = FakeProc(out=json.dumps({"status": "completed", "utterances": []}))
+
+
 def test_transcribe_resumes_from_saved_task(tmp_path):
-    (tmp_path / "asr_task.json").write_text(
-        json.dumps({"task_id": "saved-task", "at": 9e9}), encoding="utf-8")
+    from pipeline import asr_state
+    wav = _wav(tmp_path)
+    asr_state.save(tmp_path, wav, cloud.BACKEND, "saved-task")
     c, calls = client([FakeProc(out=json.dumps({"status": "completed"}))])
-    c.transcribe(tmp_path / "a.wav", tmp_path)
+    c.transcribe(wav, tmp_path)
     # 只查了一次，没有重新提交
     assert len(calls) == 1
     assert "--task-id" in calls[0] and "saved-task" in calls[0]
+    assert not (tmp_path / "asr_task.json").exists()  # 结果落盘后状态用完即弃
+
+
+def test_legacy_state_without_fingerprint_resubmits(tmp_path):
+    wav = _wav(tmp_path)
+    (tmp_path / "asr_task.json").write_text(
+        json.dumps({"task_id": "saved-task", "at": 9e9}), encoding="utf-8")
+    c, calls = client([SUBMIT, DONE])
+    c.transcribe(wav, tmp_path)
+    assert "asr-subtitles" in calls[0]
+
+
+def test_failed_task_clears_state_then_resubmits(tmp_path):
+    wav = _wav(tmp_path)
+    c, _ = client([SUBMIT, FakeProc(out=json.dumps({"status": "failed", "message": "boom"}))])
+    with pytest.raises(cloud.CloudError) as ei:
+        c.transcribe(wav, tmp_path)
+    assert ei.value.retryable is False
+    assert not (tmp_path / "asr_task.json").exists()  # 终态失败：下次重新提交
+    c2, calls = client([FakeProc(out=json.dumps({"task_id": "t2"})), DONE])
+    c2.transcribe(wav, tmp_path)
+    assert "asr-subtitles" in calls[0]
+
+
+def test_timeout_keeps_state_for_resume(tmp_path, monkeypatch):
+    from pipeline import asr_state
+    wav = _wav(tmp_path)
+    c, _ = client([SUBMIT, FakeProc(out=json.dumps({"status": "running"}))])
+    t = [0.0]
+
+    def fake_mono():
+        t[0] += 10_000
+        return t[0]
+
+    monkeypatch.setattr(cloud.time, "monotonic", fake_mono)
+    with pytest.raises(cloud.CloudError) as ei:
+        c.transcribe(wav, tmp_path)
+    assert ei.value.retryable is True
+    assert asr_state.load(tmp_path, wav, cloud.BACKEND) == "t1"
+
+
+def test_network_exhaustion_is_retryable_and_keeps_state(tmp_path):
+    from pipeline import asr_state
+    wav = _wav(tmp_path)
+    net = FakeProc(code=1, err="connection reset by peer")
+    c, _ = client([SUBMIT, net], retries=1)
+    with pytest.raises(cloud.CloudError) as ei:
+        c.transcribe(wav, tmp_path)
+    assert ei.value.retryable is True
+    assert asr_state.load(tmp_path, wav, cloud.BACKEND) == "t1"
+
+
+def test_changed_audio_resubmits(tmp_path):
+    from pipeline import asr_state
+    wav = _wav(tmp_path)
+    asr_state.save(tmp_path, wav, cloud.BACKEND, "old-task")
+    wav.write_bytes(b"RIFF-other")
+    c, calls = client([SUBMIT, DONE])
+    c.transcribe(wav, tmp_path)
+    assert "asr-subtitles" in calls[0] and not any("old-task" in a for a in calls)
 
 
 def test_transcript_raw_written_atomically(tmp_path, monkeypatch):
@@ -143,3 +214,44 @@ def test_transcript_raw_written_atomically(tmp_path, monkeypatch):
         c.transcribe(tmp_path / "a.wav", tmp_path)
     assert not (tmp_path / "transcript_raw.json").exists()
     assert [p.name for p in tmp_path.iterdir() if "transcript_raw" in p.name] == []
+
+
+# ---------------------------------------------------------------- 审查修复 2：只有任务终态才清续查状态（MEDIUM-3）
+def _saved(tmp_path):
+    from pipeline import asr_state
+    wav = _wav(tmp_path)
+    asr_state.save(tmp_path, wav, cloud.BACKEND, "saved-task")
+    return wav, asr_state
+
+
+def test_auth_failure_while_polling_keeps_state(tmp_path):
+    wav, asr_state = _saved(tmp_path)
+    c, _ = client([FakeProc(code=1, err="401 Unauthorized: invalid api key")])
+    with pytest.raises(cloud.CloudError) as ei:
+        c.transcribe(wav, tmp_path)
+    assert ei.value.terminal is False
+    assert asr_state.load(tmp_path, wav, cloud.BACKEND) == "saved-task"
+
+
+def test_missing_cli_keeps_state(tmp_path):
+    wav, asr_state = _saved(tmp_path)
+    c, _ = client([FileNotFoundError()])
+    with pytest.raises(cloud.CloudError):
+        c.transcribe(wav, tmp_path)
+    assert asr_state.load(tmp_path, wav, cloud.BACKEND) == "saved-task"
+
+
+def test_non_json_response_keeps_state(tmp_path):
+    wav, asr_state = _saved(tmp_path)
+    c, _ = client([FakeProc(out="<html>gateway</html>")])
+    with pytest.raises(cloud.CloudError):
+        c.transcribe(wav, tmp_path)
+    assert asr_state.load(tmp_path, wav, cloud.BACKEND) == "saved-task"
+
+
+@pytest.mark.parametrize("status", ["failed", "error", "canceled", "cancelled"])
+def test_terminal_task_status_is_marked_terminal(status):
+    c, _ = client([FakeProc(out=json.dumps({"status": status}))])
+    with pytest.raises(cloud.CloudError) as ei:
+        c.wait_task("t1", total_timeout=10)
+    assert ei.value.terminal is True
