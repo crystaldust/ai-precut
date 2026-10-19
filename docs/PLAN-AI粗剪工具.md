@@ -1,6 +1,8 @@
 # 实施计划 · AI 粗剪工具
 
-> 依据：[PRD v1.0](PRD-AI粗剪工具.md)
+> 依据：[PRD v1.1](PRD-AI粗剪工具.md)
+> 状态以 [PROGRESS](PROGRESS.md) 为准；本文件里的「已完成」标注、排期与风险表未随实际更新（KI-42）。
+> 2026-10-19 起的整改项见 [go-live-blockers](go-live-blockers.md) 与 [known-issues](known-issues.md)。
 > 假设：1 名开发 + AI 辅助；按人天估算；外部依赖单列。
 
 ---

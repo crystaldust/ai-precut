@@ -63,7 +63,7 @@ uv add <包名>                   # 或直接改 pyproject.toml 后 uv lock
 uv lock --upgrade-package <包名>  # 只升某个包
 
 # 打包（M5）
-uv run pyinstaller packaging/app.spec
+uv run pyinstaller packaging/ai-cut.spec --noconfirm --clean
 ```
 
 ### 3.3 打包可行性（已实测）

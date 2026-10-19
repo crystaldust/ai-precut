@@ -29,7 +29,7 @@ uv sync --group dev        # 按 uv.lock 建 .venv
 uv run python aicut.py list
 ```
 
-打包（M5）：`uv run pyinstaller packaging/app.spec`。详见 [docs/TECH-STACK.md](docs/TECH-STACK.md)。
+打包（M5）：`./packaging/build_app.sh`（spec 为 `packaging/ai-cut.spec`）。详见 [docs/TECH-STACK.md](docs/TECH-STACK.md)。
 
 ## 四条命令
 
