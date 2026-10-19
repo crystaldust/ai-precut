@@ -71,7 +71,7 @@ def test_bundle_redacts_secrets_home_and_material_path(env):
     pdir, out = env
     files = _zip(diagnostics.build_bundle(out, pdir))
     blob = "\n".join(files.values())
-    assert KEY not in blob and "AKLT****" in blob
+    assert KEY not in blob and "****3456" in blob  # KI-67 新掩码
     assert str(Path.home()) not in blob
     proj = json.loads(files["project/project.json"])
     assert proj["material"] == "秘密素材.mov" and "片名" not in json.dumps(proj, ensure_ascii=False)

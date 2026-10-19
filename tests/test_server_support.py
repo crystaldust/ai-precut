@@ -94,14 +94,14 @@ from test_frontend_jobs import NODE, STATIC, run_js  # noqa: E402
 def test_sidebar_has_diagnostics_and_about_entries():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     assert '<script src="/static/support.js"></script>' in html
-    assert 'onclick="exportDiag()"' in html and 'onclick="openAbout()"' in html
+    assert 'data-act="exportDiag"' in html and 'data-act="openAbout"' in html  # KI-53：事件委托
 
 
 @pytest.mark.skipif(NODE is None, reason="需要 node")
 def test_failed_job_actions_offer_diagnostics():
     html = run_js("jobActionsHtml('ended')", files=["jobs.js", "support.js"])
-    assert "exportDiag()" in html and "导出诊断包" in html
-    assert "exportDiag()" not in run_js("jobActionsHtml('running')", files=["jobs.js", "support.js"])
+    assert 'data-act="exportDiag"' in html and "导出诊断包" in html
+    assert 'data-act="exportDiag"' not in run_js("jobActionsHtml('running')", files=["jobs.js", "support.js"])
 
 
 @pytest.mark.skipif(NODE is None, reason="需要 node")

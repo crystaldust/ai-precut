@@ -8,6 +8,7 @@ demo/
 
 # 生成物
 gui/static/prototype.html
+prototype/prototype.html
 __pycache__/
 *.pyc
 .venv/

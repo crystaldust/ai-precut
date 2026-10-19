@@ -21,7 +21,6 @@ import signal
 import subprocess
 import sys
 import threading
-import time
 import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,8 +32,9 @@ sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
 from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
-from pipeline import applog, media_io, notices, proc, review, schema, select, style  # noqa: E402
-from gui import confirm, jobs, payloads, settings, support  # noqa: E402
+from pipeline import applog, proc, review, schema, style  # noqa: E402
+from gui import confirm, desktop, jobs, maintenance, media, payloads, settings, support, views  # noqa: E402
+from gui.static_files import STATIC_FILES  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
     JOB_COMMANDS, JOBS, JOBS_LOCK, JobConflict, run_aicut, start_job,
 )
@@ -58,17 +58,19 @@ SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "Cross-Origin-Resource-Policy": "same-origin",
 }
-# 页面全是内联脚本/样式和内联事件，所以 script-src 需要 'unsafe-inline'；没有任何外部资源
-PAGE_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+# KI-53：脚本全部外置、事件走委托，script-src 只认同源文件；内联 style 属性很多、风险低，style-src 保留 inline（D9）
+PAGE_CSP = ("default-src 'self'; script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
             "media-src 'self' blob:; connect-src 'self'; object-src 'none'; "
             "base-uri 'none'; frame-ancestors 'none'")
 MAX_BODY_BYTES = 2 * 1024 * 1024  # 请求体上限：分镜表再大也到不了 2 MB
 REQUEST_TIMEOUT_S = 60            # 单次 socket 读写超时，慢速/半开连接不会永久占住线程
 NO_EXPORT_MSG = "这一版还没有导出 Windows 剪映包"
-PRESET_CORRUPT_MSG = "已跳过预设「{name}」：{reason}"
 INTERNAL_ERROR_MSG = "服务内部错误，请重试；如果反复出现请点左下角「导出诊断包」发给开发"
 LOG = applog.get("gui")
+
+
+set_window_opener = desktop.set_window_opener  # 桌面壳注入（KI-36）
 
 
 def set_picker(fn) -> None:
@@ -77,9 +79,7 @@ def set_picker(fn) -> None:
 
 
 # ------------------------------------------------------------------ 工具
-def jload(p: Path, default=None):
-    """只用于显示：缺失或损坏都给 default；损坏的由 notices.corrupt_files 在警告栏点名（KI-21）。"""
-    return schema.read_json_lenient(p, default)
+jload = views.jload
 
 
 def jdump(p: Path, obj) -> None:
@@ -135,55 +135,7 @@ def preset_names() -> set[str]:
 
 
 def project_state(name: str) -> dict:
-    pdir = project_path(name)
-    cfg = schema.read_json(pdir / "project.json", default=None)  # 损坏 → CorruptJSON → 409（KI-21）
-    if not cfg:
-        raise FileNotFoundError(name)
-    schema.ensure_supported(cfg)  # 新版程序建的项目不能让旧界面去改
-    work = pdir / "work"
-    stages = [
-        {"key": "ingest", "label": "素材台账", "done": (work / "materials.json").exists()},
-        {"key": "audio", "label": "抽音轨", "done": media_io.complete_or_adopt(work / "audio/asr.wav")},
-        {"key": "transcribe", "label": "语音转写", "done": (work / "transcript.md").exists()},
-        {"key": "junk", "label": "废片检测", "done": (work / "junk_report.csv").exists()},
-        {"key": "brief", "label": "策划分派单", "done": (work / "brief.md").exists()},
-        {"key": "shots", "label": "分镜表", "done": (pdir / "shots.json").exists()},
-    ]
-    versions = []
-    for d in sorted((pdir / "output").glob("v*"), key=lambda x: int(x.name[1:]) if x.name[1:].isdigit() else 0):
-        if not d.is_dir():
-            continue
-        tl = jload(d / "timeline.json", {})
-        total = 0.0
-        if tl.get("video"):
-            total = max((s["timeline_in"] + s["out"] - s["in"]) for s in tl["video"])
-        versions.append({
-            "name": d.name,
-            "preview": media_io.complete_or_adopt(d / "preview.mp4"),
-            "shots": len(tl.get("video", [])),
-            "duration": round(total, 1),
-            "draft": f"{cfg.get('title', name)}_{d.name}",
-            "mtime": time.strftime("%m-%d %H:%M", time.localtime(d.stat().st_mtime)),
-            **jobs.windows_export_state(pdir, d.name, cfg.get("title")),
-        })
-    manual = jload(pdir / "shots.json", {}).get("shots", [])
-    selected = jload(work / "shots-selected.json", {}).get("shots", [])
-    return {
-        "project": cfg,
-        "stages": stages,
-        "versions": list(reversed(versions)),
-        "segments": jload(work / "segments.json", {}).get("segments", []),
-        # 没有手存分镜表时用选段结果预填；有就不覆盖（M2）
-        "shots": manual or selected,
-        "shots_from_selection": not manual and bool(selected),
-        "selection": select.summary(jload(work / "selection.json")),
-        "warnings": notices.project_warnings(work),
-        "junk": jload(work / "junk_report.json", {}).get("items", []),
-        "material_duration": (jload(work / "materials.json", {}).get("items") or [{}])[0].get("duration", 0),
-        "has_proxy": media_io.complete_or_adopt(work / "proxy.mp4"),
-        "has_transcript": (work / "transcript.md").exists(),
-        "job": jobs.project_job(name),  # 切回正在跑任务的项目时，界面据此重新显示进度
-    }
+    return views.project_state(project_path(name), name)
 
 
 # ------------------------------------------------------------------ HTTP
@@ -205,6 +157,8 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
+        if self.command == "HEAD":  # 审查修复 L11：HEAD 只回头
+            return
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
@@ -248,6 +202,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
 
     def do_GET(self):  # noqa: N802
+        self._safely(self._route_get)
+
+    def do_HEAD(self):  # noqa: N802 - 与 GET 同一套路由与校验，只是不发响应体
         self._safely(self._route_get)
 
     def do_POST(self):  # noqa: N802
@@ -298,60 +255,8 @@ class Handler(BaseHTTPRequestHandler):
             raise BadRequest("请求体必须是 JSON 对象")
         return data
 
-    # ---------- 视频（支持 Range，浏览器才能拖进度条）
     def _serve_media(self, path: Path, root: Path) -> None:
-        """只发项目目录内的普通文件：符号链接逃逸、目录一律 404。"""
-        try:
-            real = path.resolve(strict=True)
-        except (OSError, RuntimeError):
-            return self._json({"error": "文件不存在"}, 404)
-        if root.resolve() not in real.parents or not real.is_file():
-            return self._json({"error": "文件不存在"}, 404)
-        path = real
-        size = path.stat().st_size
-        ctype = "video/mp4"
-        rng = self.headers.get("Range")
-        if rng:
-            m = re.match(r"bytes=(\d*)-(\d*)", rng)
-            start = int(m.group(1) or 0) if m else 0
-            end = int(m.group(2)) if m and m.group(2) else size - 1
-            end = min(end, size - 1)
-            length = max(0, end - start + 1)
-            self.send_response(206)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-            self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Content-Length", str(length))
-            self._security_headers()
-            self.end_headers()
-            with open(path, "rb") as f:
-                f.seek(start)
-                remaining = length
-                while remaining > 0:
-                    chunk = f.read(min(65536, remaining))
-                    if not chunk:
-                        break
-                    try:
-                        self.wfile.write(chunk)
-                    except (BrokenPipeError, ConnectionResetError):
-                        return
-                    remaining -= len(chunk)
-        else:
-            self.send_response(200)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Content-Length", str(size))
-            self._security_headers()
-            self.end_headers()
-            with open(path, "rb") as f:
-                while True:
-                    chunk = f.read(65536)
-                    if not chunk:
-                        break
-                    try:
-                        self.wfile.write(chunk)
-                    except (BrokenPipeError, ConnectionResetError):
-                        return
+        media.serve_file(self, path, root)
 
     # ---------- 任务（GL-17：互斥 / 取消；GL-02：处理素材前置检查）
     def _start_job(self, body: dict) -> None:
@@ -360,8 +265,7 @@ class Handler(BaseHTTPRequestHandler):
             pdir = existing_project(name)
             title = (jload(pdir / "project.json", {}) or {}).get("title")
             extra = jobs.job_extra(pdir, task, body, title)
-            if task == "prepare":
-                settings.check_prepare_ready(pdir)
+            settings.check_ready(pdir, task)  # prepare / questions 的告知与 Key（GL-02、KI-86）
             job_id = start_job(name, task, extra)
         except JobConflict as e:  # 含 StaleJob（job_id 为 None：上次留下的进程，界面无法接管）
             return self._json({"error": str(e), "job_id": e.job_id, "task": e.task,
@@ -384,9 +288,10 @@ class Handler(BaseHTTPRequestHandler):
         if p in ("/", "/index.html"):
             return self._send_page(STATIC / "index.html")
 
-        if p.startswith("/static/"):
-            f = (STATIC / p[len("/static/"):]).resolve()
-            if STATIC.resolve() in f.parents and f.exists():
+        if p.startswith("/static/"):  # KI-52：只发白名单里的单段文件名
+            name = p[len("/static/"):]
+            f = STATIC / name
+            if name in STATIC_FILES and f.is_file():
                 if f.suffix == ".html":
                     return self._send_page(f)
                 ctype = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
@@ -394,47 +299,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": "not found"}, 404)
 
         if p == "/api/health":
-            import shutil as _shutil
-            ff = _shutil.which("ffmpeg")
-            ver = ""
-            if ff:
-                try:
-                    ver = subprocess.run([ff, "-version"], capture_output=True, text=True,
-                                         timeout=5).stdout.splitlines()[0][:60]
-                except Exception:  # noqa: BLE001
-                    ver = "?"
-            return self._json({
-                "frozen": proc.FROZEN,
-                "app_root": str(proc.app_root()),
-                "projects_root": str(proc.user_data_root()),
-                "ffmpeg": ff, "ffmpeg_version": ver,
-                "ffprobe": _shutil.which("ffprobe"),
-            })
+            return self._json(views.health_payload())
 
-        if (hit := settings.handle_get(p) or support.handle_get(p)) is not None:
+        if (hit := settings.handle_get(p) or support.handle_get(p)
+                or maintenance.handle_get(p, q, existing_project)) is not None:
             return self._json(hit[1], hit[0])
 
         if p == "/api/projects":
-            items = []
-            for f in sorted(PROJECTS.glob("*/project.json")):
-                c = jload(f, {})
-                pdir = f.parent
-                vs = sorted([d.name for d in (pdir / "output").glob("v*") if d.is_dir()])
-                items.append({"name": c.get("name", pdir.name), "title": c.get("title", ""),
-                              "preset": c.get("preset", ""), "versions": vs})
-            return self._json({"projects": items})
+            return self._json({"projects": views.projects_list(PROJECTS),
+                               "stale_job": jobs.stale_job_view()})  # KI-71：界面顶部提示条
 
         if p == "/api/presets":
-            out, bad = [], []
-            for f in sorted(PRESETS.glob("*.json")):
-                try:
-                    c = schema.read_json(f)
-                except schema.CorruptJSON as exc:  # 坏预设跳过，但要说出来（新建弹窗里显示）
-                    bad.append(PRESET_CORRUPT_MSG.format(name=f.stem, reason=exc))
-                    continue
-                out.append({"key": f.stem, "name": c.get("name", f.stem),
-                            "platform": c.get("platform"), "duration": c.get("duration")})
-            return self._json({"presets": out, "warnings": bad})
+            return self._json(views.presets_payload(PRESETS))
 
         if p == "/api/browse":
             name = q.get("project", [""])[0]
@@ -522,7 +398,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if (hit := settings.handle_post(p, body)) is not None:
             return self._json(hit[1], hit[0])
-        if (hit := support.handle_post(p, body, diagnostics_project)) is not None:
+        if (hit := support.handle_post(p, body, diagnostics_project)
+                or maintenance.handle_post(p, body, existing_project)
+                or desktop.handle_post(p, body, existing_project, self.server.server_address[1])) is not None:
             return self._json(hit[1], hit[0])
 
         if p == "/api/new":
@@ -607,10 +485,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(exc)}, 409)
             except (ValueError, OSError) as exc:
                 return self._json({"error": str(exc)}, 400)
-            cfg["calibration"] = style.normalize(body.get("calibration") or {})
-            schema.save(pdir / "project.json", cfg)
-            return self._json({"ok": True,
-                               "directive": style.directive(cfg["calibration"])})
+            calibration = style.normalize(body.get("calibration") or {})
+            schema.update_project(pdir / "project.json", lambda c: {**c, "calibration": calibration})
+            return self._json({"ok": True, "directive": style.directive(calibration)})
 
         if p == "/api/confirm/answers":
             try:  # KI-05：「保存并确认」后服务端自动起重新选段任务

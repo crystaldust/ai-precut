@@ -22,7 +22,7 @@
 """
 from __future__ import annotations
 
-import argparse
+import contextlib
 import json
 import shutil
 import subprocess
@@ -31,10 +31,15 @@ import time
 from pathlib import Path
 
 from pipeline.pyver import require_supported_python; require_supported_python()  # noqa: E702 先于新语法
-from pipeline import (applog, build_documentary, classify, cloud, consent, encode, export_draft,  # noqa: E402
+from pipeline import (applog, build_documentary, classify, cloud, consent, diskspace, encode, export_draft,  # noqa: E402
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
-                      select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual)
-from pipeline.llm import LLMError
+                      select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
+                      usage)
+from pipeline import brief, cli_args, clips, config_cli, project_cli, project_lock, transcript_stamp  # noqa: E402
+from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
+from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
+from pipeline.prompts import ask_calibration, ask_target  # noqa: E402,F401 - 测试按 aicut.<名> 打桩
+from pipeline.timeline import compose_timeline  # noqa: E402,F401 - 同上
 
 ROOT = proc.app_root()
 PROJECTS = proc.user_data_root()
@@ -63,14 +68,9 @@ def warn(msg: str) -> None:
     print(f"[!] {msg}")
 
 
-TARGET_PROMPT = "想剪成多长的片子？（秒，回车用预设 {default} 秒）"
 TEXT_PARTIAL_WARNING = ("上次逐句标注没有完成（work/segments_text.partial.json），"
                         "这次分档用的是上一次完整的标注结果；重新运行「处理素材」可补齐")
-TEXT_INCOMPLETE_STATUS = "未完成"
 TARGET_CHANGED = "目标时长已改为 {target}，只重跑选段"
-CLIP_VF = ("scale=1080:1920:force_original_aspect_ratio=decrease,"
-           "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30")
-MEDIA_SUFFIXES = (".wav", ".mp4")  # 这些产物以完成标记判定（GL-15；旧项目可被认领），其余看存在
 DRAFT_LOG_LINES = 40  # 草稿失败时打印的日志行数（按行截，不按字符，KI-60）
 DRAFT_NOT_INSTALLED = "草稿未安装（已回滚，剪映草稿库保持原样）"
 PREPARE_KEYS_MISSING = ("缺少 {names}：在剪辑台「⚙ 设置 · API Key」里填写，"
@@ -80,7 +80,10 @@ MUST_KEEP_OVER_HINT = ("必留内容共 {must}，超过目标 {target}。想剪�
                        "运行：aicut.py select {name} --target <秒>（建议 --target {suggest}）")
 INGEST_FAILED = "素材读不出来：{reason}"
 PRESET_MISSING = "找不到预设 {preset}（presets/{preset}.json），可用：{names}"
-LIST_CORRUPT = "（project.json 损坏）"
+TEXT_CACHED = "输入没变，沿用上次的标注结果（不重新计费）"
+SUMMARY_CACHED = "输入没变，沿用上次的内容摘要（不重新计费）"
+UNLOCKED_CMDS = ("new", "clean", "status", "list", "config")  # 其余带项目名的命令都持项目共享锁
+STEP_TIMEOUT_MSG = "{module} 超过 {m} 分钟没有完成，已停止"
 
 
 def load_json(p: Path, default=None):
@@ -119,7 +122,7 @@ def cfg(pdir: Path) -> dict:
 
 def ensure_jy_python() -> str:
     """剪映草稿依赖 pyJianYingDraft：打包版已打进 App；开发态用专用 venv（旧版 Python 建的会重建，KI-82）。"""
-    if proc.FROZEN:
+    if proc.FROZEN or jy_env.available_here():  # KI-34：uv 环境里已装（锁定版本）就直接用
         return sys.executable
     try:
         return jy_env.ensure(JY_VENV)
@@ -135,11 +138,44 @@ def _run_pipeline(module: str, argv: list[str]) -> None:
             print(out[-600:])
             die(f"{module} 执行失败")
         return
-    r = subprocess.run(proc.dev_module_cmd(sys.executable, module, argv), capture_output=True,
-                       text=True, encoding="utf-8", errors="replace")
+    try:  # KI-61：render_preview / junk_detect / format_transcript 里的 ffmpeg 卡住也要结束
+        r = subprocess.run(proc.dev_module_cmd(sys.executable, module, argv), capture_output=True,
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=media_io.FFMPEG_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        die(STEP_TIMEOUT_MSG.format(module=module, m=round(media_io.FFMPEG_TIMEOUT_S / 60)))
     if r.returncode != 0:
         print((r.stdout or "")[-600:], (r.stderr or "")[-600:])
         die(f"{module} 执行失败")
+
+
+def material_timeout(pdir: Path) -> float:
+    """抽音轨 / 代理的 ffmpeg 超时：按素材台账里的时长；读不到用兜底值（KI-61）。"""
+    items = schema.read_json_lenient(pdir / "work/materials.json", {}).get("items") or [{}]
+    duration = items[0].get("duration") if isinstance(items[0], dict) else None
+    return media_io.timeout_for(duration) if isinstance(duration, (int, float)) and duration > 0 \
+        else media_io.FFMPEG_TIMEOUT_S
+
+
+def metered(work: Path, stage: str, model: str = DEFAULT_MODEL) -> usage.MeteredClient:
+    """按需建立的计量客户端（KI-32）：每次真正调用前查预算，命中缓存的步骤不受预算影响。"""
+    return usage.MeteredClient(lambda: DeepSeekClient(model=model), work, stage, model=model)
+
+
+def prepare_need(pdir: Path) -> int:
+    """处理素材要写的字节：只算还没完成的音轨 / 代理；素材时长读不到按 0 估（只查余量）。"""
+    material = cfg(pdir)["material"]
+    wav = not media_io.complete_or_adopt(pdir / "work/audio/asr.wav", source=material)
+    proxy = not media_io.complete_or_adopt(pdir / "work/proxy.mp4", source=material)
+    media_s = media_io.duration_or_zero(Path(material)) if wav or proxy else 0.0
+    return diskspace.need_for_prepare(media_s, wav=wav, proxy=proxy)
+
+
+def build_need(pdir: Path, c: dict, shots: list[dict], version: str | None) -> int:
+    """生成成片要写的字节：要重切的镜头 + 预览（覆盖已有且完整的同名版本时不算预览）。"""
+    cut_s = clips.pending_cut_seconds(pdir, Path(c["material"]), shots)
+    have_preview = bool(version) and media_io.is_complete(pdir / "output" / version / "preview.mp4")
+    return diskspace.need_for_build(cut_s, 0.0 if have_preview else sum(s["out"] - s["in"] for s in shots))
 
 
 def require_consent() -> None:
@@ -182,8 +218,10 @@ def cmd_new(args) -> None:
     )
     created = not pdir.exists()
     pdir.mkdir(parents=True, exist_ok=True)
-    try:
-        schema.save(pdir / "project.json", project)
+    try:  # KI-69：原子占位，同名并发新建时绝不覆盖对方刚写好的 project.json
+        schema.create_json_exclusive(pdir / "project.json", schema.migrate(project)[0])
+    except FileExistsError:
+        die(f"项目已存在：{pdir}")  # 目录是对方的，不能删
     except BaseException:
         if created:  # 只清自己建的目录，重试同名不会撞上空目录
             shutil.rmtree(pdir, ignore_errors=True)
@@ -208,13 +246,15 @@ def cmd_transcribe(args) -> None:
     work = pdir / "work"
     wav = work / "audio/asr.wav"
     raw = work / "transcript_raw.json"
-    if not media_io.complete_or_adopt(wav):
+    if not media_io.complete_or_adopt(wav, source=c["material"]):
         info("抽音轨…")
         try:
             media_io.ffmpeg_to(wav, ["-i", c["material"], "-vn", "-ac", "1", "-ar", "16000",
-                                     "-c:a", "pcm_s16le"])
+                                     "-c:a", "pcm_s16le"], timeout=material_timeout(pdir),
+                               source=c["material"])
         except media_io.MediaError as exc:
             die(f"抽音轨失败：{exc}")
+    transcript_stamp.invalidate_if_replaced(work, c["material"])  # 审查修复 M7：新素材不能配旧转写
     if not raw.exists():
         require_consent()
         if not secrets.get("mediakit"):
@@ -225,6 +265,7 @@ def cmd_transcribe(args) -> None:
             client.transcribe(wav, work, duration_s=media_io.duration_or_zero(wav))
         except cloud.CloudError as exc:
             die(f"转写失败：{exc}")
+        transcript_stamp.write(work, c["material"])
     info("整理分段文稿…")
     _run_pipeline("pipeline.format_transcript", [str(raw), "-o", str(work)])
     ok("转写完成 → work/transcript.md / work/segments.json")
@@ -235,7 +276,7 @@ def cmd_analyze(args) -> None:
     pdir = project_dir(args.name)
     work = pdir / "work"
     wav, segs = work / "audio/asr.wav", work / "segments.json"
-    if not media_io.complete_or_adopt(wav) or not segs.exists():
+    if not media_io.complete_or_adopt(wav, source=cfg(pdir)["material"]) or not segs.exists():
         die("先跑 transcribe（需要 work/audio/asr.wav 与 work/segments.json）")
     res = understand_audio.run(wav, segs, work / "segments_audio.json")
     interrupts = sum(1 for x in res["segments"] if x["signals"]["interrupt"])
@@ -254,16 +295,20 @@ def cmd_text(args) -> None:
     if not secrets.get("deepseek"):
         die("未配置 DEEPSEEK_API_KEY：运行 `uv run python aicut.py config set deepseek`")
     batch = getattr(args, "batch", 40)
-    model = getattr(args, "model", "deepseek-chat")
+    model = getattr(args, "model", None) or DEFAULT_MODEL
     info(f"调用 {model} 做话题分段与逐句标注（{batch} 句/批）…")
     pref = style.directive(cfg(pdir).get("calibration"))
     if pref:
         info("已应用剪辑偏好：" + pref)
+    client = metered(work, "text", model)
     try:
-        res = understand_text.run(segs, work / "segments_text.json",
+        res = understand_text.run(segs, work / "segments_text.json", client=client,
                                   batch=batch, model=model, style=pref)
     except LLMError as exc:  # GL-09：含 AnnotationIncomplete；不能当成功往下走
-        die(str(exc))
+        budget = usage.over_budget_message(work)  # 中途超预算：原因要说出来
+        die(str(exc) + (f"；{budget}" if budget and budget not in str(exc) else ""))
+    if res.get("cached"):
+        info(TEXT_CACHED)
     key = sum(1 for x in res["segments"] if x["key_info"])
     ok(f"话题 {len(res['topics'])} 个 · 关键信息 {key} 句"
        + (" · 已补齐上次失败的句子" if res.get("resumed") else ""))
@@ -300,12 +345,13 @@ def cmd_junk(args) -> None:
     c = cfg(pdir)
     work = pdir / "work"
     proxy = work / "proxy.mp4"
-    if not media_io.complete_or_adopt(proxy):
+    if not media_io.complete_or_adopt(proxy, source=c["material"]):
         info("生成 540p 分析代理…")
         try:
             media_io.ffmpeg_to(proxy, ["-i", c["material"], "-vf", "scale=-2:540,fps=30",
                                        *encode.h264_args("proxy"),
-                                       "-c:a", "aac", "-b:a", "64k"])
+                                       "-c:a", "aac", "-b:a", "64k"], timeout=material_timeout(pdir),
+                               source=c["material"])
         except media_io.MediaError as exc:
             die(f"生成分析代理失败：{exc}")
     _run_pipeline("pipeline.junk_detect", [str(proxy), "-o", str(work), "--scene"])
@@ -317,7 +363,7 @@ def cmd_scenes(args) -> None:
     pdir = project_dir(args.name)
     work = pdir / "work"
     proxy = work / "proxy.mp4"
-    if not media_io.complete_or_adopt(proxy):
+    if not media_io.complete_or_adopt(proxy, source=cfg(pdir)["material"]):
         die("先跑 junk（需要 work/proxy.mp4）")
     info("分析镜头切点（在代理片上跑，长素材要 1–3 分钟）…")
     try:
@@ -332,7 +378,7 @@ def cmd_quality(args) -> None:
     pdir = project_dir(args.name)
     work = pdir / "work"
     proxy, segs = work / "proxy.mp4", work / "segments.json"
-    if not media_io.complete_or_adopt(proxy) or not segs.exists():
+    if not media_io.complete_or_adopt(proxy, source=cfg(pdir)["material"]) or not segs.exists():
         die("先跑 junk 与 transcribe（需要 proxy.mp4 与 segments.json）")
     info("抽帧分析画面质量（1 fps，长素材约 30–90 秒）…")
     try:
@@ -357,7 +403,14 @@ def cmd_summary(args) -> None:
     require_consent()
     info("生成内容摘要…")
     pref = style.directive(cfg(pdir).get("calibration"))
-    res = summarize.run(text, scored, work / "content_summary.json", style=pref)
+    model = getattr(args, "model", None) or DEFAULT_MODEL  # KI-83：与 text 一样可选模型
+    try:  # 超预算（BudgetExceeded）不走兜底，在这里停下
+        res = summarize.run(text, scored, work / "content_summary.json", style=pref,
+                            client=metered(work, "summary", model), model=model)
+    except LLMError as exc:
+        die(str(exc))
+    if res.get("cached"):
+        info(SUMMARY_CACHED)
     if res["fallback"]:  # KI-22：兜底要说出原因
         warn(notices.fallback_notice(notices.SUMMARY_FALLBACK_NOTICE, res))
     ok(res["summary"])
@@ -377,7 +430,11 @@ def cmd_questions(args) -> None:
         info("决策问题已存在，跳过（--force 可重新生成，但会让已保存答案失效）")
         return
     require_consent()
-    res = questions.run(summary, scored, out)
+    try:  # --force 且已有题目：失败时保留原题并以非零退出（审查修复）；超预算同样停下
+        res = questions.run(summary, scored, out, client=metered(work, "questions"),
+                            keep_existing=getattr(args, "force", False) and out.exists())
+    except LLMError as exc:
+        die(str(exc))
     if res["fallback"]:
         warn(notices.fallback_notice(notices.QUESTIONS_FALLBACK_NOTICE, res))
     ok(f"决策问题 {len(res['questions'])} 个")
@@ -406,8 +463,8 @@ def cmd_select(args) -> None:
                          target=float(c.get("target_duration") or 175))
     except select.SelectionError as exc:
         die(str(exc))
-    if new_target is not None:  # 选段成功后才保存新目标
-        schema.save(pdir / "project.json", c)
+    if new_target is not None:  # 选段成功后才保存新目标；加锁读改写，不覆盖别人刚改的字段（KI-51）
+        schema.update_project(pdir / "project.json", lambda cur: {**cur, "target_duration": new_target})
         info(TARGET_CHANGED.format(target=select.fmt_duration(new_target)))
     _report_selection(res, args.name)
 
@@ -436,6 +493,10 @@ def cmd_export(args) -> None:
             die("找不到时间线，先跑 select 与 build_documentary，或指定 --timeline")
         timeline = candidates[0]
         info(f"使用最新时间线：{timeline.relative_to(pdir)}")
+    try:  # 清理缓存删掉的切片按这一版的分镜表补切（审查修复 H2）
+        clips.restore_missing(pdir, timeline, Path(cfg(pdir)["material"]))
+    except (clips.ClipsUnavailable, media_io.MediaError) as exc:
+        die(str(exc))
     name = args.package_name or f'{pdir.name.split("_")[0]}_{timeline.parent.name}'
     out = Path(args.out) / f"{name}.zip"
     info("生成草稿并打包（媒体要拷一遍，几分钟）…")
@@ -454,23 +515,8 @@ def cmd_brief(args) -> None:
     preset = load_preset(c["preset"])
     segs = load_json(pdir / "work/segments.json", {}).get("segments", [])
     junk = load_json(pdir / "work/junk_report.json", {}).get("items", [])
-    lines = [f"# 策划分派单 · {c['title']}", "",
-             f"- 原片：`{c['material']}`",
-             f"- 预设：{preset.get('name')}（{preset.get('duration')}s，{c['platform']}）",
-             f"- 结构建议：{' → '.join(preset.get('structure', []))}",
-             f"- 字幕：≤{preset.get('subtitle', {}).get('max_chars', 14)} 字/行",
-             "", f"## 分段文稿（{len(segs)} 段）", ""]
-    for s in segs:
-        lines.append(f"**[{s['id']}] {s['start']:.1f}–{s['end']:.1f}s** {s['text']}")
-    if junk:
-        lines += ["", "## 规则层废片候选", ""]
-        for j in junk:
-            lines.append(f"- {j['start_tc']}–{j['end_tc']} {j['reason']}（{j['suggest']}）")
-    lines += ["", "## 产出要求", "",
-              "写 `shots.json`：每镜含 id / in / out / sub / note；",
-              "再跑 `python3 aicut.py build <项目> --version v1` 出片。"]
     out = pdir / "work/brief.md"
-    out.write_text("\n".join(lines), encoding="utf-8")
+    out.write_text(brief.render_brief(c, preset, segs, junk), encoding="utf-8")
     ok(f"策划分派单 → {out}")
 
 
@@ -491,10 +537,7 @@ def ensure_clips(pdir: Path, c: dict, shots: list[dict]) -> Path:
             continue
         info(f"切镜头 {sh['id']}（{sh['out'] - sh['in']:.1f}s）")
         try:
-            media_io.ffmpeg_to(dst, ["-ss", f"{sh['in']:.3f}", "-t", f"{sh['out'] - sh['in']:.3f}",
-                                     "-i", str(src), "-vf", CLIP_VF,
-                                     *encode.h264_args("clip"),
-                                     "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"])
+            clips.cut_clip(dst, src, sh)
         except media_io.MediaError as exc:
             die(f"切镜头 {sh['id']} 失败：{exc}")
         manifest = {**manifest, sh["id"]: key}
@@ -511,58 +554,6 @@ def actual_durations(clips_dir: Path, shots: list[dict]) -> dict[str, float]:
         d = media_io.duration_or_zero(clips_dir / f"{sh['id']}.mp4")
         out[sh["id"]] = round(d if d > 0 else sh["out"] - sh["in"], 3)
     return out
-
-
-def compose_timeline(c: dict, preset: dict, shots: list[dict], clips_dir: Path,
-                     durations: dict[str, float]) -> dict:
-    import re
-    max_chars = preset.get("subtitle", {}).get("max_chars", 14)
-
-    def split_sub(text: str) -> list[str]:
-        parts = re.split(r"(?<=[，。！？；])", text)
-        cards, cur = [], ""
-        for p in parts:
-            if not p:
-                continue
-            if len(cur) + len(p) <= max_chars:
-                cur += p
-            else:
-                if cur:
-                    cards.append(cur)
-                while len(p) > max_chars:
-                    cards.append(p[:max_chars]); p = p[max_chars:]
-                cur = p
-        if cur:
-            cards.append(cur)
-        return cards or [text]
-
-    tl = {"project": {"name": c["title"], "width": 1080, "height": 1920,
-                      "fps": 30, "platform": c.get("platform", "douyin")},
-          "video": [], "audio": [], "text": []}
-    t = 0.0
-    for sh in shots:
-        dur = durations.get(sh["id"], round(sh["out"] - sh["in"], 3))
-        tl["video"].append({"id": sh["id"], "source": str(clips_dir / f"{sh['id']}.mp4"),
-                            "in": 0.0, "out": dur, "timeline_in": round(t, 3),
-                            "role": "broll" if not sh.get("sub") else "speech",
-                            "caption": sh.get("note", "")})
-        if sh.get("sub"):
-            cards = split_sub(sh["sub"])
-            total = sum(len(x) for x in cards)
-            ct = t
-            for card in cards:
-                cd = dur * len(card) / total
-                tl["text"].append({"id": f"{sh['id']}_{len(tl['text'])}",
-                                   "text": card, "start": round(ct, 3),
-                                   "end": round(ct + cd, 3),
-                                   "style": {"size": preset.get("subtitle", {}).get("size", 6.5),
-                                             "color": [1, 1, 1], "bold": True, "align": 2}})
-                ct += cd
-        t += dur
-    tl["text"] += build_documentary.card_entries(
-        preset.get("cards", []), t,
-        size=preset.get("card", {}).get("size", build_documentary.CARD_SIZE))
-    return tl
 
 
 def ensure_preview(vdir: Path, tl_hash: str) -> Path:
@@ -608,6 +599,8 @@ def cmd_build(args) -> None:
         die(str(exc))
     if missing:
         die(select.describe_missing(missing, from_selection=shots_file != pdir / "shots.json"))
+    if low := diskspace.shortfall(pdir, build_need(pdir, c, shots, args.version)):
+        die(low)  # KI-33：切片 / 预览之前确认磁盘够（只算要写的，M5）
 
     with applog.stage(pdir / "work", "clips"):
         clips_dir = ensure_clips(pdir, c, shots)
@@ -617,7 +610,8 @@ def cmd_build(args) -> None:
 
     durations = actual_durations(clips_dir, shots)
     tl = compose_timeline(c, preset, shots, clips_dir, durations)
-    save_json(vdir / "timeline.json", tl)
+    save_json(vdir / "timeline.json", schema.stamp(tl))  # KI-37；指纹仍按未打标的时间线算
+    clips.save_snapshot(vdir, shots)  # 清理缓存后导出这一版时按它补切（审查修复 H2）
     tl_hash = build_documentary.preview_fingerprint(tl, shots, Path(c["material"]))  # KI-11
     total = sum(durations.values())
     ok(f"时间线：{len(shots)} 镜，{int(total // 60)}:{total % 60:05.2f}")
@@ -636,8 +630,13 @@ def install_draft(vdir: Path, draft_name: str) -> None:
     if proc.FROZEN:
         code, out = proc.run_inprocess("pipeline.to_jianying", argv)
     else:
-        r = subprocess.run(proc.dev_module_cmd(ensure_jy_python(), "pipeline.to_jianying", argv),
-                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        try:
+            r = subprocess.run(proc.dev_module_cmd(ensure_jy_python(), "pipeline.to_jianying", argv),
+                               capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=media_io.FFMPEG_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            die(STEP_TIMEOUT_MSG.format(module="pipeline.to_jianying",
+                                        m=round(media_io.FFMPEG_TIMEOUT_S / 60)))
         code, out = r.returncode, (r.stdout or "") + (r.stderr or "")
     if code != 0:
         print("\n".join(out.strip().splitlines()[-DRAFT_LOG_LINES:]))
@@ -660,6 +659,8 @@ def cmd_prepare(args) -> None:
         die(PREPARE_KEYS_MISSING.format(names=readiness.describe(missing)))
     if problem := encode.preflight():  # 付费步骤之前确认能出片
         die(problem)
+    if low := diskspace.shortfall(pdir, prepare_need(pdir)):
+        die(low)  # KI-33：抽音轨 / 代理之前确认磁盘够（只算还没完成的，M5）
     for step in readiness.PREPARE_STEPS:  # 每段计时进 work/timings.json（GL-19，诊断包会带上）
         with applog.stage(pdir / "work", step):
             globals()[f"cmd_{step}"](args)
@@ -675,39 +676,6 @@ def cmd_run(args) -> None:
         info("还没有 shots.json —— 让 AI 按 work/brief.md 写一版，或手动写，然后跑 build")
 
 
-def ask_target(default: int) -> int:
-    """在终端里问成片时长；非交互环境（含 GUI）直接用预设值。"""
-    if not sys.stdin.isatty():
-        return default
-    while True:
-        raw = input(TARGET_PROMPT.format(default=default) + "\n  > ").strip()
-        if not raw:
-            return default
-        try:
-            return schema.check_target_duration(raw)
-        except ValueError as exc:
-            print(f"  {exc}")
-
-
-def ask_calibration(existing: dict) -> dict:
-    """在终端里问剪辑员三个问题（非交互环境直接返回原值）。"""
-    cur = style.normalize(existing)
-    if not sys.stdin.isatty():
-        return cur
-    print("\n先问三个问题，答案会写进提示词（回车沿用当前值）：")
-    for key, question in style.QUESTIONS:
-        default = cur.get(key, "")
-        suffix = f" [{default}]" if default else ""
-        raw = input(f"  {question}{suffix}\n  > ").strip()
-        if raw:
-            cur[key] = raw
-    cur = style.normalize(cur)
-    print(f"  已记录：{style.TONES[cur['tone']]}"
-          + (f" · 观众 {cur['audience']}" if cur["audience"] else "")
-          + (" · 含指定原话" if cur["must_lines"] else ""))
-    return cur
-
-
 def cmd_calibrate(args) -> None:
     """运行时校准剪辑偏好；不传参数则交互式问答。"""
     pdir = project_dir(args.name)
@@ -721,8 +689,7 @@ def cmd_calibrate(args) -> None:
         print(f"提示词效果: {style.directive(cur) or '（无，使用默认）'}")
         return
     if args.reset:
-        c["calibration"] = {}
-        schema.save(pdir / "project.json", c)
+        schema.update_project(pdir / "project.json", lambda cur: {**cur, "calibration": {}})
         ok("已清除剪辑偏好")
         return
     updated = dict(current)
@@ -732,91 +699,43 @@ def cmd_calibrate(args) -> None:
             updated[key] = value
     if not any(getattr(args, k, None) is not None for k in ("tone", "audience", "must_lines")):
         updated = ask_calibration(current)
-    c["calibration"] = style.normalize(updated)
-    schema.save(pdir / "project.json", c)
-    ok("剪辑偏好已保存：" + (style.directive(c["calibration"]) or "（空）"))
+    calibration = style.normalize(updated)
+    schema.update_project(pdir / "project.json", lambda cur: {**cur, "calibration": calibration})
+    ok("剪辑偏好已保存：" + (style.directive(calibration) or "（空）"))
 
 
 def cmd_config(args) -> None:
     """凭证管理：查看（掩码）/ 设置 / 删除。"""
-    if not args.action:
-        st = secrets.status()
-        for name, item in st.items():
-            mark = "✓" if item["configured"] else "·"
-            src = f"（来源 {item['source']}）" if item["source"] else ""
-            print(f"[{mark}] {name:9s} {item['masked'] or '未配置'} {src}")
-        if not st["mediakit"]["configured"]:
-            info("设置：uv run python aicut.py config set mediakit")
-        return
-    if args.action == "consent":
-        print(consent.NOTICE_TITLE)
-        print("\n".join(consent.NOTICE_LINES))
-        consent.accept()
-        ok("已记录：你已阅读数据外发说明")
-        return
-    provider = args.provider
-    if args.action == "set":
-        if sys.stdin.isatty():
-            import getpass
-            value = getpass.getpass(f"粘贴 {provider} 的 Key（输入不回显）：").strip()
-        else:
-            value = sys.stdin.readline().strip()
-        if not value:
-            die("Key 为空，已取消")
-        backend = secrets.set(provider, value)
-        ok(f"已保存到 {backend}：{secrets.mask(value)}")
-    elif args.action == "unset":
-        secrets.delete(provider)
-        ok(f"已删除 {provider}")
-    else:
-        die(f"未知操作：{args.action}")
+    config_cli.run(args, ok=ok, info=info, die=die)
+
+
+def cmd_clean(args) -> None:
+    """KI-33：删可重建的中间产物（切片缓存、临时文件、已用完的音轨）；--dry-run 只列出。"""
+    project_cli.clean(project_dir(args.name), args.dry_run, ok=ok, info=info, die=die)
 
 
 def cmd_status(args) -> None:
     pdir = project_dir(args.name)
-    c = cfg(pdir)
-    checks = [
-        ("素材台账", pdir / "work/materials.json"),
-        ("音轨", pdir / "work/audio/asr.wav"),
-        ("转写", pdir / "work/transcript_raw.json"),
-        ("分段文稿", pdir / "work/transcript.md"),
-        ("声音特征 (a)", pdir / "work/segments_audio.json"),
-        ("文本标注 (b)", pdir / "work/segments_text.json"),
-        ("分析代理", pdir / "work/proxy.mp4"),
-        ("废片表", pdir / "work/junk_report.csv"),
-        ("镜头切分 (c)", pdir / "work/shots_visual.json"),
-        ("三档判定", pdir / "work/segments_scored.json"),
-        ("内容摘要", pdir / "work/content_summary.json"),
-        ("决策问题", pdir / "work/questions.json"),
-        ("人工裁决", pdir / "work/overrides.json"),
-        ("策划分派单", pdir / "work/brief.md"),
-        ("分镜表", pdir / "shots.json"),
-        ("选段时间线", pdir / "work/shots-selected.json"),
-    ]
-    print(f"\n项目：{c['title']}（{c['name']}）")
-    print(f"预设：{c['preset']}　平台：{c['platform']}　目标：{c['target_duration']}s\n")
-    text_incomplete = understand_text.is_incomplete(pdir / "work/segments_text.json")
-    for label, p in checks:
-        if p.name == "segments_text.json" and text_incomplete:
-            print(f"  [!] {label}：{TEXT_INCOMPLETE_STATUS}")
-            continue
-        done = media_io.complete_or_adopt(p) if p.suffix in MEDIA_SUFFIXES else p.exists()
-        print(f"  [{'✓' if done else '·'}] {label}")
-    outs = sorted(p.name for p in (pdir / "output").glob("v*") if p.is_dir())
-    print(f"\n已出片：{outs or '无'}")
+    project_cli.status(pdir, cfg(pdir))
 
 
 def cmd_list(args) -> None:
-    for p in sorted(PROJECTS.glob("*/project.json")):
-        try:
-            c = load_json(p)
-        except schema.CorruptJSON:  # 一个项目坏了不影响列出其它项目
-            c = {"name": p.parent.name, "title": LIST_CORRUPT}
-        outs = sorted(x.name for x in (p.parent / "output").glob("v*"))
-        print(f"{c['name']:28s} {c.get('title', ''):12s} {c.get('preset', ''):10s} {outs}")
+    project_cli.list_projects(PROJECTS)
 
 
 # ------------------------------------------------------------------ 入口
+def _project_busy(args):
+    """读写项目产物的命令持项目共享锁（「清理缓存」据此拒绝）；名字不合法 / 项目不存在时交给命令自己报错。"""
+    name = getattr(args, "name", None)
+    if args.cmd in UNLOCKED_CMDS or not isinstance(name, str):
+        return contextlib.nullcontext()
+    try:
+        pdir = PROJECTS / schema.check_project_name(name)
+    except ValueError:
+        return contextlib.nullcontext()
+    return project_lock.busy(pdir) if (pdir / "project.json").is_file() else contextlib.nullcontext()
+
+
 def run_cli(argv: list[str]) -> int:
     """执行一条命令并返回退出码（供 GUI 在同一进程里调用）。"""
     try:
@@ -832,79 +751,11 @@ def run_cli(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> None:
-    ap = argparse.ArgumentParser(description="aicut 视频剪辑流水线")
-    sub = ap.add_subparsers(dest="cmd", required=True)
-
-    p = sub.add_parser("new"); p.add_argument("name")
-    p.add_argument("--material", required=True); p.add_argument("--title")
-    p.add_argument("--preset", default="纪实3min")
-    p.add_argument("--tone", choices=list(style.TONES))
-    p.add_argument("--audience", default=None)
-    p.add_argument("--must-lines", dest="must_lines", default=None)
-    p.add_argument("--target", default=None, help="成片目标时长（秒），默认用预设")
-    p.add_argument("--no-input", dest="no_input", action="store_true",
-                   help="不在终端提问（GUI 调用时使用）")
-    p.set_defaults(fn=cmd_new)
-
-    for name, fn in [("run", cmd_run), ("build", cmd_build)]:  # KI-16：run 有 shots.json 时直接调 cmd_build
-        p = sub.add_parser(name); p.add_argument("name"); p.set_defaults(fn=fn)
-        p.add_argument("--version"); p.add_argument("--no-draft", action="store_true")
-    for name, fn in [("prepare", cmd_prepare),
-                     ("ingest", cmd_ingest), ("analyze", cmd_analyze),
-                     ("transcribe", cmd_transcribe), ("junk", cmd_junk),
-                     ("brief", cmd_brief), ("status", cmd_status)]:
-        p = sub.add_parser(name); p.add_argument("name"); p.set_defaults(fn=fn)
-
-    p = sub.add_parser("text"); p.add_argument("name")
-    p.add_argument("--batch", type=int, default=40)
-    p.add_argument("--model", default="deepseek-chat")
-    p.set_defaults(fn=cmd_text)
-
-    p = sub.add_parser("quality"); p.add_argument("name")
-    p.set_defaults(fn=cmd_quality)
-
-    p = sub.add_parser("export"); p.add_argument("name")
-    p.add_argument("--timeline", default=None)
-    p.add_argument("--package-name", dest="package_name", default=None)
-    p.add_argument("-o", "--out", default="dist")
-    p.set_defaults(fn=cmd_export)
-
-    p = sub.add_parser("select"); p.add_argument("name")
-    p.add_argument("--target", default=None, help="改目标时长（秒）后只重跑选段")
-    p.set_defaults(fn=cmd_select)
-
-    p = sub.add_parser("questions"); p.add_argument("name")
-    p.add_argument("--force", action="store_true")
-    p.set_defaults(fn=cmd_questions)
-
-    p = sub.add_parser("summary"); p.add_argument("name")
-    p.set_defaults(fn=cmd_summary)
-
-    p = sub.add_parser("score"); p.add_argument("name")
-    p.set_defaults(fn=cmd_score)
-
-    p = sub.add_parser("scenes"); p.add_argument("name")
-    p.add_argument("--threshold", type=float, default=8.0)
-    p.set_defaults(fn=cmd_scenes)
-
-    p = sub.add_parser("calibrate"); p.add_argument("name")
-    p.add_argument("--tone", choices=list(style.TONES))
-    p.add_argument("--audience")
-    p.add_argument("--must-lines", dest="must_lines")
-    p.add_argument("--show", action="store_true")
-    p.add_argument("--reset", action="store_true")
-    p.set_defaults(fn=cmd_calibrate)
-
-    p = sub.add_parser("config"); p.set_defaults(fn=cmd_config)
-    p.add_argument("action", nargs="?", choices=["set", "unset", "consent"])
-    p.add_argument("provider", nargs="?", default="mediakit",
-                   choices=list(secrets.PROVIDERS))
-
-    p = sub.add_parser("list"); p.set_defaults(fn=cmd_list)
-
-    args = ap.parse_args(argv)
+    handlers = {n[4:]: f for n, f in globals().items() if n.startswith("cmd_")}  # 现取：打桩照样生效
+    args = cli_args.build_parser(handlers).parse_args(argv)
     try:
-        args.fn(args)
+        with _project_busy(args):
+            args.fn(args)
     except (schema.CorruptJSON, review.OverridesCorrupt) as exc:  # KI-21 / KI-56：人话，不给 traceback
         die(str(exc))
 

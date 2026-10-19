@@ -21,7 +21,7 @@ const calls = [];
 const ctx = {
   URL, Headers, console,
   location: {href: 'http://127.0.0.1:8765/', origin: 'http://127.0.0.1:8765'},
-  document: {querySelector: () => ({content: 'TOKEN123'})},
+  document: {querySelector: () => ({content: 'TOKEN123'}), addEventListener: () => {}},
   fetch: (input, init) => { calls.push({input, init}); return Promise.resolve(); },
   calls,
 };
@@ -90,9 +90,9 @@ def test_fetch_does_not_leak_token(url):
 
 # ---------------------------------------------------------------- renumber / nextShotId
 def _shot_id_src() -> str:
-    src = (STATIC / "index.html").read_text(encoding="utf-8")
+    src = (STATIC / "index.js").read_text(encoding="utf-8")  # KI-53：脚本外置
     m = re.search(r"const SHOT_ID_RE[\s\S]*?\nfunction renumber\(\)\{[\s\S]*?\n\}\n", src)
-    assert m, "index.html 里找不到 SHOT_ID_RE / nextShotId / renumber"
+    assert m, "index.js 里找不到 SHOT_ID_RE / nextShotId / renumber"
     return "var state = {shots: []};\n" + m.group(0).replace("const SHOT_ID_RE", "var SHOT_ID_RE")
 
 
@@ -154,19 +154,21 @@ Promise.resolve(vm.runInContext(script, ctx)).then(out =>
 
 
 def _project_switch_src() -> str:
-    src = (STATIC / "index.html").read_text(encoding="utf-8")
+    src = (STATIC / "index.js").read_text(encoding="utf-8")  # KI-53：脚本外置
     parts = ["var state = { project:null, data:null, tab:'preview', sel:null, shots:[], dirty:false };",
-             "var saveTimer = null;"]
+             "var saveTimer = null; var stateSeq = 0; var usageText = () => '';",
+             "var COPY_SAVE_FAILED = '保存失败：';",
+             "var saveQ = {chain: Promise.resolve(true), queued: null};"]
     for name in ("selectProject", "flushPendingSave", "refreshOrWarn", "showProjectError", "refresh",
-                 "saveShots", "scheduleSave"):
+                 "saveShots", "postShots", "scheduleSave"):
         m = re.search(r"(async )?function " + name + r"\([^)]*\)\{[\s\S]*?\n\}\n", src)
         assert m, name
         parts.append(m.group(0))
     return "\n".join(parts)
 
 
-def run_async(script):
-    args = json.dumps([_project_switch_src(), script])
+def run_async(script, extra_src=""):
+    args = json.dumps([_project_switch_src() + "\n" + extra_src, script])
     r = subprocess.run([NODE, "-e", ASYNC_HARNESS, args], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -198,3 +200,114 @@ def test_pending_shot_save_goes_to_original_project_and_no_save_after_failure():
       return [posts, ok];
     }})()""")
     assert out == [["/api/shots?project=A"], False]
+
+
+# ---------------------------------------------------------------- KI-50 / KI-35：保存串行、切项目竞态、生成前先存
+TICK = "await new Promise(r => setTimeout(r, 0));"
+
+
+def test_saves_are_serialized_and_last_state_wins():
+    out = run_async(f"""(async () => {{
+      stateResp = {GOOD_STATE};
+      await selectProject('A');
+      let inflight = 0, maxInflight = 0; const bodies = [], done = [];
+      api = (path, opt) => {{
+        inflight++; maxInflight = Math.max(maxInflight, inflight);
+        bodies.push(JSON.parse(opt.body).shots.map(s => s.sub));
+        return new Promise(res => done.push(() => {{ inflight--; res({{}}); }}));
+      }};
+      state.shots[0].sub = 'v1'; saveShots(true);
+      {TICK}
+      state.shots[0].sub = 'v2'; saveShots(true);
+      state.shots[0].sub = 'v3'; const last = saveShots(true);
+      {TICK}
+      const during = bodies.length;
+      done.shift()(); {TICK} {TICK}
+      done.shift()(); const ok = await last;
+      return [maxInflight, during, bodies, ok];
+    }})()""")
+    assert out == [1, 1, [["v1"], ["v3"]], True]
+
+
+def test_stale_state_response_is_dropped():
+    out = run_async("""(async () => {
+      let releaseA;
+      api = (path) => path.includes('project=A')
+        ? new Promise(r => { releaseA = () => r({project:{name:'A', title:'A'}, stages:[], shots:[], warnings:[]}); })
+        : Promise.resolve({project:{name:'B', title:'B'}, stages:[], shots:[], warnings:[]});
+      const a = selectProject('A');
+      const b = selectProject('B');
+      await b;
+      releaseA(); const aResult = await a;
+      return [state.project, state.data.project.name, els['#title'].textContent, aResult === undefined];
+    })()""")
+    assert out == ["B", "B", "B", True]
+
+
+def test_stale_state_error_is_not_reported():
+    out = run_async("""(async () => {
+      let failA;
+      api = (path) => path.includes('project=A')
+        ? new Promise((_, rej) => { failA = () => rej(new Error('A 损坏')); })
+        : Promise.resolve({project:{name:'B', title:'B'}, stages:[], shots:[], warnings:[]});
+      const a = selectProject('A');
+      await selectProject('B');
+      failA(); await a;
+      return [state.project, toasts];
+    })()""")
+    assert out == ["B", []]
+
+
+def _build_src():
+    jobs = (STATIC / "jobs.js").read_text(encoding="utf-8")
+    m = re.search(r"async function startJob\([^)]*\)\{[\s\S]*?\n\}\n", jobs)
+    assert m, "jobs.js 里找不到 startJob"
+    stubs = ("var jobUi = {last: null, id: null, polling: null}; var COPY_JOB_SAVE_FIRST = 'save first';"
+             "var jobModal = () => {}; var setJobActions = () => {}; var pollJob = () => {};"
+             "var onJobStartError = () => {};")
+    return stubs + "\n" + m.group(0)
+
+
+def test_build_flushes_pending_save_first():
+    out = run_async(f"""(async () => {{
+      stateResp = {GOOD_STATE};
+      await selectProject('A');
+      vm_eval(BUILD_SRC);
+      state.shots[0].sub = '改过的字幕'; scheduleSave();   // 防抖中的保存还没发
+      await startJob('build');
+      return posts;
+    }})()""".replace("vm_eval(BUILD_SRC);", ""), extra_src=_build_src())
+    assert out == ["/api/shots?project=A", "/api/job"]
+
+
+def test_build_stops_when_save_fails():
+    out = run_async(f"""(async () => {{
+      stateResp = {GOOD_STATE};
+      await selectProject('A');
+      api = async (path) => {{ posts.push(path); if (path.startsWith('/api/shots')) throw new Error('409'); return {{}}; }};
+      scheduleSave();
+      await startJob('build');
+      return [posts, toasts.at(-1)];
+    }})()""", extra_src=_build_src())
+    assert out == [["/api/shots?project=A"], "save first"]
+
+
+# ---------------------------------------------------------------- KI-53：事件委托只认最内层
+def test_action_dispatch_uses_innermost_target():
+    out = run_js("""
+      const hits = [];
+      ACTIONS.pick = el => hits.push('pick:' + el.getAttribute('data-i'));
+      ACTIONS.move = (el, ev) => hits.push('move:' + el.getAttribute('data-i') + ':' + ev.type);
+      const mk = (attrs, parent) => ({attrs, parent, getAttribute(a){ return this.attrs[a]; },
+        closest(sel){ const a = sel.slice(1, -1); let n = this; while (n && !(a in n.attrs)) n = n.parent; return n || null; }});
+      const row = mk({'data-act': 'pick', 'data-i': '2'}, null);
+      const btn = mk({'data-act': 'move', 'data-i': '2'}, row);
+      const text = mk({}, row);
+      dispatchAction('data-act', {type: 'click', target: btn});
+      dispatchAction('data-act', {type: 'click', target: text});
+      dispatchAction('data-act', {type: 'click', target: mk({'data-act': 'constructor'}, null)});
+      dispatchAction('data-act', {type: 'click', target: mk({}, null)});
+      dispatchAction('data-act', {type: 'click', target: null});
+      hits;
+    """)
+    assert out == ["move:2:click", "pick:2"]

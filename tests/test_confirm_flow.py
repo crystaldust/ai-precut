@@ -73,14 +73,15 @@ def test_confirm_answers_missing_project_404(gui_server):
     assert status == 404
 
 
-def test_index_has_confirm_entry():
+def test_index_has_confirm_entry():  # KI-53：脚本外置到 index.js；KI-36：子页面经 openSubpage 打开
     html = (ROOT / "gui/static/index.html").read_text(encoding="utf-8")
-    assert "openConfirm()" in html and "/static/confirm.html?project=" in html
-    assert "COPY_CONFIRM_ENTRY" in html
+    js = (ROOT / "gui/static/index.js").read_text(encoding="utf-8")
+    assert 'data-act="openConfirm"' in html and "openSubpage('confirm')" in js
+    assert "/static/${page}.html?project=" in js and "COPY_CONFIRM_ENTRY" in js
 
 
 def test_confirm_page_polls_job():
-    html = (ROOT / "gui/static/confirm.html").read_text(encoding="utf-8")
+    html = (ROOT / "gui/static/confirm.js").read_text(encoding="utf-8")  # KI-53：脚本外置
     assert "/api/job/" in html and "job_id" in html and "job_error" in html
     for name in ("COPY_RESELECT_RUNNING", "COPY_RESELECT_DONE", "COPY_RESELECT_FAILED", "COPY_RESELECT_BLOCKED"):
         assert name in html
@@ -90,3 +91,70 @@ def test_confirm_page_polls_job():
 def test_calibrate_hint_says_one_quote_per_line():  # M6 · KI-03 / D5
     html = (ROOT / "gui/static/calibrate.html").read_text(encoding="utf-8")
     assert "每句一行（也可以用逗号分隔）" in html and "用逗号分隔。" not in html
+
+
+def test_saved_answers_carry_rules_version(tmp_path):  # KI-84
+    import json as _json
+    from gui import confirm
+    from pipeline import select_rules
+    work = tmp_path / "p/work"
+    work.mkdir(parents=True)
+    (work / "questions.json").write_text(_json.dumps({"questions": []}), encoding="utf-8")
+    confirm.save_answers(tmp_path / "p", "p", {"answers": {}, "confirmed": False})
+    saved = _json.loads((work / "brief_answers.json").read_text(encoding="utf-8"))
+    assert saved["rules_version"] == select_rules.RULES_VERSION
+
+
+# ---------------------------------------------------------------- KI-86：旧版决策问题（focus 是自由文本）
+LEGACY_QS = {"questions": [{"id": "q1", "text": "主角？", "type": "single", "options": [
+    {"label": "妈妈", "rule": {"kind": "focus", "value": "妈妈"}},
+    {"label": "群像", "rule": {"kind": "focus", "value": "ensemble"}}]}]}
+
+
+def test_legacy_focus_detected():
+    from pipeline import questions
+    assert questions.has_legacy_focus(LEGACY_QS)
+    assert not questions.has_legacy_focus(QUESTIONS)
+    assert not questions.has_legacy_focus({"questions": [{"options": [
+        {"rule": {"kind": "focus", "value": "main"}}]}]})
+    assert not questions.has_legacy_focus(None)
+
+
+def test_confirm_payload_flags_stale_questions(gui_server):
+    make_project(gui_server.root, **{"work/questions.json": json.dumps(LEGACY_QS, ensure_ascii=False)})
+    status, raw, _ = call(gui_server, "GET", "/api/confirm?project=p1")
+    data = json.loads(raw)
+    assert status == 200 and data["stale_questions"] is True and data["stale_hint"]
+    _project_fresh = make_project(gui_server.root, name="p2",
+                                  **{"work/questions.json": json.dumps(QUESTIONS, ensure_ascii=False)})
+    status, raw, _ = call(gui_server, "GET", "/api/confirm?project=p2")
+    assert json.loads(raw)["stale_questions"] is False
+
+
+def test_regenerate_questions_job_runs_force(gui_server, monkeypatch, consented):
+    from gui import jobs
+    from pipeline import secrets
+    secrets.set("deepseek", "sk-regeneratekey1234")
+    _project(gui_server)
+    seen = fake_command(monkeypatch, jobs, QUICK)
+    status, data = post_job(gui_server, task="questions")
+    assert status == 200 and seen[0][0] == "questions"
+    assert jobs.JOB_COMMANDS["questions"] == ["questions", "--force"]
+    assert jobs.job_command.__module__  # 真实命令行由 JOB_COMMANDS 拼出
+    assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] == "done")
+
+
+def test_regenerate_questions_needs_deepseek_key(gui_server, monkeypatch, consented):
+    from gui import jobs
+    _project(gui_server)
+    fake_command(monkeypatch, jobs, QUICK)
+    status, data = post_job(gui_server, task="questions")
+    assert status == 409 and data["need"] == "keys" and data["missing"] == ["deepseek"]
+
+
+def test_regenerate_questions_needs_consent(gui_server, monkeypatch):
+    from gui import jobs
+    _project(gui_server)
+    fake_command(monkeypatch, jobs, QUICK)
+    status, data = post_job(gui_server, task="questions")
+    assert status == 409 and data["need"] == "consent"

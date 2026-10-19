@@ -48,6 +48,24 @@ def check_prepare_ready(pdir: Path) -> None:
         raise PrepareBlocked("encoder", problem)
 
 
+def check_questions_ready(_pdir: Path) -> None:
+    """重新生成决策问题（KI-86）：要外发告知 + DeepSeek Key；不需要转写 Key、不需要编码器。"""
+    if not consent.accepted():
+        raise PrepareBlocked("consent", NEED_CONSENT_MSG)
+    if not secrets.get("deepseek"):
+        raise PrepareBlocked("keys", NEED_KEYS_MSG.format(
+            names=secrets.PROVIDER_LABELS["deepseek"]["label"]), ["deepseek"])
+
+
+READY_CHECKS = {"prepare": check_prepare_ready, "questions": check_questions_ready}
+
+
+def check_ready(pdir: Path, task: str) -> None:
+    """起任务前的前置检查（没有检查的任务直接放行）；不满足抛 PrepareBlocked → 409。"""
+    if isinstance(task, str) and (check := READY_CHECKS.get(task)) is not None:
+        check(pdir)
+
+
 def _provider(body: dict) -> str | None:
     provider = body.get("provider")
     return provider if isinstance(provider, str) and provider in secrets.PROVIDERS else None

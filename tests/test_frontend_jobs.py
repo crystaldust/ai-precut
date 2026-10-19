@@ -30,6 +30,7 @@ const ctx = {
   document: {
     querySelector: s => s.startsWith('meta') ? {content:'T'} : el(s.replace(/^#/, '')),
     querySelectorAll: s => (ctx.__rows || []),
+    addEventListener: () => {},  // common.js 的事件委托（KI-53）
   },
   fetch: () => Promise.resolve(), els, el,
 };
@@ -55,6 +56,7 @@ var toast = t => calls.push(['toast', t]);
 var refresh = () => Promise.resolve();
 var openTarget = () => calls.push(['openTarget']);
 var renderTab = () => calls.push(['renderTab']);
+var flushPendingSave = () => Promise.resolve(true);
 """
 
 
@@ -73,9 +75,9 @@ def api_rejects(status, data):
 
 # ---------------------------------------------------------------- GL-22：字幕框可输入
 def _index_fn(name):
-    src = (STATIC / "index.html").read_text(encoding="utf-8")
+    src = (STATIC / "index.js").read_text(encoding="utf-8")  # KI-53：内联脚本外置到 index.js
     m = re.search(r"^function %s\(.*?\n(?=function |let |const |/\*)" % name, src, re.S | re.M)
-    assert m, f"index.html 里找不到 {name}"
+    assert m, f"index.js 里找不到 {name}"
     return m.group(0)
 
 
@@ -90,9 +92,9 @@ def test_pick_only_toggles_highlight_not_rerender():
 
 # ---------------------------------------------------------------- 任务弹窗按钮
 @pytest.mark.parametrize("kind, has, lacks", [
-    ("running", ["取消任务", "cancelJob()"], ["重试"]),
-    ("ended", ["重试", "关闭", "retryJob()", "closeModal()"], ["取消任务"]),
-    ("conflict", ["查看进行中的任务", "attachJob()", "关闭"], ["重试"]),
+    ("running", ["取消任务", 'data-act="cancelJob"'], ["重试"]),
+    ("ended", ["重试", "关闭", 'data-act="retryJob"', 'data-act="closeModal"'], ["取消任务"]),
+    ("conflict", ["查看进行中的任务", 'data-act="attachJob"', "关闭"], ["重试"]),
     ("ack", ["知道了"], ["取消任务"]),
 ])
 def test_job_actions_html(kind, has, lacks):
@@ -139,7 +141,7 @@ def test_bad_request_offers_retry_and_close():
 def test_version_export_html_uses_index_not_name():
     html = run_js("versionExportHtml({name: \"v1');alert(1)//\", windows_zip: '<b>x.zip', windows_mb: 3}, 0)",
                   files=["jobs.js"])
-    assert "exportVersion(0)" in html and "revealExport(0)" in html
+    assert 'data-act="exportVersion" data-i="0"' in html and 'data-act="revealExport" data-i="0"' in html
     assert "alert" not in html and "<b>" not in html and "&lt;b&gt;x.zip" in html
 
 
@@ -162,7 +164,8 @@ def test_settings_rows_escape_and_env_has_no_clear():
     html = run_js(f"settingsRowsHtml({json.dumps(cfg)})", files=["settings.js"])
     assert "<img" not in html and "&lt;img src=x&gt;" in html
     assert "AKLT****9f2a" in html and "来自环境变量" in html
-    assert "deleteKey('mediakit')" in html and "deleteKey('deepseek')" not in html
+    assert 'data-act="deleteKey" data-provider="mediakit"' in html
+    assert 'data-provider="deepseek"' in html and 'data-act="deleteKey" data-provider="deepseek"' not in html
     assert "bad'key" not in html
     assert 'type="password"' in html
 
@@ -197,20 +200,21 @@ def test_save_key_clears_input_and_never_toasts_plaintext():
     assert out[0] == "" and "sk-secret-value" not in out[1]
 
 
-def test_static_scripts_load_before_inline_and_settings_entry_exists():
+def test_static_scripts_load_before_page_script_and_settings_entry_exists():
     src = (STATIC / "index.html").read_text(encoding="utf-8")
-    inline = src.index("<script>\n")
-    for name in ("jobs.js", "settings.js"):
+    page = src.index('<script src="/static/index.js"></script>')
+    for name in ("common.js", "jobs.js", "settings.js", "support.js"):
         tag = f'<script src="/static/{name}"></script>'
-        assert tag in src and src.index(tag) < inline
-    assert 'id="btnSettings"' in src and "checkFirstRun()" in src
+        assert tag in src and src.index(tag) < page
+    assert 'id="btnSettings"' in src
+    assert "checkFirstRun()" in (STATIC / "index.js").read_text(encoding="utf-8")
 
 
 def test_legacy_key_is_read_only_in_settings():
     cfg = {"providers": [{"key": "mediakit", "label": "l", "hint": "h", "configured": True,
                           "source": "legacy", "masked": "AKLT****iNzE"}]}
     html = run_js(f"settingsRowsHtml({json.dumps(cfg)})", files=["settings.js"])
-    assert "deleteKey('mediakit')" not in html  # 清除删不掉旧版文件，按钮不能骗人
+    assert 'data-act="deleteKey"' not in html  # 清除删不掉旧版文件，按钮不能骗人
     assert "~/.mediakit/api_key" in html
 
 
@@ -244,7 +248,7 @@ def test_settings_has_close_button_that_drops_retry():
                  "var retried = 0;"
                  "openSettings(() => { retried++; }, ['deepseek'])"
                  ".then(() => { const html = el('modalBody').innerHTML; closeSettings();"
-                 " return [html.includes('closeSettings()'), html.includes('关闭'),"
+                 " return [html.includes('data-act=\"closeSettings\"'), html.includes('关闭'),"
                  " el('mask').classList.contains('on'), retried, settingsUi.then]; })",
                  files=["settings.js"])
     assert out == [True, True, False, 0, None]
@@ -259,7 +263,7 @@ def test_keys_409_passes_missing_list_to_settings():
 
 
 def test_modal_closes_on_escape_and_backdrop_unless_job_running():
-    src = (STATIC / "index.html").read_text(encoding="utf-8")
+    src = (STATIC / "index.js").read_text(encoding="utf-8")
     assert "'Escape'" in src and "e.target === mask" in src
     assert "modalDismissable()" in src
 
@@ -304,3 +308,10 @@ def test_poll_error_not_reported_as_start_failure():
                  files=["jobs.js"])
     assert not any(l.startswith("[错误]") for l in out)
     assert any("boom" in l for l in out)
+
+
+def test_settings_notes_hidden_legacy_plaintext_file():  # 审查修复 L18
+    cfg = {"providers": [{"key": "mediakit", "label": "l", "hint": "h", "configured": False,
+                          "source": "", "masked": "", "legacy_file": True}]}
+    html = run_js(f"settingsRowsHtml({json.dumps(cfg)})", files=["settings.js"])
+    assert "~/.mediakit/api_key" in html and "删除" in html

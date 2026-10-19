@@ -142,13 +142,21 @@ def _render(tmp_path):
     return out, proc.run_inprocess("pipeline.render_preview", [str(tl_file), "-o", str(out)])
 
 
+def _visible(d):
+    """目录里的文件；空的 .aicut-partial/ 不算（审查修复 M4：atomic_output 不再 rmdir 它）。"""
+    from pipeline import media_io
+    part = d / media_io.PARTIAL_DIR
+    assert not part.exists() or list(part.iterdir()) == []
+    return sorted(p.name for p in d.iterdir() if p.name != media_io.PARTIAL_DIR)
+
+
 def test_cli_writes_output_atomically(tmp_path, monkeypatch):
     seen = _fake_media(monkeypatch, fail=False)
     texts = _private_text_dir(tmp_path, monkeypatch)
     out, (code, log) = _render(tmp_path)
     assert code == 0, log
     assert seen[0] != str(out) and out.read_bytes() == b"full"
-    assert [p.name for p in out.parent.iterdir()] == ["o.mp4"]   # 无临时文件、无多余标记
+    assert _visible(out.parent) == ["o.mp4"]   # 无临时文件、无多余标记
     assert list(texts.iterdir()) == []
 
 
@@ -157,7 +165,7 @@ def test_cli_failure_leaves_no_half_file_or_temp_dir(tmp_path, monkeypatch):
     texts = _private_text_dir(tmp_path, monkeypatch)
     out, (code, log) = _render(tmp_path)
     assert code == 1 and "预览片渲染失败" in log
-    assert list(out.parent.iterdir()) == [] and list(texts.iterdir()) == []
+    assert _visible(out.parent) == [] and list(texts.iterdir()) == []
 
 
 # ---------------------------------------------------------------- M6 · KI-73 预览字幕字体

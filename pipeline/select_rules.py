@@ -39,6 +39,9 @@ _FRAGMENT_SPLIT = re.compile(r"[，,、]+")
 _PUNCT = re.compile(r"[\s，。！？、,.!?；;：:“”\"'‘’…（）()《》\-—]+")
 
 
+# 「答案 → 规则」的换算版本（KI-84）：存下的规则版本不等于它就按当前题目重算，不沿用旧逻辑的结果
+RULES_VERSION = 2
+
 def norm_ending(value) -> str | None:
     """把模型生成的中文结尾描述归一到枚举（含兜底题的 info）。"""
     if not value or not isinstance(value, str):

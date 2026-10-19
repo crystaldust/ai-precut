@@ -6,10 +6,52 @@ import pytest
 from pipeline import secrets
 
 
-def test_mask_keeps_edges():
-    assert secrets.mask("AKLTabcdefghij9f2a") == "AKLT****9f2a"
-    assert secrets.mask("short") == "*****"
+def test_mask_keeps_edges():  # KI-67：规格变更——18 位只留后 4，短 Key 连长度也不暴露
+    assert secrets.mask("AKLTabcdefghij9f2a") == "****9f2a"
+    assert secrets.mask("short") == "********"
     assert secrets.mask(None) == ""
+
+
+@pytest.mark.parametrize("n", [12, 16, 23, 24, 48])
+def test_mask_tiers(n):
+    value = ("abcdefghijklmnop" * 4)[:n - 4] + "wxyz"
+    masked = secrets.mask(value)
+    if n < secrets.MASK_TAIL_MIN:
+        assert masked == "********"
+    elif n < secrets.MASK_FULL_MIN:
+        assert masked == "****wxyz"
+    else:
+        assert masked == value[:4] + "****wxyz"
+    shown = len(masked.replace("*", ""))
+    assert shown <= n // 3  # 最多暴露三分之一
+
+
+def test_get_strips_keychain_and_file_values(file_env, monkeypatch):
+    class FakeKeyring:
+        def __init__(self, value):
+            self.value = value
+
+        def get_password(self, service, provider):
+            return self.value
+
+    monkeypatch.setattr(secrets, "_keyring", lambda: FakeKeyring("sk-abcdefgh12345678\n"))
+    assert secrets.get("deepseek") == "sk-abcdefgh12345678"
+    monkeypatch.setattr(secrets, "_keyring", lambda: FakeKeyring("   \n"))
+    assert secrets.get("deepseek") is None
+    monkeypatch.setattr(secrets, "_keyring", lambda: None)
+    file_env.mkdir(parents=True, exist_ok=True)
+    (file_env / "credentials.json").write_text(json.dumps({"mediakit": " AKLTabcdefgh1234\n"}))
+    assert secrets.get("mediakit") == "AKLTabcdefgh1234"
+    (file_env / "credentials.json").write_text(json.dumps({"mediakit": "  \t"}))
+    assert secrets.get("mediakit") is None
+
+
+def test_peek_strips(file_env):
+    file_env.mkdir(parents=True, exist_ok=True)
+    (file_env / "credentials.json").write_text(json.dumps({"deepseek": "sk-abcdefgh12345678\r\n"}))
+    assert secrets.peek("deepseek") == "sk-abcdefgh12345678"
+    (file_env / "credentials.json").write_text(json.dumps({"deepseek": "   "}))
+    assert secrets.peek("deepseek") is None
 
 
 @pytest.fixture
@@ -116,3 +158,66 @@ def test_delete_ok_when_gone(file_env):
     secrets.set("deepseek", "sk-gone-123456")
     secrets.delete("deepseek")
     assert secrets.get("deepseek") is None
+
+
+# ---------------------------------------------------------------- KI-28：共享目录不 chmod；删除时屏蔽旧版文件
+def test_existing_shared_dir_mode_untouched(file_env):
+    file_env.mkdir(parents=True)
+    file_env.chmod(0o755)
+    secrets.set("mediakit", "AKLTtest123456789")
+    assert stat.S_IMODE(file_env.stat().st_mode) == 0o755
+    assert stat.S_IMODE((file_env / "credentials.json").stat().st_mode) == 0o600
+
+
+def test_new_config_dir_is_0700(file_env):
+    secrets.set("mediakit", "AKLTtest123456789")
+    assert stat.S_IMODE(file_env.stat().st_mode) == 0o700
+
+
+@pytest.fixture
+def legacy(file_env, tmp_path, monkeypatch):
+    f = tmp_path / "legacy" / "api_key"
+    f.parent.mkdir()
+    f.write_text("AKLTlegacy12345678\n")
+    monkeypatch.setattr(secrets, "LEGACY_FILES", {"mediakit": f})
+    return f
+
+
+def test_delete_also_hides_legacy_key(legacy):
+    assert secrets.get("mediakit") == "AKLTlegacy12345678"
+    secrets.delete("mediakit")
+    assert secrets.get("mediakit") is None
+    assert secrets.peek("mediakit") is None
+    assert secrets.status()["mediakit"]["source"] == ""
+    assert legacy.read_text() == "AKLTlegacy12345678\n"  # 别的工具的文件不删
+
+
+def test_set_after_delete_restores_normal_priority(legacy):
+    secrets.delete("mediakit")
+    secrets.set("mediakit", "AKLTnew1234567890")
+    assert secrets.get("mediakit") == "AKLTnew1234567890"
+    secrets.delete("mediakit")
+    assert secrets.get("mediakit") is None  # 再删一次仍然屏蔽旧版文件
+    data = _ignore_file(legacy)
+    assert data == ["mediakit"]
+
+
+def _ignore_file(legacy) -> list:
+    return json.loads((secrets.config_dir() / secrets.LEGACY_IGNORE_FILE).read_text())
+
+
+def test_corrupt_ignore_file_fails_closed(legacy):  # 审查修复 L18：坏了就当已屏蔽（不读明文旧文件）
+    secrets.config_dir().mkdir(parents=True, exist_ok=True)
+    (secrets.config_dir() / secrets.LEGACY_IGNORE_FILE).write_text("{oops")
+    assert secrets.get("mediakit") is None
+
+
+def test_status_reports_hidden_legacy_file(legacy):
+    secrets.delete("mediakit")
+    st = secrets.status()["mediakit"]
+    assert st["configured"] is False and st["legacy_file"] is True
+
+
+def test_legacy_file_note_only_when_ignored(legacy, monkeypatch):
+    monkeypatch.setenv("MEDIAKIT_API_KEY", "AKLTfromenv12345678")
+    assert secrets.status()["mediakit"]["legacy_file"] is False  # 只是被环境变量盖住，没有屏蔽

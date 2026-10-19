@@ -16,7 +16,7 @@ const DIAG_TOAST_MS = 6000;
 
 let diagBusy = false;
 function setDiagButtons(disabled){
-  document.querySelectorAll('[onclick="exportDiag()"]').forEach(b => { b.disabled = disabled; });
+  document.querySelectorAll('[data-act="exportDiag"]').forEach(b => { b.disabled = disabled; });
 }
 async function exportDiag(){
   if(diagBusy) return;  // 请求进行中：不重复导出
@@ -38,5 +38,7 @@ async function openAbout(){
   showModal(COPY_ABOUT_TITLE,
     `<p class="hint">${esc(COPY_ABOUT_VERSION.replace('{v}', j.version || ''))}</p>
      <pre class="notices">${esc(j.notices || '')}</pre>
-     <div class="job-actions"><button class="ghost" onclick="closeModal()">${esc(COPY_ABOUT_CLOSE)}</button></div>`);
+     <div class="job-actions"><button class="ghost" data-act="closeModal">${esc(COPY_ABOUT_CLOSE)}</button></div>`);
 }
+
+Object.assign(ACTIONS, {exportDiag: ()=>exportDiag(), openAbout: ()=>openAbout()});  // KI-53

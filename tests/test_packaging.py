@@ -136,3 +136,15 @@ def test_spec_includes_jy_version():
 def test_spec_ships_the_template_jy_version_expects():
     from pipeline import jy_version
     assert f'"{jy_version.TEMPLATE.name}"' in _read("packaging/ai-cut.spec")   # 版本常量漂移守卫（KI-17）
+
+
+def test_spec_ships_only_whitelisted_static():  # KI-52
+    spec = _read("packaging/ai-cut.spec")
+    assert '(str(ROOT / "gui" / "static"), "gui/static")' not in spec
+    assert "STATIC_FILES" in spec and "static_files.py" in spec
+
+
+def test_prototype_generator_writes_outside_static():  # KI-52 / D11
+    src = _read("prototype/make_prototype.py")
+    assert 'ROOT / "gui/static/prototype.html"' not in src and "prototype/prototype.html" in src
+    assert "prototype/prototype.html" in _read(".gitignore")

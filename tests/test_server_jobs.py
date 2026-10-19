@@ -458,3 +458,84 @@ def test_error_right_after_popen_fails_job_instead_of_hanging(gui_server, jobs, 
     job_id = jobs.start_job("p1", "build")
     assert wait_for(lambda: jobs.JOBS[job_id]["status"] != "running")
     assert jobs.JOBS[job_id]["status"] == "failed"
+
+
+# ---------------------------------------------------------------- KI-70：任务日志里的 Key 打码
+def test_job_log_lines_are_redacted(gui_server, jobs, monkeypatch):
+    from pipeline import secrets
+    key = "sk-joblogsecret12345678"
+    secrets.set("deepseek", key)  # 凭证文件里的 Key：start_job 会登记（不碰钥匙串）
+    make_project(gui_server.root)
+    fake_command(monkeypatch, jobs, [sys.executable, "-c", f"print('leak {key}', flush=True)"])
+    status, data = post_job(gui_server, task="select")
+    assert status == 200
+    assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] != "running")
+    log = "\n".join(get_job(gui_server, data["job_id"])[1]["log"])
+    assert key not in log and "leak" in log
+
+
+# ---------------------------------------------------------------- KI-68：任务表与日志有上限
+def _finish(gs, data):
+    assert wait_for(lambda: get_job(gs, data["job_id"])[1]["status"] != "running")
+
+
+def test_finished_jobs_are_pruned_beyond_limit(gui_server, jobs, monkeypatch):
+    make_project(gui_server.root)
+    monkeypatch.setattr(jobs, "MAX_FINISHED_JOBS", 2)
+    fake_command(monkeypatch, jobs, [sys.executable, "-c", "print('ok')"])
+    ids = []
+    for _ in range(4):
+        status, data = post_job(gui_server, task="select")
+        assert status == 200
+        _finish(gui_server, data)
+        ids.append(data["job_id"])
+    fake_command(monkeypatch, jobs, LONG)
+    status, running = post_job(gui_server, task="select")
+    assert status == 200
+    with jobs.JOBS_LOCK:
+        kept = set(jobs.JOBS)
+    assert kept == {ids[-2], ids[-1], running["job_id"]}  # 运行中的不算、也不删
+
+
+def test_job_log_is_capped_with_note(gui_server, jobs, monkeypatch):
+    make_project(gui_server.root)
+    monkeypatch.setattr(jobs, "JOB_LOG_MAX_LINES", 10)
+    fake_command(monkeypatch, jobs, [sys.executable, "-c",
+                                     "[print(f'line {i}', flush=True) for i in range(30)]"])
+    status, data = post_job(gui_server, task="select")
+    _finish(gui_server, data)
+    log = get_job(gui_server, data["job_id"])[1]["log"]
+    assert len(log) <= 11 and "省略" in log[0] and log[-1].startswith("[退出码]")
+    assert "line 29" in log
+
+
+# ---------------------------------------------------------------- KI-71：遗留任务主动提示
+def test_projects_endpoint_reports_stale_job(gui_server, jobs, tmp_path):
+    orphan = _orphan(tmp_path)
+    try:
+        jobs.marker_path().parent.mkdir(parents=True, exist_ok=True)
+        jobs.marker_path().write_text(json.dumps(
+            {"pid": orphan.pid, "project": "old", "task": "prepare", "server_pid": 1}),
+            encoding="utf-8")
+        status, body, _ = call(gui_server, "GET", "/api/projects")
+        stale = json.loads(body)["stale_job"]
+        assert status == 200 and stale["pid"] == orphan.pid and stale["project"] == "old"
+        assert stale["task"] == "处理素材" and str(orphan.pid) in stale["message"]
+    finally:
+        orphan.kill()
+        orphan.wait()
+    status, body, _ = call(gui_server, "GET", "/api/projects")
+    assert json.loads(body)["stale_job"] is None
+
+
+def test_job_failure_notes_are_redacted(gui_server, jobs, monkeypatch):  # 审查修复 L17
+    from pipeline import applog
+    key = "sk-notesecret12345678"
+    applog.register_secret(key)
+    make_project(gui_server.root)
+    monkeypatch.setattr(jobs, "job_command", lambda *a: [f"/nonexistent/{key}"])
+    status, data = post_job(gui_server, task="select")
+    assert status == 200
+    assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] != "running")
+    log = "\n".join(get_job(gui_server, data["job_id"])[1]["log"])
+    assert key not in log and "无法启动任务" in log

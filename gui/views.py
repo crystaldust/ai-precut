@@ -1,0 +1,122 @@
+# -*- coding: utf-8 -*-
+"""剪辑台 · 只读视图（从 gui/server.py 拆出，KI-54）。
+
+不读 server.PROJECTS / PRESETS：调用方把解析好的目录传进来（测试只打桩 server 上的名字）。
+"""
+from __future__ import annotations
+
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+from gui import jobs
+from pipeline import media_io, notices, proc, schema, select, usage
+
+PRESET_CORRUPT_MSG = "已跳过预设「{name}」：{reason}"
+FFMPEG_VERSION_TIMEOUT_S = 5
+FFMPEG_VERSION_MAX = 60
+
+
+def jload(p: Path, default=None):
+    """只用于显示：缺失或损坏都给 default；损坏的由 notices.corrupt_files 在警告栏点名（KI-21）。"""
+    return schema.read_json_lenient(p, default)
+
+
+def _version_sort_key(d: Path) -> int:
+    return int(d.name[1:]) if d.name[1:].isdigit() else 0
+
+
+def _versions(pdir: Path, cfg: dict, name: str) -> list[dict]:
+    versions = []
+    for d in sorted((pdir / "output").glob("v*"), key=_version_sort_key):
+        if not d.is_dir():
+            continue
+        tl = jload(d / "timeline.json", {})
+        total = 0.0
+        if tl.get("video"):
+            total = max((s["timeline_in"] + s["out"] - s["in"]) for s in tl["video"])
+        versions.append({
+            "name": d.name,
+            "preview": media_io.complete_or_adopt(d / "preview.mp4"),
+            "shots": len(tl.get("video", [])),
+            "duration": round(total, 1),
+            "draft": f"{cfg.get('title', name)}_{d.name}",
+            "mtime": time.strftime("%m-%d %H:%M", time.localtime(d.stat().st_mtime)),
+            **jobs.windows_export_state(pdir, d.name, cfg.get("title")),
+        })
+    return list(reversed(versions))
+
+
+def project_state(pdir: Path, name: str) -> dict:
+    cfg = schema.read_json(pdir / "project.json", default=None)  # 损坏 → CorruptJSON → 409（KI-21）
+    if not cfg:
+        raise FileNotFoundError(name)
+    schema.ensure_supported(cfg)  # 新版程序建的项目不能让旧界面去改
+    work = pdir / "work"
+    material = cfg.get("material") or None  # KI-62：素材换过的音轨 / 代理不算完成
+    stages = [
+        {"key": "ingest", "label": "素材台账", "done": (work / "materials.json").exists()},
+        {"key": "audio", "label": "抽音轨", "done": media_io.complete_or_adopt(work / "audio/asr.wav", source=material)},
+        {"key": "transcribe", "label": "语音转写", "done": (work / "transcript.md").exists()},
+        {"key": "junk", "label": "废片检测", "done": (work / "junk_report.csv").exists()},
+        {"key": "brief", "label": "策划分派单", "done": (work / "brief.md").exists()},
+        {"key": "shots", "label": "分镜表", "done": (pdir / "shots.json").exists()},
+    ]
+    manual = jload(pdir / "shots.json", {}).get("shots", [])
+    selected = jload(work / "shots-selected.json", {}).get("shots", [])
+    return {
+        "project": cfg,
+        "stages": stages,
+        "versions": _versions(pdir, cfg, name),
+        "segments": jload(work / "segments.json", {}).get("segments", []),
+        # 没有手存分镜表时用选段结果预填；有就不覆盖（M2）
+        "shots": manual or selected,
+        "shots_from_selection": not manual and bool(selected),
+        "selection": select.summary(jload(work / "selection.json")),
+        "warnings": notices.project_warnings(work),
+        "junk": jload(work / "junk_report.json", {}).get("items", []),
+        "material_duration": (jload(work / "materials.json", {}).get("items") or [{}])[0].get("duration", 0),
+        "has_proxy": media_io.complete_or_adopt(work / "proxy.mp4", source=material),
+        "has_transcript": (work / "transcript.md").exists(),
+        "llm_usage": usage.summary(work),  # KI-32：项目信息行显示已用 tokens
+        "job": jobs.project_job(name),  # 切回正在跑任务的项目时，界面据此重新显示进度
+    }
+
+
+def projects_list(root: Path) -> list[dict]:
+    items = []
+    for f in sorted(root.glob("*/project.json")):
+        c = jload(f, {})
+        pdir = f.parent
+        vs = sorted([d.name for d in (pdir / "output").glob("v*") if d.is_dir()])
+        items.append({"name": c.get("name", pdir.name), "title": c.get("title", ""),
+                      "preset": c.get("preset", ""), "versions": vs})
+    return items
+
+
+def presets_payload(presets: Path) -> dict:
+    out, bad = [], []
+    for f in sorted(presets.glob("*.json")):
+        try:
+            c = schema.read_json(f)
+        except schema.CorruptJSON as exc:  # 坏预设跳过，但要说出来（新建弹窗里显示）
+            bad.append(PRESET_CORRUPT_MSG.format(name=f.stem, reason=exc))
+            continue
+        out.append({"key": f.stem, "name": c.get("name", f.stem),
+                    "platform": c.get("platform"), "duration": c.get("duration")})
+    return {"presets": out, "warnings": bad}
+
+
+def health_payload() -> dict:
+    ff = shutil.which("ffmpeg")
+    ver = ""
+    if ff:
+        try:
+            ver = subprocess.run([ff, "-version"], capture_output=True, text=True,
+                                 timeout=FFMPEG_VERSION_TIMEOUT_S).stdout.splitlines()[0][:FFMPEG_VERSION_MAX]
+        except Exception:  # noqa: BLE001 - 只是展示用的版本号
+            ver = "?"
+    return {"frozen": proc.FROZEN, "app_root": str(proc.app_root()),
+            "projects_root": str(proc.user_data_root()),
+            "ffmpeg": ff, "ffmpeg_version": ver, "ffprobe": shutil.which("ffprobe")}

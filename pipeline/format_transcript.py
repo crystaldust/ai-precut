@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # 脚本方式运行时可导入 pipeline；append 防遮蔽三方包（同 render_preview）
 
 from pipeline import schema  # noqa: E402
+from pipeline.shot_sub import join_lines  # noqa: E402
 
 GAP_SAME_SPEAKER = 1.2
 GAP_ANY = 2.5
@@ -113,7 +114,7 @@ def build_segments(subs: list[dict]) -> list[dict]:
         segs.append(cur)
     for i, seg in enumerate(segs, 1):
         seg["id"] = f"S{i:03d}"
-        seg["text"] = "".join(l["text"] for l in seg["lines"])
+        seg["text"] = join_lines([l["text"] for l in seg["lines"]])
         seg["duration"] = round(seg["end"] - seg["start"], 2)
         seg["chars"] = len(re.sub(r"\s", "", seg["text"]))
     return segs

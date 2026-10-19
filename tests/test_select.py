@@ -3,7 +3,9 @@ import random
 
 import pytest
 
-from pipeline import select
+from pipeline import select, select_rules
+
+RV = select_rules.RULES_VERSION  # KI-84：当前版本规则才按存储值使用
 
 
 def seg(i, start, dur, topic, *, level=3, key=False, must=False, text="", info=""):
@@ -117,7 +119,7 @@ def test_stored_rules_win_over_answers(tmp_path):
     sp = tmp_path / "scored.json"
     sp.write_text(json.dumps(scored, ensure_ascii=False), encoding="utf-8")
     ap = tmp_path / "answers.json"
-    ap.write_text(json.dumps({"answers": {}, "rules": {"exclude_topics": ["聊吃饭"]}}),
+    ap.write_text(json.dumps({"answers": {}, "rules": {"exclude_topics": ["聊吃饭"]}, "rules_version": RV}),
                   encoding="utf-8")
     res = select.run(sp, ap, tmp_path)
     assert all(s["topic"] != "聊吃饭" for s in res["shots"])
@@ -592,7 +594,7 @@ def test_must_lines_from_answers_and_calibration_merged(tmp_path):
             seg(3, 20, 6, "聊吃饭", level=1, text="找不到工作不白学吗")]
     sp = _write(tmp_path / "segments_scored.json", {"target": 60, "topics": TOPICS, "segments": segs})
     ap = _write(tmp_path / "brief_answers.json",
-                {"answers": {}, "rules": {"must_lines": ["包含所有耗材"]}})
+                {"answers": {}, "rules": {"must_lines": ["包含所有耗材"]}, "rules_version": RV})
     res = select.run(sp, ap, tmp_path, calibration={"must_lines": "找不到工作不白学吗"})
     assert {"S002", "S003"} <= set(_ids(res))
 
@@ -717,7 +719,7 @@ def test_run_backfills_signals_from_audio_file(tmp_path):
                 {"target": 60, "topics": ONE_TOPIC, "segments": segs})
     _write(tmp_path / "segments_audio.json",
            {"segments": [{"id": "S002", "signals": {"rel_db": 6.0}}]})
-    ap = _write(tmp_path / "brief_answers.json", {"answers": {}, "rules": {"ending": "emotion"}})
+    ap = _write(tmp_path / "brief_answers.json", {"answers": {}, "rules": {"ending": "emotion"}, "rules_version": RV})
     res = select.run(sp, ap, tmp_path)
     assert res["shots"][-1]["segment_id"] == "S002"
 
@@ -759,5 +761,51 @@ def test_run_backfill_keeps_existing_signals(tmp_path):
             seg2(3, 20, 6, "讲合同", signals={"rel_db": 0.0})]
     sp = _write(tmp_path / "segments_scored.json", {"target": 60, "topics": ONE_TOPIC, "segments": segs})
     _write(tmp_path / "segments_audio.json", {"segments": [{"id": "S002", "signals": {"rel_db": 2.0}}]})
-    ap = _write(tmp_path / "brief_answers.json", {"answers": {}, "rules": {"ending": "emotion"}})
+    ap = _write(tmp_path / "brief_answers.json", {"answers": {}, "rules": {"ending": "emotion"}, "rules_version": RV})
     assert select.run(sp, ap, tmp_path)["shots"][-1]["segment_id"] == "S001"
+
+
+def test_artifact_schema_stamped(tmp_path):  # KI-37
+    from pipeline import schema
+    scored = {"target": 60, "topics": TOPICS, "segments": [seg(1, 0, 6, "讲合同", key=True)]}
+    sp = tmp_path / "scored.json"
+    sp.write_text(json.dumps(scored, ensure_ascii=False), encoding="utf-8")
+    select.run(sp, tmp_path / "none.json", tmp_path)
+    assert json.loads((tmp_path / "selection.json").read_text())["artifact_schema"] == schema.ARTIFACT_SCHEMA
+
+
+# ---------------------------------------------------------------- KI-84：旧版规则按当前题目重算
+QS_ONE = {"questions": [{"id": "q1", "text": "保留哪段？", "options": [
+    {"label": "只要合同", "rule": {"kind": "exclude_topics", "value": ["聊吃饭"]}},
+    {"label": "都要", "rule": {"kind": "must_topics", "value": []}}]}]}
+
+
+def _scored_two(tmp_path):
+    return _write(tmp_path / "segments_scored.json", {"target": 60, "topics": TOPICS, "segments": [
+        seg(1, 0, 6, "讲合同"), seg(2, 10, 6, "聊吃饭")]})
+
+
+def test_unversioned_stored_rules_are_recomputed(tmp_path):
+    sp = _scored_two(tmp_path)
+    qp = _write(tmp_path / "questions.json", QS_ONE)
+    ap = _write(tmp_path / "brief_answers.json", {"answers": {"q1": "都要"},
+                                                  "rules": {"exclude_topics": ["聊吃饭"]}})
+    res = select.run(sp, ap, tmp_path, questions_path=qp)
+    assert "聊吃饭" not in res["rules"]["exclude_topics"]
+    assert {s["topic"] for s in res["shots"]} == {"讲合同", "聊吃饭"}
+
+
+def test_older_rules_version_is_recomputed(tmp_path):
+    sp = _scored_two(tmp_path)
+    qp = _write(tmp_path / "questions.json", QS_ONE)
+    ap = _write(tmp_path / "brief_answers.json", {"answers": {"q1": "都要"}, "rules_version": RV - 1,
+                                                  "rules": {"exclude_topics": ["聊吃饭"]}})
+    assert "聊吃饭" not in select.run(sp, ap, tmp_path, questions_path=qp)["rules"]["exclude_topics"]
+
+
+def test_current_rules_version_is_used_as_stored(tmp_path):
+    sp = _scored_two(tmp_path)
+    qp = _write(tmp_path / "questions.json", QS_ONE)
+    ap = _write(tmp_path / "brief_answers.json", {"answers": {"q1": "只要合同"}, "rules_version": RV,
+                                                  "rules": {"exclude_topics": ["聊吃饭"]}})
+    assert select.run(sp, ap, tmp_path, questions_path=qp)["rules"]["exclude_topics"] == ["聊吃饭"]

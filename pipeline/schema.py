@@ -8,16 +8,25 @@
 """
 from __future__ import annotations
 
+import contextlib
 import copy
+import fcntl
+import glob
 import json
+import logging
 import math
 import os
 import re
+import threading
+import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator
 
 CURRENT_SCHEMA = 2
+# 中间产物（segments_text / segments_scored / selection / timeline）的格式版本（KI-37）。
+# 只打标、不迁移：缺这个字段的旧文件按版本 0 照常读。
+ARTIFACT_SCHEMA = 1
 
 
 class SchemaTooNew(Exception):
@@ -45,6 +54,11 @@ DEFAULTS: dict[str, Any] = {
 }
 
 REQUIRED = ("name", "material")
+
+
+def stamp(obj: dict) -> dict:
+    """返回带 artifact_schema 的新 dict（不改输入）。"""
+    return {**obj, "artifact_schema": ARTIFACT_SCHEMA}
 
 
 def default_project(name: str, material: str, **overrides: Any) -> dict:
@@ -118,17 +132,126 @@ _VERSION_RE = re.compile(r"v[0-9]{1,4}")  # 只认 ASCII 数字，\d 会放过 v
 _SHOT_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 
 
+LOCK_MODE = 0o600
+STALE_TMP_S = 600  # 超过这么久的同名临时文件视为被强杀的写者留下的残片（KI-51）
+LOCK_UNSUPPORTED = "文件锁不可用（%s），%s 退回进程内锁"
+_LOG = logging.getLogger("aicut.schema")
+_FALLBACK_LOCK = threading.RLock()
+
+
+def _tmp_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+
+
+def _write_synced(tmp: Path, text: str) -> None:
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())  # 先落盘再改名：被强杀 / 断电不会留下空文件
+
+
+def _fsync_dir(d: Path) -> None:
+    """目录项也落盘；某些网络盘 / 外接盘不支持，忽略。"""
+    with contextlib.suppress(OSError):
+        fd = os.open(d, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def _clear_stale_tmps(path: Path) -> None:
+    """清掉同名的陈旧临时文件；新鲜的可能是并发写者正在写的，不动。"""
+    cutoff = time.time() - STALE_TMP_S
+    for p in path.parent.glob(f".{glob.escape(path.name)}.*.tmp"):
+        with contextlib.suppress(OSError):
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+
+
 def write_json(path: Path, obj: Any, *, indent: int | None = 2) -> None:
     """原子写：每次用唯一临时文件，并发写同一路径不会互相踩。indent=None 写紧凑 JSON。"""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    tmp = _tmp_path(path)
     try:
-        tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=indent), encoding="utf-8")
+        _write_synced(tmp, json.dumps(obj, ensure_ascii=False, indent=indent))
         os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+    _fsync_dir(path.parent)
+    _clear_stale_tmps(path)
+
+
+def create_json_exclusive(path: Path, obj: Any) -> None:
+    """只在 path 不存在时创建（KI-69）：已存在抛 FileExistsError，绝不覆盖别人刚写的文件。
+
+    内容先完整写进临时文件，再硬链接到目标名（原子、目标存在即失败）；文件系统不支持硬链接时退回 O_EXCL。
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(obj, ensure_ascii=False, indent=2)
+    tmp = _tmp_path(path)
+    try:
+        _write_synced(tmp, text)
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            raise
+        except OSError:  # 不支持硬链接（如 exFAT）：O_EXCL 仍保证只有一个创建者
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+    finally:
+        tmp.unlink(missing_ok=True)
+    _fsync_dir(path.parent)
+
+
+def lock_path(path: Path) -> Path:
+    """锁加在独立的 .<名>.lock 上：os.replace 会换掉目标文件的 inode，锁不能加在目标本身。"""
+    path = Path(path)
+    return path.with_name(f".{path.name}.lock")
+
+
+@contextlib.contextmanager
+def locked(path: Path) -> Iterator[None]:
+    """跨进程互斥（fcntl.flock，进程退出自动释放）；文件系统不支持时退回进程内锁并记 warning。"""
+    lp = lock_path(path)
+    lp.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lp, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), LOCK_MODE)  # 不跟随符号链接（L16）
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            _LOG.warning(LOCK_UNSUPPORTED, exc, Path(path).name)
+            with _FALLBACK_LOCK:
+                yield
+            return
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def update(path: Path, mutate: Callable[[dict], dict]) -> dict:
+    """加锁读改写任意 JSON 对象文件（缺失按 {}）；返回写入的新值。"""
+    with locked(path):
+        new = mutate(dict(read_json(path, default={})))
+        write_json(path, new)
+        return new
+
+
+def update_project(path: Path, mutate: Callable[[dict], dict]) -> dict:
+    """加锁读改写 project.json（读时迁移、写时补版本，KI-51）：两个写者不会互相覆盖对方的字段。"""
+    with locked(path):
+        new, _ = migrate(mutate(load(path)))
+        write_json(path, new)
+        return new
 
 
 def _corrupt(path: Path, detail: str) -> CorruptJSON:

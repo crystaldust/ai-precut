@@ -29,6 +29,7 @@ def save_answers(pdir: Path, name: str, body: dict) -> dict:
     confirmed = bool(body.get("confirmed", False))
     schema.write_json(work / questions.ANSWERS_FILE, {
         "answers": answers, "rules": select_rules.rules_from_answers(answers, questions_def),
+        "rules_version": select_rules.RULES_VERSION,  # KI-84
         "confirmed": confirmed, "at": datetime.now().isoformat(timespec="seconds")})
     if not confirmed:
         return {"ok": True, "job_id": None}

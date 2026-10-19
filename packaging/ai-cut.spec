@@ -3,6 +3,7 @@
 
 构建：uv run pyinstaller packaging/ai-cut.spec --noconfirm
 """
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -12,26 +13,42 @@ from PyInstaller.utils.hooks import collect_data_files
 ROOT = Path(SPECPATH).resolve().parent
 BIN = ROOT / "vendor" / "bin"
 
+# KI-37：版本号按文件路径加载（packaging/ 与 PyPI 的 packaging 包同名，不能 import packaging.version）
+_spec = importlib.util.spec_from_file_location("aicut_version", ROOT / "packaging" / "version.py")
+_version = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_version)
+SHORT_VERSION = _version.short_version(ROOT)
+BUILD_NUMBER = _version.build_number(ROOT)  # 拿不到就构建失败，不静默打成 1
+
 hidden = [
     "aicut",
-    "gui.jobs", "gui.settings",
-    "pipeline.applog", "pipeline.asr_state", "pipeline.consent", "pipeline.diagnostics",
-    "pipeline.encode", "pipeline.readiness", "pipeline.safe_http",
-    "pipeline.build_documentary", "pipeline.classify", "pipeline.cloud",
-    "pipeline.export_draft", "pipeline.format_transcript", "pipeline.junk_detect",
-    "pipeline.jy_env", "pipeline.jy_version", "pipeline.pyver",
-    "pipeline.llm", "pipeline.media_io",
-    "pipeline.proc", "pipeline.questions", "pipeline.render_preview",
-    "pipeline.review", "pipeline.schema", "pipeline.secrets", "pipeline.select",
-    "pipeline.style", "pipeline.summarize", "pipeline.to_jianying",
-    "pipeline.understand_audio", "pipeline.understand_text",
-    "pipeline.understand_visual", "research.validate_draft",
+    "gui.confirm", "gui.desktop", "gui.jobs", "gui.maintenance",
+    "gui.media", "gui.payloads", "gui.server", "gui.settings",
+    "gui.static_files", "gui.support", "gui.views",
+    "pipeline.applog", "pipeline.asr_state", "pipeline.brief", "pipeline.build_documentary",
+    "pipeline.cache", "pipeline.classify", "pipeline.cli_args", "pipeline.clips",
+    "pipeline.cloud", "pipeline.config_cli", "pipeline.consent", "pipeline.diagnostics",
+    "pipeline.diskspace", "pipeline.encode", "pipeline.export_draft", "pipeline.format_transcript",
+    "pipeline.junk_detect", "pipeline.jy_env", "pipeline.jy_version", "pipeline.llm",
+    "pipeline.media_io", "pipeline.notices", "pipeline.proc", "pipeline.project_cli",
+    "pipeline.project_lock", "pipeline.prompts", "pipeline.pyver", "pipeline.questions",
+    "pipeline.readiness", "pipeline.render_preview", "pipeline.review", "pipeline.safe_http",
+    "pipeline.schema", "pipeline.secrets", "pipeline.select", "pipeline.select_rules",
+    "pipeline.shot_sub", "pipeline.style", "pipeline.summarize", "pipeline.timeline",
+    "pipeline.to_jianying", "pipeline.transcript_stamp", "pipeline.understand_audio", "pipeline.understand_text",
+    "pipeline.understand_visual", "pipeline.usage",
+    "research.validate_draft",
     "webview.platforms.cocoa",
 ]
 
+# KI-52：静态文件只带白名单（gui/static_files.py 零依赖，按文件路径读，不 import gui）
+_static = {}
+exec((ROOT / "gui" / "static_files.py").read_text(encoding="utf-8"), _static)
+STATIC_FILES = sorted(_static["STATIC_FILES"])
+
 datas = collect_data_files("pyJianYingDraft")  # 草稿模板 JSON 在包内，必须一起带
+datas += [(str(ROOT / "gui" / "static" / name), "gui/static") for name in STATIC_FILES]
 datas += [
-    (str(ROOT / "gui" / "static"), "gui/static"),
     (str(ROOT / "presets"), "presets"),
     (str(ROOT / "research" / "base_template_11.0.json"), "research"),
     (str(ROOT / "research" / "validate_draft.py"), "research"),
@@ -88,8 +105,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "AI粗剪",
         "CFBundleDisplayName": "AI 粗剪",
-        "CFBundleShortVersionString": "0.1.0",
-        "CFBundleVersion": "1",
+        "CFBundleShortVersionString": SHORT_VERSION,
+        "CFBundleVersion": BUILD_NUMBER,
         "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
         "NSHumanReadableCopyright": "个人使用",

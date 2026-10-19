@@ -41,6 +41,9 @@ def main() -> None:
         return list(result or [])
 
     server.set_picker(pick_video)
+    # KI-36：页面里的 window.open 在 pywebview 里无效，「浏览素材」等子页面由这里开新窗口
+    server.set_window_opener(lambda title, url: webview.create_window(
+        title, url, width=1280, height=860, min_size=(960, 600), text_select=True))
     server.report_stale_job()
     try:
         webview.start()

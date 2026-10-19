@@ -233,3 +233,47 @@ def test_bad_project_query_is_rejected_not_crash(gui_server, path):
     status, body, _ = call(gui_server, "GET", path)
     assert status == 400
     assert "error" in json.loads(body)
+
+
+# ---------------------------------------------------------------- KI-52：静态文件白名单
+@pytest.fixture
+def fake_static(gui_server, tmp_path, monkeypatch):
+    d = tmp_path / "static_copy"
+    d.mkdir()
+    for name in ("index.html", "common.js", "prototype.html", "secret.txt"):
+        (d / name).write_text(f"<!-- {name} __AICUT_TOKEN__ -->", encoding="utf-8")
+    monkeypatch.setattr(gui_server.module, "STATIC", d)
+    return d
+
+
+@pytest.mark.parametrize("path", ["/static/prototype.html", "/static/secret.txt",
+                                  "/static/../static_copy/index.html", "/static/sub/index.html"])
+def test_unlisted_static_file_404(gui_server, fake_static, path):
+    assert call(gui_server, "GET", path, token=False)[0] == 404
+
+
+def test_listed_static_file_still_served(gui_server, fake_static):
+    assert call(gui_server, "GET", "/static/index.html", token=False)[0] == 200
+    assert call(gui_server, "GET", "/static/common.js", token=False)[0] == 200
+
+
+def test_every_script_referenced_by_pages_is_whitelisted(gui_server):
+    import re
+    from gui import static_files
+    pages = [n for n in static_files.STATIC_FILES if n.endswith(".html")]
+    srcs = set()
+    for page in pages:
+        html = (gui_server.module.STATIC / page).read_text(encoding="utf-8")
+        srcs |= set(re.findall(r'<script[^>]*\ssrc="/static/([^"]+)"', html))
+    assert srcs and srcs <= static_files.STATIC_FILES
+    for name in sorted(srcs | set(pages)):
+        assert call(gui_server, "GET", f"/static/{name}", token=False)[0] == 200, name
+
+
+# ---------------------------------------------------------------- KI-53：CSP 不再允许内联脚本
+def test_csp_has_no_unsafe_inline_script(gui_server):
+    _, _, headers = call(gui_server, "GET", "/", token=False)
+    csp = headers["content-security-policy"]
+    script = [d for d in csp.split(";") if d.strip().startswith("script-src")][0]
+    assert "'unsafe-inline'" not in script and "'self'" in script
+    assert "object-src 'none'" in csp

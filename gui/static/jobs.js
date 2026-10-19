@@ -5,9 +5,9 @@
 
 /* 界面文案：产品可直接改这里 */
 const JOB_TITLES = {prepare:'正在处理素材', build:'正在生成成片', select:'正在重新选段',
-                    export:'正在导出 Windows 剪映包'};
+                    export:'正在导出 Windows 剪映包', questions:'正在重新生成决策问题'};
 const JOB_DONE = {prepare:'处理完成', build:'新版本已生成', select:'已按新时长重新选段',
-                  export:'Windows 剪映包已导出'};
+                  export:'Windows 剪映包已导出', questions:'决策问题已重新生成'};
 const COPY_JOB_TITLE_FALLBACK = '进行中的任务';
 const COPY_JOB_PREPARING = '准备中…';
 const COPY_JOB_CANCEL = '取消任务';
@@ -27,6 +27,7 @@ const COPY_EXPORT_WINDOWS = '导出 Windows 剪映包';
 const COPY_EXPORTED = '已导出 {name}（{mb} MB）';
 const COPY_REVEAL = '在访达中显示';
 const COPY_MAC_DRAFT = 'Mac 剪映草稿名：';
+const COPY_JOB_SAVE_FIRST = '分镜表还没保存成功，先不生成成片';  // KI-35：生成成片前先把改动存盘
 const JOB_POLL_MS = 900;
 const JOB_POLL_FIRST_MS = 500;
 const JOB_POLL_RETRY_MS = 1500;
@@ -37,13 +38,13 @@ const jobUi = {last: null, id: null, polling: null};
 
 // canRetry=false：弹窗里是「查看」来的任务（可能是别的项目 / 别的参数），不能让「重试」去重跑它
 function jobActionsHtml(kind, canRetry = true){
-  const btn = (cls, fn, text) => `<button class="${cls}" onclick="${fn}">${esc(text)}</button>`;
-  if(kind === 'running') return btn('danger', 'cancelJob()', COPY_JOB_CANCEL);
-  if(kind === 'conflict') return btn('primary', 'attachJob()', COPY_JOB_VIEW_RUNNING)
-                                + btn('ghost', 'closeModal()', COPY_JOB_CLOSE);
-  if(kind === 'ack') return btn('primary', 'closeModal()', COPY_JOB_ACK);
-  return (canRetry ? btn('primary', 'retryJob()', COPY_JOB_RETRY) : '')
-    + btn('ghost', 'exportDiag()', COPY_JOB_DIAG) + btn('ghost', 'closeModal()', COPY_JOB_CLOSE);
+  const btn = (cls, act, text) => `<button class="${esc(cls)}" data-act="${esc(act)}">${esc(text)}</button>`;
+  if(kind === 'running') return btn('danger', 'cancelJob', COPY_JOB_CANCEL);
+  if(kind === 'conflict') return btn('primary', 'attachJob', COPY_JOB_VIEW_RUNNING)
+                                + btn('ghost', 'closeModal', COPY_JOB_CLOSE);
+  if(kind === 'ack') return btn('primary', 'closeModal', COPY_JOB_ACK);
+  return (canRetry ? btn('primary', 'retryJob', COPY_JOB_RETRY) : '')
+    + btn('ghost', 'exportDiag', COPY_JOB_DIAG) + btn('ghost', 'closeModal', COPY_JOB_CLOSE);
 }
 function setJobActions(kind){ const a = $('#jobActions'); if(a) a.innerHTML = jobActionsHtml(kind, !!jobUi.last); }
 // 任务还在跑、正在看进度时，Esc / 点遮罩不关弹窗（取消要明确点「取消任务」）
@@ -53,9 +54,11 @@ function jobModal(task){
     `<div class="log" id="log">${esc(COPY_JOB_PREPARING)}</div><div class="job-actions" id="jobActions"></div>`);
 }
 
-function startJob(task, extra){
+async function startJob(task, extra){
   if(!state.project){ toast('先选项目'); return; }
   if(task==='build' && !state.shots.length){ toast('分镜表是空的，先生成镜头'); return; }
+  // KI-35：防抖中 / 排队中的分镜表保存先落盘，否则成片用的是改之前的字幕
+  if(task==='build' && await flushPendingSave() === false){ toast(COPY_JOB_SAVE_FIRST); return; }
   jobUi.last = {task, extra};
   jobUi.id = null;
   jobModal(task); setJobActions('running');
@@ -143,9 +146,9 @@ function onJobDone(j, task){
 function versionExportHtml(v, i){
   const done = v.windows_zip
     ? `<span class="hint">${esc(COPY_EXPORTED.replace('{name}', v.windows_zip).replace('{mb}', num(v.windows_mb)))}</span>
-       <button class="ghost" onclick="revealExport(${num(i)})">${esc(COPY_REVEAL)}</button>` : '';
+       <button class="ghost" data-act="revealExport" data-i="${num(i)}">${esc(COPY_REVEAL)}</button>` : '';
   return `<div class="m ver-export">
-      <button class="ghost" onclick="exportVersion(${num(i)})">${esc(COPY_EXPORT_WINDOWS)}</button>${done}
+      <button class="ghost" data-act="exportVersion" data-i="${num(i)}">${esc(COPY_EXPORT_WINDOWS)}</button>${done}
     </div>`;
 }
 function exportVersion(i){
@@ -160,3 +163,8 @@ async function revealExport(i){
                             body: JSON.stringify({project: state.project, target:'export', version: v.name})});
   }catch(e){ toast(e.message); }
 }
+
+Object.assign(ACTIONS, {  // KI-53：任务弹窗与版本卡片的按钮
+  cancelJob: ()=>cancelJob(), attachJob: ()=>attachJob(), retryJob: ()=>retryJob(),
+  exportVersion: el=>exportVersion(num(el.dataset.i)), revealExport: el=>revealExport(num(el.dataset.i)),
+});

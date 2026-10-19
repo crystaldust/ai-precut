@@ -27,9 +27,9 @@ from pathlib import Path
 from pipeline import applog, proc, schema, secrets
 
 JOB_COMMANDS = {"prepare": ["prepare"], "build": ["build"], "select": ["select"],
-                "export": ["export"]}
+                "export": ["export"], "questions": ["questions", "--force"]}  # KI-86：确认页重新出题
 TASK_LABELS = {"prepare": "处理素材", "build": "生成成片", "select": "重新选段",
-               "export": "导出 Windows 剪映包"}
+               "export": "导出 Windows 剪映包", "questions": "重新生成决策问题"}
 MAX_ACTIVE_JOBS = 1          # 重任务全局串行：ffmpeg / ASR 吃满资源，也避免重复计费
 CANCEL_GRACE_S = 5.0         # SIGTERM 后等这么久仍未退出就 SIGKILL
 SHORT_CMD_TIMEOUT_S = 60     # 短命令（新建项目等）的超时
@@ -38,6 +38,10 @@ PUBLIC_FIELDS = ("status", "log", "exit", "task", "project")
 MARKER_FILE = "job.marker"   # 配置目录下：当前运行中的任务（跨剪辑台实例 / 重启可见）
 JOB_PROCESS_HINTS = ("aicut", "--aicut-cli")  # 判断 marker 里的 pid 还是不是我们的任务进程
 HOMEBREW_BIN = "/opt/homebrew/bin"
+MAX_FINISHED_JOBS = 20       # KI-68 / D13：任务表只留最近这么多个已结束任务（运行中的永不删）
+JOB_LOG_MAX_LINES = 5000     # 单个任务在界面里保留的日志行数（保留末尾）
+JOB_LOG_TRIM_FRACTION = 10   # 超限时一次丢掉 1/10，避免每行都整表搬移
+JOB_LOG_TRIMMED = "…（前面省略 {n} 行，完整输出见日志文件）"
 
 UNKNOWN_TASK_MSG = "未知任务"
 JOB_CONFLICT_MSG = "已有任务在运行：{project} · {task}。等它结束，或先取消它"
@@ -139,8 +143,29 @@ def job_view(job_id: str) -> dict | None:
         if job is None:
             return None
         view = {k: job[k] for k in PUBLIC_FIELDS}
-        view["log"] = list(job["log"])
+        trimmed = job.get("trimmed", 0)
+        view["log"] = ([JOB_LOG_TRIMMED.format(n=trimmed)] if trimmed else []) + list(job["log"])
         return view
+
+
+def _append_locked(job: dict, line: str) -> None:
+    """追加一行界面日志（调用方持有 JOBS_LOCK）；超过上限丢掉最早的一批，计数给界面显示省略说明。"""
+    log = job["log"]
+    log.append(line)
+    if len(log) <= JOB_LOG_MAX_LINES - (1 if job.get("trimmed") else 0):  # 省略说明也占一行
+        return
+    batch = max(1, JOB_LOG_MAX_LINES // JOB_LOG_TRIM_FRACTION)
+    drop = len(log) - (JOB_LOG_MAX_LINES - batch)
+    del log[:drop]
+    job["trimmed"] = job.get("trimmed", 0) + drop
+
+
+def _prune_locked() -> None:
+    """只留最近 MAX_FINISHED_JOBS 个已结束任务（KI-68）；运行中的永不删。"""
+    finished = sorted((j for j in JOBS.items() if j[1]["status"] != "running"),
+                      key=lambda item: item[1]["started"])
+    for job_id, _ in finished[:max(0, len(finished) - MAX_FINISHED_JOBS)]:
+        del JOBS[job_id]
 
 
 def _log_line(job_id: str, line: str) -> None:
@@ -161,6 +186,7 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
             raise JobConflict(running[0], busy["project"], busy["task"])
         if not running and (stale := stale_job()) is not None:
             raise StaleJob(stale["pid"], stale.get("project", "?"), stale.get("task", "?"))
+        _prune_locked()
         job_id = uuid.uuid4().hex[:8]
         thread = threading.Thread(target=_run_job, args=(job_id, cmd), daemon=True,
                                   name=f"aicut-job-{job_id}")
@@ -197,7 +223,7 @@ def _run_job(job_id: str, cmd: list[str]) -> None:
             _terminate(job_id, child)
         for line in child.stdout:
             with JOBS_LOCK:
-                JOBS[job_id]["log"].append(line.rstrip())
+                _append_locked(JOBS[job_id], applog.redact(line.rstrip()))  # KI-70：界面日志也打码
                 JOBS[job_id]["out_lines"] += 1
             _log_line(job_id, line)
         code = child.wait()
@@ -216,15 +242,16 @@ def _run_job(job_id: str, cmd: list[str]) -> None:
 def _finish_job(job_id: str, code: int, note: str | None = None) -> None:
     with JOBS_LOCK:
         job = JOBS[job_id]
-        if note:
-            job["log"].append(note)
+        if note:  # 异常文本可能带路径 / Key：与任务输出一样打码（L17）
+            note = applog.redact(note)
+            _append_locked(job, note)
         if job["cancel"] and code != 0:
             job["status"] = "cancelled"
         else:
             job["status"] = "done" if code == 0 else "failed"
         job["exit"] = code
         job["popen"] = None
-        job["log"].append(JOB_EXIT_NOTE.format(code=code))
+        _append_locked(job, JOB_EXIT_NOTE.format(code=code))
         _clear_marker()
     (LOG.info if code == 0 else LOG.warning)(
         "任务结束 %s %s 退出码 %s，输出共 %d 行 %s", job_id, job["status"], code,
@@ -265,7 +292,7 @@ def cancel_job(job_id: str) -> bool:
         if job["cancel"]:
             return True
         job["cancel"] = True
-        job["log"].append(JOB_CANCEL_NOTE)
+        _append_locked(job, JOB_CANCEL_NOTE)
         child = job["popen"]
     if child is not None:  # 还没启动的话，_run_job 拿到 Popen 后会看到 cancel 标志
         _terminate(job_id, child)
@@ -358,6 +385,17 @@ def stale_job() -> dict | None:
         _clear_marker()
         return None
     return {**data, "pid": pid}
+
+
+def stale_job_view() -> dict | None:
+    """给界面的遗留任务提示（KI-71 / D14：顶部提示条）：{project, task, pid, message}；没有就 None。"""
+    stale = stale_job()
+    if stale is None:
+        return None
+    project = str(stale.get("project", "?"))
+    task = TASK_LABELS.get(stale.get("task"), str(stale.get("task", "?")))
+    return {"project": project, "task": task, "pid": stale["pid"],
+            "message": STALE_JOB_MSG.format(project=project, task=task, pid=stale["pid"])}
 
 
 # ------------------------------------------------------------------ Windows 导出（GL-14）

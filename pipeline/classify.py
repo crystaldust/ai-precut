@@ -298,7 +298,7 @@ def run(text_path: Path, audio_path: Path | None, out_path: Path,
         result = {**result, "warnings": [*missing, *legacy, *result["warnings"]]}
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    out_path.write_text(json.dumps(schema.stamp(result), ensure_ascii=False, indent=2), encoding="utf-8")
     return result
 
 

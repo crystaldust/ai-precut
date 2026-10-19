@@ -11,7 +11,7 @@ import pytest
 import aicut
 from conftest import call, make_project
 from gui import payloads
-from pipeline import format_transcript, media_io, notices, questions, schema, select, summarize
+from pipeline import format_transcript, media_io, notices, questions, schema, select, select_rules, summarize
 from pipeline import understand_visual as uv
 
 
@@ -193,7 +193,8 @@ def test_stale_stored_rules_recomputed_and_warned(tmp_path):
 def test_fresh_stored_rules_still_used(tmp_path):
     sp = _w(tmp_path / "segments_scored.json", SCORED)
     ap = _w(tmp_path / "brief_answers.json", {"answers": {"q1": "合同全额"},
-                                              "rules": {"must_topics": ["讲合同"], "ending": "sign"}})
+                                              "rules": {"must_topics": ["讲合同"], "ending": "sign"},
+                                              "rules_version": select_rules.RULES_VERSION})
     res = select.run(sp, ap, tmp_path, questions_path=_w(tmp_path / "questions.json", QS))
     assert res["rules"]["ending"] == "sign"
     assert not any("不在当前的决策问题里" in w for w in res["warnings"])

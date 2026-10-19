@@ -269,3 +269,59 @@ def test_list_skips_corrupt_project(project, tmp_path, capsys):
     aicut.cmd_list(argparse.Namespace())
     out = _output(capsys)
     assert "p " in out and "bad" in out and "损坏" in out
+
+
+# ---------------------------------------------------------------- 审查修复 M8：questions --force 失败时保留原题
+class _FailingClient:
+    model = "m"
+
+    def chat_json(self, *a, **k):
+        from pipeline.llm import LLMError
+        raise LLMError("HTTP 500: boom")
+
+
+def test_force_regenerate_failure_keeps_existing_questions(project, monkeypatch, consented, capsys):
+    _prep_questions(project, answered=True)
+    before = (project / "work/questions.json").read_text(encoding="utf-8")
+    monkeypatch.setattr(aicut, "metered", lambda *a, **k: _FailingClient())
+    with pytest.raises(SystemExit) as ei:
+        aicut.cmd_questions(argparse.Namespace(name="p", force=True))
+    assert ei.value.code == 1
+    assert (project / "work/questions.json").read_text(encoding="utf-8") == before
+    assert "boom" in capsys.readouterr().out
+
+
+def test_first_generation_failure_still_falls_back(tmp_path):
+    from pipeline import questions
+    (tmp_path / "s.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "sc.json").write_text('{"segments": [], "topics": [{"name": "讲合同"}]}', encoding="utf-8")
+    res = questions.run(tmp_path / "s.json", tmp_path / "sc.json", tmp_path / "q.json",
+                        client=_FailingClient())
+    assert res["fallback"] is True and (tmp_path / "q.json").exists()
+
+
+# ---------------------------------------------------------------- 审查修复 M6：预算不挡命中缓存的步骤
+def test_summary_cache_hit_succeeds_over_budget(project, monkeypatch, consented, capsys):
+    from pipeline import usage
+    work = project / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "segments_text.json").write_text("{}", encoding="utf-8")
+    (work / "segments_scored.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv(usage.BUDGET_ENV, "5")
+    usage.record(work, "text", {"total_tokens": 5})
+    monkeypatch.setattr(aicut.summarize, "run", lambda *a, **k: {"summary": "s", "fallback": False,
+                                                                 "cached": True})
+    aicut.cmd_summary(argparse.Namespace(name="p"))
+    assert "沿用上次的内容摘要" in capsys.readouterr().out
+
+
+def test_summary_budget_exceeded_on_real_call_dies_not_fallback(tmp_path, monkeypatch):
+    from pipeline import summarize, usage
+    monkeypatch.setenv(usage.BUDGET_ENV, "5")
+    usage.record(tmp_path, "text", {"total_tokens": 5})
+    (tmp_path / "t.json").write_text('{"topics": []}', encoding="utf-8")
+    (tmp_path / "s.json").write_text('{"segments": []}', encoding="utf-8")
+    client = usage.MeteredClient(lambda: pytest.fail("不应建客户端"), tmp_path, "summary", model="m")
+    with pytest.raises(usage.BudgetExceeded):
+        summarize.run(tmp_path / "t.json", tmp_path / "s.json", tmp_path / "o.json", client=client)
+    assert not (tmp_path / "o.json").exists()

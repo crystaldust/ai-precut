@@ -61,3 +61,12 @@ def test_proportional_takes_middle_for_mid_sentence_window():
     text = "一二三四五六七八九十" * 3
     assert shot_sub.sub_for(_seg(0, 30, text), 10, 14) == text[10:14]
     assert shot_sub.sub_for(_seg(0, 30, text), 0, 1.5) == text[:2]
+
+
+def test_truncated_english_lines_keep_spaces():  # KI-87：截短镜头的分句拼接同样补空格
+    from pipeline import shot_sub
+    seg = {"text": "One two. Three four. Five", "start": 0.0, "end": 3.0,
+           "lines": [{"start": 0.0, "end": 1.0, "text": "One two."},
+                     {"start": 1.0, "end": 2.0, "text": "Three four."},
+                     {"start": 2.0, "end": 3.0, "text": "Five"}]}
+    assert shot_sub.sub_for(seg, 0.0, 2.0) == "One two. Three four."

@@ -14,6 +14,17 @@ TRANSCRIPT_RAW = "transcript_raw.json"  # 与 aicut.cmd_transcribe 的跳过条�
 # 「处理素材」依次跑的步骤（aicut.cmd_<名>），每段计时进 work/timings.json
 PREPARE_STEPS = ("ingest", "transcribe", "analyze", "text", "junk", "scenes", "quality",
                  "score", "summary", "questions", "select", "brief")
+# `aicut status` 逐项列出的产物（标签, 相对项目目录的路径）
+STATUS_ARTIFACTS = (
+    ("素材台账", "work/materials.json"), ("音轨", "work/audio/asr.wav"),
+    ("转写", "work/transcript_raw.json"), ("分段文稿", "work/transcript.md"),
+    ("声音特征 (a)", "work/segments_audio.json"), ("文本标注 (b)", "work/segments_text.json"),
+    ("分析代理", "work/proxy.mp4"), ("废片表", "work/junk_report.csv"),
+    ("镜头切分 (c)", "work/shots_visual.json"), ("三档判定", "work/segments_scored.json"),
+    ("内容摘要", "work/content_summary.json"), ("决策问题", "work/questions.json"),
+    ("人工裁决", "work/overrides.json"), ("策划分派单", "work/brief.md"),
+    ("分镜表", "shots.json"), ("选段时间线", "work/shots-selected.json"),
+)
 
 
 def needed_keys(work: Path) -> list[str]:

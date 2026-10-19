@@ -15,8 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pipeline import applog, schema
-from pipeline.llm import DeepSeekClient
+from pipeline import applog, schema, select_rules, usage
+from pipeline.llm import DeepSeekClient, LLMError
 
 ANSWERS_FILE = "brief_answers.json"
 KINDS = {"must_topics", "ending", "focus", "pacing", "exclude", "must_lines"}
@@ -130,8 +130,16 @@ def fallback(topics: list[dict], segments: list[dict]) -> dict:
     ]}
 
 
+class RegenerateFailed(LLMError):
+    """重新生成（--force）时模型失败：原来的决策问题保持不动，不能被兜底模板替换。"""
+
+
+REGENERATE_FAILED = "重新生成决策问题失败，原来的问题和答案都保持不变：{error}"
+
+
 def run(summary_path: Path, scored_path: Path, out_path: Path, *,
-        client=None) -> dict:
+        client=None, keep_existing: bool = False) -> dict:
+    """keep_existing=True（--force 且已有题目）：模型失败时抛 RegenerateFailed，不写兜底。"""
     summary = schema.read_json(summary_path)
     scored = schema.read_json(scored_path)
     segments = schema.require_key(scored, "segments", scored_path)
@@ -147,15 +155,30 @@ def run(summary_path: Path, scored_path: Path, out_path: Path, *,
                           points=points or "（无）"),
             temperature=0.4, max_tokens=1600)
         result = _normalize(data, topics)
+    except usage.BudgetExceeded:  # 超预算：由调用方停下，不写兜底
+        raise
     except Exception as exc:  # noqa: BLE001 - 任何失败都兜底；真实原因（含堆栈，已脱敏）进诊断日志
+        if keep_existing:
+            raise RegenerateFailed(REGENERATE_FAILED.format(error=str(exc)[:200]),
+                                   retryable=False) from exc
         applog.get("questions").exception("决策问题生成失败，改用兜底模板")
         result = fallback(topics, segments)
         result["error"] = str(exc)[:200]
 
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2),
-                              encoding="utf-8")
+    schema.write_json(out_path, result)  # 原子写：成功才替换原来的题目
     return result
+
+
+def has_legacy_focus(qs: dict | None) -> bool:
+    """旧提示词生成的题目（KI-86）：focus 选项是自由文本（「妈妈」），M6 后只能报警告、不生效。"""
+    known = (*select_rules.FOCUS_MAIN, *select_rules.FOCUS_NONE)
+    for q in (qs or {}).get("questions") or [] if isinstance(qs, dict) else []:
+        for opt in (q.get("options") or []) if isinstance(q, dict) else []:
+            rule = opt.get("rule") if isinstance(opt, dict) else None
+            if isinstance(rule, dict) and rule.get("kind") == "focus" and rule.get("value") \
+                    and rule["value"] not in known:
+                return True
+    return False
 
 
 def reusable(out_path: Path) -> bool:

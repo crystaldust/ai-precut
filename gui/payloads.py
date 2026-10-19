@@ -13,6 +13,8 @@ from pipeline import notices, questions, review, schema
 
 NO_SCORED_MSG = "还没有三档判定，先跑 analyze/text/score"
 NO_QUESTIONS_MSG = "还没有决策问题，先跑 questions"
+STALE_QUESTIONS_HINT = ("这组决策问题是旧版程序生成的：「主角」一题的选项是人名，现在的选段认不出来，"
+                        "选了也不生效。点「重新生成决策问题」按新规则重出一组（已保存的答案需要重新选）")
 _jload = schema.read_json_lenient
 
 
@@ -36,7 +38,9 @@ def browse(pdir: Path, name: str) -> dict:
         return any(max(0, min(s["end"], sh["in"] + sh["out"] - sh["in"]) -
                        max(s["start"], sh["in"])) > 1.0 for sh in shots)
 
-    topics = {t["name"]: dict(t) for t in scored.get("topics", [])}
+    # 统计按当前（含人工裁决后的）分档重算：先清零，scored 里存的值不能再叠加一次（审查修复 M9）
+    topics = {t["name"]: {**t, "count": 0, "duration": 0.0, "usable_dur": 0.0}
+              for t in scored.get("topics", []) if isinstance(t, dict) and "name" in t}
     for s in segments:
         t = topics.setdefault(s.get("topic") or "未归类",
                              {"name": s.get("topic") or "未归类", "must": False,
@@ -85,4 +89,5 @@ def confirm(pdir: Path) -> dict:
     return {"questions": q.get("questions") or [], "fallback": q.get("fallback", False),
             "summary": summary, "answers": questions.normalize_answers(q, stored.get("answers")),
             "confirmed": stored.get("confirmed", False), "answers_unreadable": unreadable,
+            "stale_questions": questions.has_legacy_focus(q), "stale_hint": STALE_QUESTIONS_HINT,  # KI-86
             "warnings": notices.project_warnings(work)}

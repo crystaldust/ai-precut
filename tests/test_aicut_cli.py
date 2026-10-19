@@ -57,7 +57,7 @@ def test_new_cleans_up_dir_on_save_failure(cli_env, monkeypatch):
     def boom(*_a, **_k):
         raise OSError("磁盘满")
 
-    monkeypatch.setattr(aicut.schema, "save", boom)
+    monkeypatch.setattr(aicut.schema, "create_json_exclusive", boom)  # KI-69：新建改走原子占位
     with pytest.raises(OSError):
         new(material, "--no-input")
     assert not (projects / "p1").exists()
@@ -71,7 +71,7 @@ def test_new_save_failure_keeps_preexisting_empty_dir(cli_env, monkeypatch):
     def boom(*_a, **_k):
         raise OSError("磁盘满")
 
-    monkeypatch.setattr(aicut.schema, "save", boom)
+    monkeypatch.setattr(aicut.schema, "create_json_exclusive", boom)  # KI-69：新建改走原子占位
     with pytest.raises(OSError):
         new(material, "--no-input")
     assert (projects / "p1").is_dir()  # 不是这次建的，不删
@@ -174,7 +174,7 @@ def test_transcribe_requires_consent_before_cloud(unconsented, monkeypatch, caps
     wav = pdir / "work/audio/asr.wav"
     wav.parent.mkdir(parents=True)
     wav.write_bytes(b"RIFF")
-    monkeypatch.setattr(aicut.media_io, "complete_or_adopt", lambda p: True)
+    monkeypatch.setattr(aicut.media_io, "complete_or_adopt", lambda p, **k: True)
     monkeypatch.setattr(aicut.cloud, "CloudClient", lambda *a, **k: pytest.fail("不应调用云端"))
     with pytest.raises(SystemExit):
         aicut.main(["transcribe", "p1"])
@@ -205,3 +205,82 @@ def test_config_consent_prints_notice_and_records(unconsented, capsys):
     for text in ("16kHz", "火山引擎", "DeepSeek", "不会离开这台电脑"):
         assert text in out
     assert consent.accepted()
+
+
+# ---------------------------------------------------------------- KI-33：磁盘预检 + aicut clean
+def test_prepare_dies_when_disk_low(cli_env, monkeypatch, capsys):
+    projects, _ = cli_env
+    _project(projects, transcript=True)
+    aicut.secrets.set("deepseek", "sk-abcdefghijkl")
+    calls = _record_stages(monkeypatch)
+    monkeypatch.setattr(aicut.diskspace, "shortfall", lambda path, need, **k: "磁盘空间不够：测试")
+    with pytest.raises(SystemExit):
+        aicut.main(["prepare", "p1"])
+    assert calls == [] and "磁盘空间不够" in capsys.readouterr().out
+
+
+def test_build_dies_when_disk_low_before_cutting(cli_env, monkeypatch, capsys):
+    projects, _ = cli_env
+    pdir = _project(projects)
+    cfg = json.loads((pdir / "project.json").read_text())
+    (pdir / "project.json").write_text(json.dumps({**cfg, "preset": "测试预设"}))
+    (pdir / "shots.json").write_text(json.dumps({"shots": [{"id": "S1", "in": 0, "out": 5}]}))
+    monkeypatch.setattr(aicut, "ensure_clips", lambda *a: pytest.fail("不应开始切片"))
+    monkeypatch.setattr(aicut.diskspace, "shortfall", lambda path, need, **k: "磁盘空间不够：测试")
+    with pytest.raises(SystemExit):
+        aicut.main(["build", "p1", "--no-draft"])
+    assert "磁盘空间不够" in capsys.readouterr().out
+
+
+def test_clean_dry_run_deletes_nothing(cli_env, capsys):
+    projects, _ = cli_env
+    pdir = _project(projects)
+    clip = pdir / "work/clips/S1.mp4"
+    clip.parent.mkdir(parents=True)
+    clip.write_bytes(b"x" * 2048)
+    aicut.main(["clean", "p1", "--dry-run"])
+    assert clip.exists() and "work/clips" in capsys.readouterr().out
+    aicut.main(["clean", "p1"])
+    assert not clip.exists()
+
+
+# ---------------------------------------------------------------- 审查修复 M3：任务在跑时命令行 clean 也要拒绝
+def test_clean_refused_while_project_task_runs(cli_env, capsys):
+    import subprocess
+    import sys as _sys
+    projects, _ = cli_env
+    pdir = _project(projects)
+    clip = pdir / "work/clips/S1.mp4"
+    clip.parent.mkdir(parents=True)
+    clip.write_bytes(b"x")
+    from pipeline import project_lock
+    holder = subprocess.Popen([_sys.executable, "-c",
+        "import sys,time; sys.path.insert(0, %r); from pipeline import project_lock;"
+        "cm = project_lock.busy(%r); cm.__enter__(); print('ok', flush=True); time.sleep(30)"
+        % (str(aicut.ROOT), str(pdir))], stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "ok"
+        with pytest.raises(SystemExit):
+            aicut.main(["clean", "p1"])
+        assert clip.exists() and "正在运行" in capsys.readouterr().out
+    finally:
+        holder.kill(); holder.wait()
+    aicut.main(["clean", "p1"])
+    assert not clip.exists()
+
+
+def test_project_commands_hold_shared_lock(cli_env, monkeypatch):
+    projects, _ = cli_env
+    _project(projects)
+    from pipeline import project_lock
+    seen = []
+
+    def fake_status(args):
+        with pytest.raises(project_lock.Busy):
+            with project_lock.exclusive(projects / "p1"):
+                pass
+        seen.append(1)
+
+    monkeypatch.setattr(aicut, "cmd_brief", fake_status)
+    aicut.main(["brief", "p1"])
+    assert seen == [1]

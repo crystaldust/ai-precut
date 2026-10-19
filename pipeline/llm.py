@@ -18,6 +18,7 @@ import urllib.request
 from pipeline import applog, safe_http, secrets
 
 DEFAULT_BASE = "https://api.deepseek.com"
+DEFAULT_MODEL = "deepseek-chat"
 RETRY_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 ERROR_SNIPPET = 200
 
@@ -49,7 +50,7 @@ def _api_error(text: str) -> str:
         err = json.loads(text).get("error")
         msg = err.get("message") if isinstance(err, dict) else None
         if isinstance(msg, str) and msg:
-            return msg[:ERROR_SNIPPET]
+            return applog.redact(msg)[:ERROR_SNIPPET]  # 第三方原文可能带 Key / 令牌（KI-70）
     except (ValueError, AttributeError):
         pass
     return describe(text)
@@ -75,7 +76,7 @@ def default_transport(url: str, headers: dict, body: bytes, timeout: float) -> t
         except (OSError, http.client.HTTPException, ValueError):
             return exc.code, ""
     except (OSError, http.client.HTTPException) as exc:
-        raise LLMError(f"网络错误：{exc}") from exc
+        raise LLMError(f"网络错误：{applog.redact(str(exc))[:ERROR_SNIPPET]}") from exc
 
 
 class DeepSeekClient:
@@ -83,7 +84,7 @@ class DeepSeekClient:
         self,
         api_key: str | None = None,
         *,
-        model: str = "deepseek-chat",
+        model: str = DEFAULT_MODEL,
         base_url: str = DEFAULT_BASE,
         timeout: float = 120.0,
         retries: int = 3,
@@ -135,6 +136,7 @@ class DeepSeekClient:
 
     def chat_json(self, system: str, user: str, *,
                   temperature: float = 0.2, max_tokens: int = 4096) -> dict:
+        self.last_usage = {}  # 失败的调用不能留着上一次的用量
         data = self._post({
             "model": self.model,
             "messages": [{"role": "system", "content": system},

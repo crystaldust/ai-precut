@@ -12,23 +12,29 @@ COMMON_JS = '<script src="/static/common.js"></script>'
 
 
 def _read(name):
+    """页面源码 + 它外置出去的脚本（KI-53：内联脚本搬进同名 .js，守卫照样看得到）。"""
+    text = (STATIC / name).read_text(encoding="utf-8")
+    js = STATIC / name.replace(".html", ".js")
+    if name.endswith(".html") and js.exists():
+        text += "\n" + js.read_text(encoding="utf-8")
+    return text
+
+
+def _html(name):
     return (STATIC / name).read_text(encoding="utf-8")
 
 
-def _first_inline_script(src):
-    m = re.search(r"<script>", src)
-    assert m, "页面应该有内联脚本"
-    return m.start()
+ALL_SOURCES = sorted(p.name for p in STATIC.glob("*.html") if p.name != "prototype.html") + \
+    sorted(p.name for p in STATIC.glob("*.js"))
 
 
 # ---------------------------------------------------------------- GL-05
 @pytest.mark.parametrize("page", PAGES)
 def test_pages_have_token_meta_and_common_js(page):
-    src = _read(page)
-    assert TOKEN_META in src
-    assert COMMON_JS in src
-    first = _first_inline_script(src)
-    assert src.index(TOKEN_META) < src.index(COMMON_JS) < first
+    src = _html(page)
+    own = f'<script src="/static/{page.replace(".html", ".js")}"></script>'
+    assert TOKEN_META in src and COMMON_JS in src and own in src
+    assert src.index(TOKEN_META) < src.index(COMMON_JS) < src.index(own)
 
 
 def test_common_js_escapes_quote():
@@ -42,10 +48,23 @@ def test_pick_sends_json():
     assert "api('/api/pick', {method:'POST'})" not in _read("index.html")
 
 
-# ---------------------------------------------------------------- GL-07
-@pytest.mark.parametrize("page", XSS_PAGES)
-def test_no_string_interpolation_in_inline_handlers(page):
-    hits = re.findall(r"""on\w+="[^"]*'\$\{""", _read(page))
+# ---------------------------------------------------------------- GL-07 / KI-53
+@pytest.mark.parametrize("name", ALL_SOURCES)
+def test_no_inline_event_handlers(name):
+    """CSP 不允许内联事件：页面和脚本模板里都不能再有 on* 属性（更强地替代了原来的「不拼字符串」守卫）。"""
+    hits = re.findall(r"<[a-zA-Z][^>]*?\son[a-z]+\s*=", _html(name))
+    assert hits == []
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_no_inline_script_blocks(page):
+    assert re.findall(r"<script(?![^>]*\ssrc=)[^>]*>", _html(page)) == []
+
+
+@pytest.mark.parametrize("name", ALL_SOURCES)
+def test_data_attributes_never_take_raw_interpolation(name):
+    """data-* 里的动态值必须过 num() / esc()（GL-07）。"""
+    hits = re.findall(r'data-[a-z]+="\$\{(?!num\(|esc\()', _html(name))
     assert hits == []
 
 
@@ -99,7 +118,7 @@ def test_target_copy_in_named_constants():
                   "COPY_TARGET_LATER", "COPY_TARGET_MANUAL_NOTE"):
         assert f"const {const}" in src
     assert "startJob('select'" in src
-    assert 'onclick="openTarget(false)"' in src
+    assert 'data-act="openTarget"' in src and "openTarget: ()=>openTarget(false)" in src
 
 
 def test_target_modal_uses_num_for_numbers():
@@ -202,3 +221,38 @@ def test_browse_writes_check_ok_and_roll_back():
         body = body[:body.index("\n}\n")]
         assert "postOrRollback(" in body and "prev" in body  # 失败时回滚乐观更新
     assert "TOAST_ERROR_MIN_MS" in src
+
+
+# ---------------------------------------------------------------- KI-71 / KI-57 / KI-36
+def test_index_shows_stale_job_bar():
+    src = _read("index.html")
+    assert 'id="stalebar"' in src and "stale_job" in src
+    body = src[src.index("function renderStalebar"):]
+    body = body[:body.index("\n}\n")]
+    assert "esc(" in body and "COPY_STALE_TITLE" in body
+
+
+def test_create_project_has_no_hash_navigation():
+    src = _read("index.html")
+    body = src[src.index("async function createProject"):]
+    body = body[:body.index("\n}\n")]
+    assert "location.hash" not in body and "await selectProject(name)" in body
+
+
+def test_subpages_open_through_desktop_window_first():
+    src = _read("index.html")
+    body = src[src.index("async function openSubpage"):]
+    body = body[:body.index("\n}\n")]
+    assert "/api/window" in body and "window.open(" in body
+    assert body.index("/api/window") < body.index("window.open(")
+
+
+def test_confirm_page_offers_regenerate_for_stale_questions():  # KI-86
+    src = _read("confirm.html")
+    assert 'id="staleCard"' in src and 'data-act="regenerate"' in src
+    assert "stale_questions" in src and "task: 'questions'" in src
+
+
+@pytest.mark.parametrize("name", ["index.js", "browse.js"])
+def test_video_play_rejections_are_handled(name):  # 审查修复 L10
+    assert re.findall(r"\.play\(\)(?!\.catch)", _html(name)) == []

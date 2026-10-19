@@ -107,3 +107,50 @@ def test_new_rejects_edge_whitespace_name(monkeypatch, tmp_path):
     with pytest.raises(SystemExit):
         aicut.cmd_new(args)
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------- KI-69：并发新建同名项目
+def test_cmd_new_loses_race_without_clobbering(monkeypatch, tmp_path):
+    from pipeline import schema
+    monkeypatch.setattr(aicut, "PROJECTS", tmp_path / "projects")
+    material = tmp_path / "a.mp4"
+    material.write_bytes(b"x")
+    theirs = {"name": "race", "material": "/their.mp4", "schema_version": 2}
+
+    def lose(path, obj):
+        path.write_text(json.dumps(theirs), encoding="utf-8")  # 对方抢先写好
+        raise FileExistsError(path)
+
+    monkeypatch.setattr(schema, "create_json_exclusive", lose)
+    args = Namespace(name="race", material=str(material), preset="纪实3min", title=None,
+                     tone=None, audience=None, must_lines=None, target=60, no_input=True)
+    with pytest.raises(SystemExit) as ei:
+        aicut.cmd_new(args)
+    assert ei.value.code == 1
+    pj = tmp_path / "projects/race/project.json"
+    assert json.loads(pj.read_text()) == theirs  # 对方的文件不变，目录也还在
+
+
+# ---------------------------------------------------------------- KI-51：读改写走加锁的 update_project
+def test_cmd_select_target_saved_through_locked_update(monkeypatch, tmp_path):
+    from pipeline import schema
+    monkeypatch.setattr(aicut, "PROJECTS", tmp_path)
+    pdir = _make_project(tmp_path, "p")
+    (pdir / "work").mkdir()
+    (pdir / "work/segments_scored.json").write_text("{}")
+    res = {"stats": {"shots": 1}, "total": 60, "target": 60, "missing_must_topics": []}
+    monkeypatch.setattr(aicut.select, "run", lambda *a, **k: res)
+    seen = []
+    real = schema.update_project
+
+    def spy(path, mutate):
+        def mutate_with_rival(c):  # 锁内模拟另一个写者先改了 calibration
+            return mutate({**c, "calibration": {"tone": "emotion"}})
+        seen.append(path)
+        return real(path, mutate_with_rival)
+
+    monkeypatch.setattr(schema, "update_project", spy)
+    aicut.cmd_select(Namespace(name="p", target=60))
+    cfg = json.loads((pdir / "project.json").read_text())
+    assert seen == [pdir / "project.json"]
+    assert cfg["target_duration"] == 60 and cfg["calibration"] == {"tone": "emotion"}

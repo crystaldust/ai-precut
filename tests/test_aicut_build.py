@@ -176,7 +176,9 @@ def test_status_marks_half_media_as_not_done(project, monkeypatch, capsys):
 def test_legacy_wav_readable_by_ffprobe_is_adopted(project, monkeypatch):
     wav = project / "work/audio/asr.wav"
     wav.parent.mkdir(parents=True)
-    wav.write_bytes(b"full-from-old-version")
+    import wave  # KI-65：认领要求 RIFF 头完整（旧版完整写完的 wav 才有）
+    with wave.open(str(wav), "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(16000), w.writeframes(b"\0\0" * 160)
     monkeypatch.setattr(media_io, "_probe_duration", lambda *a: 42.0)
     calls = []
     monkeypatch.setattr(media_io, "run_ffmpeg", fake_ffmpeg(calls))
@@ -311,6 +313,7 @@ def test_ensure_jy_python_frozen_uses_app_itself(monkeypatch):
 
 def test_ensure_jy_python_dev_delegates_and_dies_on_error(monkeypatch, capsys):
     monkeypatch.setattr(aicut.proc, "FROZEN", False)
+    monkeypatch.setattr(aicut.jy_env, "available_here", lambda: False)  # KI-34：当前环境没装才走 venv
     seen = []
     monkeypatch.setattr(aicut.jy_env, "ensure", lambda v: seen.append(v) or "py")
     assert aicut.ensure_jy_python() == "py" and seen == [aicut.JY_VENV]
@@ -342,3 +345,128 @@ def test_cmd_build_uses_fingerprint(project, monkeypatch):
     build(12.0)
     build(12.0)
     assert hashes[0] != hashes[1] and hashes[1] == hashes[2]
+
+
+# ---------------------------------------------------------------- KI-61：超时
+def test_run_pipeline_timeout_dies(monkeypatch, capsys):
+    import subprocess
+    seen = {}
+
+    def run(cmd, **kw):
+        seen["timeout"] = kw.get("timeout")
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+
+    monkeypatch.setattr(aicut.proc, "FROZEN", False)
+    monkeypatch.setattr(aicut.subprocess, "run", run)
+    with pytest.raises(SystemExit):
+        aicut._run_pipeline("pipeline.render_preview", ["t.json"])
+    assert seen["timeout"] == media_io.FFMPEG_TIMEOUT_S
+    assert "超过" in capsys.readouterr().out
+
+
+def _timeouts(calls):
+    def run(args, **kw):
+        calls.append(kw.get("timeout"))
+        Path(args[-1]).write_bytes(b"full")
+    return run
+
+
+def test_audio_and_proxy_timeouts_follow_material_length(project, monkeypatch):
+    schema.write_json(project / "work/materials.json", {"items": [{"duration": 5000.0}]})
+    calls = []
+    monkeypatch.setattr(media_io, "run_ffmpeg", _timeouts(calls))
+    monkeypatch.setattr(aicut, "_run_pipeline", lambda *a: None)
+    (project / "work/transcript_raw.json").write_text("{}")
+    aicut.cmd_transcribe(argparse.Namespace(name="p"))
+    aicut.cmd_junk(argparse.Namespace(name="p"))
+    assert calls == [media_io.timeout_for(5000.0)] * 2
+
+
+def test_clip_timeout_follows_shot_length(project, monkeypatch):
+    calls = []
+    monkeypatch.setattr(media_io, "run_ffmpeg", _timeouts(calls))
+    aicut.ensure_clips(project, aicut.cfg(project), [{"id": "S01", "in": 0.0, "out": 100.0}])
+    assert calls == [media_io.timeout_for(100.0 * aicut.CLIP_TIMEOUT_FACTOR)]
+
+
+# ---------------------------------------------------------------- KI-62：素材换了 → 重抽音轨
+def test_transcribe_reextracts_wav_when_material_replaced(project, monkeypatch):
+    import os
+    src = Path(aicut.cfg(project)["material"])
+    src.write_bytes(b"material-v1")
+    calls = []
+    monkeypatch.setattr(media_io, "run_ffmpeg", _timeouts(calls))
+    monkeypatch.setattr(aicut, "_run_pipeline", lambda *a: None)
+    # 只看音轨；旧转写作废（M7）另有用例
+    monkeypatch.setattr(aicut.transcript_stamp, "invalidate_if_replaced", lambda *a: False)
+    (project / "work").mkdir(exist_ok=True)
+    (project / "work/transcript_raw.json").write_text("{}")
+    aicut.cmd_transcribe(argparse.Namespace(name="p"))
+    aicut.cmd_transcribe(argparse.Namespace(name="p"))
+    assert len(calls) == 1  # 素材没变：复用
+    src.write_bytes(b"material-v2-replaced")
+    os.utime(src, (1, 1))
+    aicut.cmd_transcribe(argparse.Namespace(name="p"))
+    assert len(calls) == 2
+
+
+def test_ensure_jy_python_prefers_current_env(monkeypatch):  # KI-34：uv 环境里本来就装了
+    monkeypatch.setattr(aicut.proc, "FROZEN", False)
+    monkeypatch.setattr(aicut.jy_env, "available_here", lambda: True)
+    monkeypatch.setattr(aicut.jy_env, "ensure", lambda v: pytest.fail("不该建 venv"))
+    assert aicut.ensure_jy_python() == aicut.sys.executable
+
+
+def test_timeline_artifact_schema_stamped(project, monkeypatch):  # KI-37
+    import json
+    shots = [{"id": "S01", "in": 0.0, "out": 1.0}]
+    (project / "shots.json").write_text(json.dumps({"shots": shots}))
+    monkeypatch.setattr(aicut, "load_preset", lambda n: {})
+    monkeypatch.setattr(aicut, "ensure_clips", lambda *a: project / "work/clips")
+    monkeypatch.setattr(aicut, "actual_durations", lambda *a: {"S01": 1.0})
+    monkeypatch.setattr(aicut, "ensure_preview", lambda *a: "p.mp4")
+    aicut.cmd_build(argparse.Namespace(name="p", version="v1", no_draft=True))
+    tl = json.loads((project / "output/v1/timeline.json").read_text())
+    assert tl["artifact_schema"] == schema.ARTIFACT_SCHEMA and tl["video"]
+
+
+# ---------------------------------------------------------------- 审查修复 M7：素材换了 → 旧转写作废
+def _transcribe_env(project, monkeypatch, cloud_calls):
+    monkeypatch.setattr(media_io, "run_ffmpeg", _timeouts([]))
+    monkeypatch.setattr(aicut, "_run_pipeline", lambda *a: None)
+    monkeypatch.setattr(aicut, "require_consent", lambda: None)
+    monkeypatch.setattr(aicut.secrets, "get", lambda p: "k")
+
+    class FakeCloud:
+        def transcribe(self, wav, work, **kw):
+            cloud_calls.append(wav)
+            (work / "transcript_raw.json").write_text('{"new": true}')
+
+    monkeypatch.setattr(aicut.cloud, "CloudClient", FakeCloud)
+
+
+def test_replaced_material_invalidates_old_transcript(project, monkeypatch, capsys):
+    import os
+    src = Path(aicut.cfg(project)["material"])
+    src.write_bytes(b"material-v1")
+    calls = []
+    _transcribe_env(project, monkeypatch, calls)
+    aicut.cmd_transcribe(argparse.Namespace(name="p"))
+    assert len(calls) == 1
+    aicut.cmd_transcribe(argparse.Namespace(name="p"))
+    assert len(calls) == 1  # 没换素材：不重转
+    src.write_bytes(b"material-v2-replaced")
+    os.utime(src, (1, 1))
+    aicut.cmd_transcribe(argparse.Namespace(name="p"))
+    assert len(calls) == 2 and "素材换过了" in capsys.readouterr().out
+
+
+def test_legacy_transcript_without_source_is_kept_and_stamped(project, monkeypatch):
+    src = Path(aicut.cfg(project)["material"])
+    src.write_bytes(b"material-v1")
+    (project / "work").mkdir(exist_ok=True)
+    (project / "work/transcript_raw.json").write_text("{}")
+    calls = []
+    _transcribe_env(project, monkeypatch, calls)
+    aicut.cmd_transcribe(argparse.Namespace(name="p"))
+    assert calls == [] and (project / "work" / aicut.transcript_stamp.STAMP_FILE).exists()

@@ -17,6 +17,8 @@ import stat
 import uuid
 from pathlib import Path
 
+from pipeline import schema
+
 SERVICE = "ai-cut"
 PROVIDERS = ("mediakit", "deepseek")
 ENV_KEYS = {
@@ -40,6 +42,13 @@ class SecretDeleteError(RuntimeError):
 LEGACY_FILES = {
     "mediakit": Path.home() / ".mediakit/api_key",
 }
+# KI-28 / D2：「删除 Key」不删别的工具的文件，只在配置目录记下「不再读它」；重新填 Key 后恢复
+LEGACY_IGNORE_FILE = "legacy_ignored.json"
+# KI-67 / D1：掩码按长度分档，最多暴露三分之一
+MASK_FULL_MIN = 24          # ≥24 位：前 4 + 后 4
+MASK_TAIL_MIN = 16          # 16–23 位：只留后 4
+MASK_EDGE = 4
+MASK_SHORT = "********"     # 更短：固定 8 个星号，连长度也不暴露
 
 
 def _config_dir() -> Path:
@@ -82,11 +91,18 @@ def _read_file() -> dict:
         return {}
 
 
+def _ensure_dir(d: Path) -> None:
+    """配置目录：本程序新建的一步到位 0700；已存在的（可能是 AI_CUT_CONFIG_DIR 指向的共享目录）不改权限。"""
+    try:
+        d.mkdir(parents=True, mode=stat.S_IRWXU)
+    except FileExistsError:
+        pass
+
+
 def _write_file(data: dict) -> None:
     """原子写凭证文件：临时文件一创建就是 0600（不经过默认权限），名字随机，失败不留残渣。"""
     path = _cred_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(path.parent, stat.S_IRWXU)
+    _ensure_dir(path.parent)
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
     try:
@@ -99,12 +115,50 @@ def _write_file(data: dict) -> None:
 
 
 def mask(value: str | None) -> str:
-    """AKLTabcd…9f2a → AKLT****9f2a；过短直接打码。"""
+    """≥24 位 AKLT****9f2a；16–23 位 ****9f2a；更短固定 ********（KI-67）。"""
     if not value:
         return ""
-    if len(value) <= 8:
-        return "*" * len(value)
-    return f"{value[:4]}****{value[-4:]}"
+    if len(value) >= MASK_FULL_MIN:
+        return f"{value[:MASK_EDGE]}****{value[-MASK_EDGE:]}"
+    if len(value) >= MASK_TAIL_MIN:
+        return f"****{value[-MASK_EDGE:]}"
+    return MASK_SHORT
+
+
+def _clean(value: object) -> str | None:
+    """钥匙串 / 文件里读出的值去首尾空白（KI-74）；全是空白或不是文字 → None。"""
+    return value.strip() or None if isinstance(value, str) else None
+
+
+def _ignore_path() -> Path:
+    return _config_dir() / LEGACY_IGNORE_FILE
+
+
+def _legacy_ignored() -> list[str]:
+    try:
+        data = schema.read_json(_ignore_path(), default=[], expect=list)
+    except schema.CorruptJSON:  # 坏文件 → 按全部屏蔽处理（fail closed，L18）：宁可让人重填 Key，也不读明文旧文件
+        return list(LEGACY_FILES)
+    return [x for x in data if isinstance(x, str)]
+
+
+def _set_legacy_ignored(provider: str, ignored: bool) -> None:
+    current = _legacy_ignored()
+    wanted = sorted({*current, provider} if ignored else {x for x in current if x != provider})
+    if wanted == sorted(current):
+        return
+    _ensure_dir(_config_dir())
+    schema.write_json(_ignore_path(), wanted)
+
+
+def _legacy_value(provider: str) -> str | None:
+    legacy = LEGACY_FILES.get(provider)
+    if not legacy or provider in _legacy_ignored():
+        return None
+    try:
+        return _clean(legacy.read_text(encoding="utf-8")) if legacy.exists() else None
+    except OSError:
+        return None
 
 
 def get(provider: str) -> str | None:
@@ -116,37 +170,20 @@ def get(provider: str) -> str | None:
     kr = _keyring()
     if kr is not None:
         try:
-            value = kr.get_password(SERVICE, provider)
-            if value:
+            if value := _clean(kr.get_password(SERVICE, provider)):
                 return value
         except Exception:  # noqa: BLE001 - 钥匙串被锁/拒绝时继续降级
             pass
-    value = _read_file().get(provider)
-    if value:
-        return value
-    legacy = LEGACY_FILES.get(provider)
-    if legacy and legacy.exists():
-        try:
-            return legacy.read_text(encoding="utf-8").strip() or None
-        except OSError:
-            return None
-    return None
+    return _clean(_read_file().get(provider)) or _legacy_value(provider)
 
 
 def peek(provider: str) -> str | None:
     """不碰钥匙串的读取（环境变量 → 凭证文件 → 旧版文件），给日志脱敏登记用，绝不弹授权。"""
     if provider not in PROVIDERS:
         raise ValueError(f"未知凭证：{provider}")
-    if env := os.environ.get(ENV_KEYS[provider]):
-        return env.strip()
-    if value := _read_file().get(provider):
-        return value
-    legacy = LEGACY_FILES.get(provider)
-    try:
-        return (legacy.read_text(encoding="utf-8").strip() or None) if legacy and legacy.exists() \
-            else None
-    except OSError:
-        return None
+    if env := _clean(os.environ.get(ENV_KEYS[provider])):
+        return env
+    return _clean(_read_file().get(provider)) or _legacy_value(provider)
 
 
 def set(provider: str, value: str) -> str:
@@ -157,20 +194,26 @@ def set(provider: str, value: str) -> str:
     if not value:
         raise ValueError("凭证不能为空")
     kr = _keyring()
+    backend = "file"
     if kr is not None:
         try:
             kr.set_password(SERVICE, provider, value)
-            return "keyring"
+            backend = "keyring"
         except Exception:  # noqa: BLE001
             pass
-    data = _read_file()
-    data[provider] = value
-    _write_file(data)
-    return "file"
+    if backend == "file":
+        data = _read_file()
+        data[provider] = value
+        _write_file(data)
+    _set_legacy_ignored(provider, False)  # 重新配置后恢复正常优先级
+    return backend
 
 
 def delete(provider: str) -> None:
-    """从钥匙串和凭证文件里删掉 Key，并确认真的删掉了（环境变量 / 旧版文件不归这里管）。"""
+    """从钥匙串和凭证文件里删掉 Key，并确认真的删掉了。
+
+    环境变量不归这里管；旧版文件不删（别的工具的），改为记下「不再读它」（KI-28）。
+    """
     kr = _keyring()
     if kr is not None:
         try:
@@ -188,6 +231,8 @@ def delete(provider: str) -> None:
         _write_file(data)
     if provider in _read_file():
         raise SecretDeleteError("凭证文件里的 Key 没删掉")
+    if LEGACY_FILES.get(provider):
+        _set_legacy_ignored(provider, True)
 
 
 def status() -> dict[str, dict]:
@@ -201,13 +246,16 @@ def status() -> dict[str, dict]:
             source = "env"
         elif provider in _read_file():
             source = "file"
-        elif LEGACY_FILES.get(provider) and LEGACY_FILES[provider].exists():
+        elif _legacy_value(provider):
             source = "legacy"
         else:
             source = "keyring"
+        legacy = LEGACY_FILES.get(provider)
         out[provider] = {
             "configured": bool(value),
             "source": source,
             "masked": mask(value),
+            # 已屏蔽但明文旧文件还在：界面提示剪辑师自己删掉它（L18）
+            "legacy_file": bool(legacy and legacy.exists() and provider in _legacy_ignored()),
         }
     return out

@@ -8,12 +8,15 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
 
-from pipeline import applog, schema
-from pipeline.llm import DeepSeekClient, LLMError
+from pipeline import applog, schema, usage
+from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError
+
+PROMPT_VERSION = 1  # 提示词改了就加一：旧摘要按「输入变了」失效（KI-32）
 
 SUMMARY_SYSTEM = "你是纪录片剪辑助理，只输出 JSON。"
 
@@ -92,6 +95,19 @@ def _normalize(data: dict, segments: list[dict]) -> dict:
     return {"summary": summary, "key_points": points, "cast": cast, "fallback": False}
 
 
+def _input_hash(t_list: str, p_list: str, style: str, model: str) -> str:
+    payload = json.dumps([t_list, p_list, style, model, PROMPT_VERSION], ensure_ascii=False)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _cached(out_path: Path, fp: str) -> dict | None:
+    """上次的正常结果、输入没变 → 复用（KI-32）；兜底 / 出过错的永不复用，免得把兜底固化（同 KI-22）。"""
+    prev = schema.read_json_lenient(out_path, None)
+    ok = (isinstance(prev, dict) and prev.get("fallback") is False and "error" not in prev
+          and prev.get("input_hash") == fp)
+    return prev if ok else None
+
+
 def run(text_path: Path, scored_path: Path, out_path: Path,
         *, client=None, model: str | None = None, style: str = "") -> dict:
     text = schema.read_json(text_path)
@@ -99,8 +115,12 @@ def run(text_path: Path, scored_path: Path, out_path: Path,
     segments = schema.require_key(scored, "segments", scored_path)
     topics = scored.get("topics") or text.get("topics") or []
 
-    client = client or (DeepSeekClient(model=model) if model else DeepSeekClient())  # KI-10
     t_list, p_list = _listing(topics, segments)
+    label = model or (getattr(client, "model", "") if client is not None else DEFAULT_MODEL)
+    fp = _input_hash(t_list, p_list, style, label)
+    if (hit := _cached(out_path, fp)) is not None:
+        return {**hit, "cached": True}
+    client = client or (DeepSeekClient(model=model) if model else DeepSeekClient())  # KI-10
     try:
         prompt = SUMMARY_USER.format(topics=t_list or "（无）", points=p_list or "（无）")
         if style:
@@ -109,15 +129,16 @@ def run(text_path: Path, scored_path: Path, out_path: Path,
         result = _normalize(data, segments)
         if not result["summary"]:
             raise LLMError("摘要为空")
+    except usage.BudgetExceeded:  # 超预算不是「模型出错」：不能用兜底糊过去，由调用方停下
+        raise
     except Exception as exc:  # noqa: BLE001 - 任何失败都退回兜底；真实原因（含堆栈，已脱敏）进诊断日志
         applog.get("summarize").exception("内容摘要调用失败，改用兜底")
         result = fallback(segments, topics)
         result["error"] = str(exc)[:200]
 
     result["model"] = model or getattr(client, "model", "")
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    Path(out_path).write_text(json.dumps(result, ensure_ascii=False, indent=2),
-                              encoding="utf-8")
+    result["input_hash"] = fp
+    schema.write_json(out_path, result)
     return result
 
 

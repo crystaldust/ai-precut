@@ -101,3 +101,43 @@ def test_model_passed_to_client(tmp_path, monkeypatch):  # M6 · KI-10
     assert made == [{"model": "deepseek-reasoner"}] and res["model"] == "deepseek-reasoner"
     summarize.run(tp, sp, tmp_path / "o2.json")
     assert made[-1] == {}
+
+
+# ---------------------------------------------------------------- KI-32：摘要输入没变就复用；兜底永不复用
+GOOD = {"summary": "一位母亲带女儿来报名", "key_points": [], "cast": []}
+
+
+class Counting(Fake):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.calls = 0
+
+    def chat_json(self, system, user, **kw):
+        self.calls += 1
+        return super().chat_json(system, user, **kw)
+
+
+def test_unchanged_summary_reused_but_fallback_never_reused(tmp_path):
+    tp, sp = write_inputs(tmp_path)
+    out = tmp_path / "o.json"
+    summarize.run(tp, sp, out, client=Counting(payload=GOOD))
+    again = Counting(payload=GOOD)
+    res = summarize.run(tp, sp, out, client=again)
+    assert again.calls == 0 and res["cached"] is True and res["summary"] == GOOD["summary"]
+    changed = Counting(payload=GOOD)
+    summarize.run(tp, sp, out, client=changed, style="剪辑偏好：情绪优先")
+    assert changed.calls == 1  # 偏好变了：重新调用
+    summarize.run(tp, sp, out, client=Counting(boom=True))  # 兜底
+    retry = Counting(payload=GOOD)
+    summarize.run(tp, sp, out, client=retry)
+    assert retry.calls == 1  # 兜底结果不复用
+
+
+def test_summary_written_atomically(tmp_path, monkeypatch):
+    from pipeline import schema
+    seen = []
+    real = schema.write_json
+    monkeypatch.setattr(schema, "write_json", lambda p, o, **k: (seen.append(p), real(p, o, **k)))
+    tp, sp = write_inputs(tmp_path)
+    summarize.run(tp, sp, tmp_path / "o.json", client=Fake(payload=GOOD))
+    assert seen == [tmp_path / "o.json"]

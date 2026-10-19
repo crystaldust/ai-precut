@@ -14,6 +14,10 @@ if [[ ! -x vendor/bin/ffmpeg ]] || ! ./packaging/build_ffmpeg.sh --verify-only; 
   ./packaging/build_ffmpeg.sh
 fi
 
+if [[ -z "${CODESIGN_IDENTITY:-}" ]]; then  # KI-37 / D10
+  echo "[!] 未设置 CODESIGN_IDENTITY：adhoc 签名，升级后 macOS 会把它当新 App，需要重新授权钥匙串 / 文稿目录（见 docs/PACKAGING.md）"
+fi
+
 echo "→ PyInstaller 构建"
 uv run pyinstaller packaging/ai-cut.spec --noconfirm --clean
 

@@ -44,6 +44,9 @@ UPLOAD_CACHE = "asr_upload.json"  # work/ 下，只存 file_id 与指纹，不�
 UPLOAD_CACHE_SCHEMA = 1
 SUBMIT_TOKEN_FILE = "asr_submit.json"  # 提交前先落盘 client_token：响应丢了重跑也用同一个，云端去重
 NOT_FOUND = 404
+FAILED_FILE = "failed.json"
+FAILED_ERROR_MAX = 800  # failed.json 每条错误最多保留的字数
+FAILED_KEEP = 50        # failed.json 只留最近这么多条
 ERROR_SNIPPET = 300
 # 统计头（mediakit-cli 会发 X-Amk-*）；取值见 M5 计划 Notes「需用户决策 6」
 CLIENT_RUNTIME = "aicut"
@@ -53,6 +56,8 @@ MISSING_KEY = "未配置 MEDIAKIT_API_KEY：运行 `aicut config set mediakit`�
 AUTH_FAILED = "MediaKit API Key 无效或无权限（HTTP {status}）：{msg}"
 BAD_KEY = "MediaKit API Key 含空白或控制字符：请在剪辑台「⚙ 设置」里重新填写"
 TASK_GONE = "云端找不到这个任务（{msg}），下次会重新提交"
+UPLOAD_CACHE_STALE = "[·] 云端已不认上次上传的音轨，重新上传"
+UPLOAD_REUSED = "[·] 续用已上传的音轨"
 _URL_QUERY = re.compile(r"(https?://[^\s?\"'<>]+)\?[^\s\"'<>]*")
 
 
@@ -81,7 +86,7 @@ def _redact(text: str, key: str | None) -> str:
     text = _URL_QUERY.sub(r"\1?…", str(text))
     if key:
         text = text.replace(key, secrets.mask(key))
-    return text[:ERROR_SNIPPET]
+    return applog.redact(text)[:ERROR_SNIPPET]  # 已登记的另一个 Key、sk- / Bearer 样式（KI-70）
 
 
 _OPENER = safe_http.OPENER          # 不跟随重定向（否则 Bearer 会被带去新地址），3xx 当错误
@@ -321,9 +326,6 @@ class CloudClient:
         return file_id, url, method, _parse_upload_headers(res.get("upload_headers"))
 
     def _upload(self, audio: Path, workdir: Path | None) -> str:
-        if cached := self._cached_file_id(audio, workdir):
-            print("[·] 续用已上传的音轨")
-            return cached
         size = Path(audio).stat().st_size
         last: Exception | None = None
         for attempt in range(self.retries + 1):
@@ -358,12 +360,28 @@ class CloudClient:
     ) -> str:
         self._headers()  # 没 Key 先失败，不去读 / 传文件
         remote = str(audio).startswith(("mediakit://", "http://", "https://"))
-        file_id = str(audio) if remote else self._upload(Path(audio), workdir)
-        data = self._request("POST", SUBMIT_PATH, {
-            "audio_url": file_id, "language": language,
-            "enable_speaker_info": bool(speaker), "enable_confidence": bool(confidence),
-            "client_token": client_token or uuid.uuid4().hex,
-        }, self.timeout_submit)
+        cached = None if remote else self._cached_file_id(Path(audio), workdir)
+        if cached:
+            print(UPLOAD_REUSED)
+        file_id = str(audio) if remote else (cached or self._upload(Path(audio), workdir))
+
+        def submit(fid: str, token: str) -> dict:
+            return self._request("POST", SUBMIT_PATH, {
+                "audio_url": fid, "language": language,
+                "enable_speaker_info": bool(speaker), "enable_confidence": bool(confidence),
+                "client_token": token,
+            }, self.timeout_submit)
+
+        try:
+            data = submit(file_id, client_token or uuid.uuid4().hex)
+        except CloudError as exc:
+            # KI-75：缓存的 file_id 被云端作废（业务拒绝、非鉴权）→ 删缓存、重传、用新 token 再提交一次
+            if not cached or exc.retryable or exc.status in AUTH_STATUS:
+                raise
+            print(UPLOAD_CACHE_STALE)
+            _forget_upload(workdir)
+            _clear_submit_token(workdir)
+            data = submit(self._upload(Path(audio), workdir), uuid.uuid4().hex)
         task_id = data.get("task_id") or (data.get("result") or {}).get("task_id")
         if not task_id:
             raise CloudError(f"未返回 task_id：{_redact(json.dumps(data, ensure_ascii=False), self.api_key)}")
@@ -418,14 +436,15 @@ class CloudClient:
         except CloudError as exc:
             if not exc.retryable:  # 不是"响应丢了"一类：下次换新 token，避免拿回同一个失败结果
                 _clear_submit_token(workdir)
-            if exc.terminal:  # 云端判任务终态失败：下次重新提交，而不是 3 天内永远失败
+            if exc.terminal:  # 云端判任务终态失败：下次重新提交（连同上传缓存，KI-75），而不是 3 天内永远失败
                 asr_state.clear(workdir)
+                _forget_upload(workdir)
             record_failure(workdir, "asr", str(exc), {"audio": Path(audio).name})
             raise
         # aicut 以"存在"判转写完成，必须原子写（GL-15）
         schema.write_json(Path(workdir) / "transcript_raw.json", data)
         asr_state.clear(workdir)  # 结果已落盘，任务号用完即弃
-        (Path(workdir) / UPLOAD_CACHE).unlink(missing_ok=True)
+        _forget_upload(workdir)
         return data
 
 
@@ -451,7 +470,14 @@ def _submit_token(workdir: Path, audio: Path) -> str:
     return token
 
 
-def _clear_submit_token(workdir: Path) -> None:
+def _forget_upload(workdir: Path | None) -> None:
+    if workdir is not None:
+        (Path(workdir) / UPLOAD_CACHE).unlink(missing_ok=True)
+
+
+def _clear_submit_token(workdir: Path | None) -> None:
+    if workdir is None:
+        return
     (Path(workdir) / SUBMIT_TOKEN_FILE).unlink(missing_ok=True)
 
 
@@ -465,19 +491,16 @@ def _remember_task(workdir: Path, audio: Path, task_id: str) -> None:
 
 def record_failure(workdir: Path, stage: str, error: str, context: dict) -> None:
     """把失败追加到 work/failed.json，供界面展示与重试。"""
-    path = Path(workdir) / "failed.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    items: list[dict] = []
-    if path.exists():
-        try:
-            items = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            items = []
+    path = Path(workdir) / FAILED_FILE
+    try:  # 旧文件坏了 / 不是列表：只是失败记录，按空的重写（KI-29）
+        items = schema.read_json(path, default=[], expect=list)
+    except schema.CorruptJSON:
+        items = []
     items.append({
         "stage": stage,
-        "error": re.sub(r"\s+", " ", error)[:800],
+        "error": re.sub(r"\s+", " ", applog.redact(str(error)))[:FAILED_ERROR_MAX],
         "context": {k: (Path(v).name if isinstance(v, str) and os.path.isabs(v) else v)
                     for k, v in context.items()},  # 绝对路径只留文件名（诊断包会带上）
         "at": _now(),
     })
-    path.write_text(json.dumps(items[-50:], ensure_ascii=False, indent=2), encoding="utf-8")
+    schema.write_json(path, items[-FAILED_KEEP:])

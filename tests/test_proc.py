@@ -293,6 +293,7 @@ def test_parent_watchdog_env_not_inherited_by_grandchildren(monkeypatch):
     import os
     monkeypatch.setenv(proc.PARENT_PID_ENV, str(os.getppid()))
     monkeypatch.setattr(proc, "_watch_parent", lambda *a: None)
+    monkeypatch.setattr(proc.signal, "signal", lambda *a: None)  # 不在 pytest 进程里真的装 SIGTERM 处理
     assert proc.start_parent_watchdog() is True
     assert proc.PARENT_PID_ENV not in os.environ  # aicut 再拉起的 --aicut-module 不能误判
 
@@ -325,3 +326,64 @@ def test_dispatch_rejects_module_outside_allowlist(monkeypatch, capsys):
 def test_module_cmd_rejects_module_outside_allowlist():
     with pytest.raises(ValueError):
         proc.module_cmd("pipeline.secrets", [])
+
+
+# ---------------------------------------------------------------- KI-72：看门狗不依赖 pgrep
+def _orphaned_child_scenario(tmp_path, child_body):
+    import subprocess
+    parent = ("import os,subprocess,sys;"
+              "env = dict(os.environ, %s=str(os.getpid()));" % proc.PARENT_PID_ENV +
+              "c = subprocess.Popen([sys.executable, '-c', %r], env=env, stdout=subprocess.PIPE," % child_body +
+              " stderr=subprocess.DEVNULL, text=True, start_new_session=True);"
+              "print(c.stdout.readline().strip(), flush=True)")
+    return subprocess.run([sys.executable, "-c", parent], capture_output=True, text=True,
+                          timeout=20).stdout.split()
+
+
+def test_watchdog_does_not_need_pgrep(tmp_path):
+    """PATH 里没有 pgrep 时，孙进程（ffmpeg）仍先收到 SIGTERM（体面退出），而不是直接被 SIGKILL。"""
+    import time
+    flag = tmp_path / "got_term"
+    empty = tmp_path / "empty_bin"
+    empty.mkdir()
+    grandchild = ("import signal,sys,time;"
+                  f"signal.signal(signal.SIGTERM, lambda *a: (open({str(flag)!r}, 'w').close(), sys.exit(0)));"
+                  "print('ready', flush=True); time.sleep(60)")
+    child = ("import os,subprocess,sys,time;"
+             "sys.path.insert(0, %r);" % str(proc.app_root()) +
+             "from pipeline import proc;"
+             "proc.WATCHDOG_INTERVAL_S = 0.1; proc.WATCHDOG_GRACE_S = 1.0;"
+             f"os.environ['PATH'] = {str(empty)!r};"
+             f"g = subprocess.Popen([sys.executable, '-c', {grandchild!r}], stdout=subprocess.PIPE, text=True);"
+             "g.stdout.readline();"
+             "proc.start_parent_watchdog();"
+             "print(os.getpid(), flush=True); time.sleep(60)")
+    out = _orphaned_child_scenario(tmp_path, child)
+    assert len(out) == 1
+    deadline = time.time() + 10
+    while time.time() < deadline and not flag.exists():
+        time.sleep(0.1)
+    assert flag.exists()
+
+
+def test_sigterm_without_self_kill_keeps_default_behavior(tmp_path):
+    """装了处理函数后，外部发来的 SIGTERM（剪辑台取消任务）仍按默认语义结束进程。"""
+    import os
+    import signal
+    import subprocess
+    import time
+    child = ("import os,sys,time;"
+             "sys.path.insert(0, %r);" % str(proc.app_root()) +
+             "from pipeline import proc;"
+             "assert proc.start_parent_watchdog();"
+             "print('ready', flush=True); time.sleep(60)")
+    env = dict(os.environ, **{proc.PARENT_PID_ENV: str(os.getpid())})
+    p = subprocess.Popen([sys.executable, "-c", child], env=env, stdout=subprocess.PIPE, text=True)
+    try:
+        assert p.stdout.readline().strip() == "ready"
+        p.send_signal(signal.SIGTERM)
+        assert p.wait(timeout=10) == -signal.SIGTERM
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()

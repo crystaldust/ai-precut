@@ -41,7 +41,11 @@ python3 aicut.py run 项目名          # 转写 → 切片 → 废片表 → �
 python3 aicut.py status 项目名        # 看进度
 python3 aicut.py build 项目名 --version v2   # 改完 shots.json 后重出
 python3 aicut.py select 项目名 --target 300  # 改目标时长，只重跑选段
+python3 aicut.py clean 项目名 --dry-run      # 列出可清理的缓存（切片、临时文件、用完的音轨）；去掉 --dry-run 才删
 ```
+
+LLM 用量按项目记在 `work/llm_usage.json`，`status` 会显示；累计上限默认 300 万 tokens，
+用环境变量 `AI_CUT_LLM_BUDGET_TOKENS` 调整（`0` = 不限）。输入没变时「重新处理」沿用上次的标注和摘要，不重复计费。
 
 ## 目录
 

@@ -97,4 +97,16 @@ Xcode Command Line Tools、`pkg-config` 与 `cmake`，用户机器不需要；�
 ## 换图标 / 改版本
 
 - 图标：`icon=None` 改为 `.icns` 路径；
-- 版本：`packaging/ai-cut.spec` 里的 `CFBundleShortVersionString`。
+- 版本号：`CFBundleShortVersionString` 读 `pyproject.toml` 的 `version`；构建号 `CFBundleVersion`
+  取环境变量 `AICUT_BUILD_NUMBER`（正整数），没有就取 `git rev-list --count HEAD`，两者都拿不到时构建直接失败
+  （见 `packaging/version.py`）。每次发版在 `CHANGELOG.md` 记一条。
+
+## 稳定签名身份（自签证书）
+
+没有设置 `CODESIGN_IDENTITY` 时是 adhoc 签名，`build_app.sh` 会打印警告：每次升级 macOS 都把它当新 App，
+剪辑师要重新允许访问钥匙串里的 Key 和「文稿」目录。不做 Developer ID 签名的前提下，可以用一张固定的自签证书：
+
+1. 打开「钥匙串访问」→ 菜单「证书助理」→「创建证书…」：名称填 `AI粗剪 本地签名`，身份类型「自签名根证书」，
+   证书类型「代码签名」；
+2. 构建时 `CODESIGN_IDENTITY="AI粗剪 本地签名" ./packaging/build_app.sh`；
+3. 之后每一版都用同一张证书签，升级不再要求重新授权（证书要在构建机的钥匙串里保留好）。

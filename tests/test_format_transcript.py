@@ -66,3 +66,21 @@ def test_main_no_subtitles_message_kept(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         _main(monkeypatch, _raw(tmp_path, []), tmp_path / "out")
     assert "没有解析到字幕" in str(exc.value.code)
+
+
+# ---------------------------------------------------------------- KI-87：英文分句拼整句要有空格
+def _sub(t, text, speaker="1"):
+    return {"start": t, "end": t + 1.0, "speaker": speaker, "text": text}
+
+
+@pytest.mark.parametrize("parts, joined", [
+    (["Hello world.", "Good morning"], "Hello world. Good morning"),
+    (["It costs 98", "dollars"], "It costs 98 dollars"),
+    (["你好，", "世界。"], "你好，世界。"),
+    (["价格是", "98 元"], "价格是98 元"),
+    (["OK", "好的"], "OK好的"),
+    (["Hello ", "world"], "Hello world"),
+])
+def test_sub_lines_joined_with_space_only_between_ascii(parts, joined):
+    subs = [_sub(i * 1.0, p) for i, p in enumerate(parts)]
+    assert ft.build_segments(subs)[0]["text"] == joined

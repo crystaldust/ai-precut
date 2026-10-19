@@ -299,3 +299,105 @@ def test_load_corrupt_project_raises_corrupt_json(tmp_path):
     p.write_text("{坏", encoding="utf-8")
     with pytest.raises(schema.CorruptJSON, match="project.json"):
         schema.load(p)
+
+
+# ---------------------------------------------------------------- KI-51：fsync、陈旧 tmp、跨进程锁
+def test_write_json_fsyncs_file(tmp_path, monkeypatch):
+    import os
+    seen = []
+    real = os.fsync
+    monkeypatch.setattr(os, "fsync", lambda fd: (seen.append(fd), real(fd)))
+    schema.write_json(tmp_path / "a.json", {"x": 1})
+    assert seen  # 至少文件本身 fsync 过
+    assert json.loads((tmp_path / "a.json").read_text()) == {"x": 1}
+
+
+def _tmp_like(tmp_path, age_s):
+    import os
+    import time
+    t = tmp_path / ".project.json.0123456789abcdef0123456789abcdef.tmp"
+    t.write_text("{half")
+    old = time.time() - age_s
+    os.utime(t, (old, old))
+    return t
+
+
+def test_stale_tmp_from_killed_writer_is_cleaned(tmp_path):
+    t = _tmp_like(tmp_path, 3600)
+    schema.write_json(tmp_path / "project.json", {"x": 1})
+    assert not t.exists()
+
+
+def test_fresh_foreign_tmp_is_kept(tmp_path):
+    t = _tmp_like(tmp_path, 5)
+    schema.write_json(tmp_path / "project.json", {"x": 1})
+    assert t.exists()
+
+
+def test_update_serializes_across_processes(tmp_path):
+    import multiprocessing as mp
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent))
+    import schema_workers
+    path = tmp_path / "project.json"
+    schema.write_json(path, {"n": 0})
+    ctx = mp.get_context("spawn")
+    procs = [ctx.Process(target=schema_workers.bump_counter, args=(str(path), 50)) for _ in range(2)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(60)
+    assert [p.exitcode for p in procs] == [0, 0]
+    assert json.loads(path.read_text())["n"] == 100
+
+
+def test_update_returns_new_value_and_keeps_lock_file_beside(tmp_path):
+    path = tmp_path / "project.json"
+    schema.write_json(path, {"a": 1})
+    new = schema.update(path, lambda c: {**c, "b": 2})
+    assert new == {"a": 1, "b": 2} == json.loads(path.read_text())
+
+
+def test_update_falls_back_when_flock_unsupported(tmp_path, monkeypatch):
+    import fcntl
+    def nope(*a):
+        raise OSError(45, "Operation not supported")
+    monkeypatch.setattr(fcntl, "flock", nope)
+    path = tmp_path / "project.json"
+    schema.write_json(path, {"a": 1})
+    assert schema.update(path, lambda c: {**c, "a": 2}) == {"a": 2}
+
+
+# ---------------------------------------------------------------- KI-69：新建项目原子占位
+def test_create_json_exclusive_refuses_existing(tmp_path):
+    path = tmp_path / "project.json"
+    schema.create_json_exclusive(path, {"who": "me"})
+    with pytest.raises(FileExistsError):
+        schema.create_json_exclusive(path, {"who": "other"})
+    assert json.loads(path.read_text()) == {"who": "me"}
+    assert [p.name for p in tmp_path.iterdir()] == ["project.json"]  # 不留临时文件
+
+
+# ---------------------------------------------------------------- KI-37：中间产物版本号
+def test_stamp_adds_artifact_schema_without_mutating():
+    obj = {"a": 1}
+    out = schema.stamp(obj)
+    assert out == {"a": 1, "artifact_schema": schema.ARTIFACT_SCHEMA} and obj == {"a": 1}
+
+
+def test_lock_file_is_private_and_not_followed(tmp_path):  # 审查修复 L16
+    import os
+    import stat
+    path = tmp_path / "project.json"
+    with schema.locked(path):
+        pass
+    assert stat.S_IMODE(schema.lock_path(path).stat().st_mode) == 0o600
+    other = tmp_path / "victim.json"
+    other.write_text("keep")
+    schema.lock_path(path).unlink()
+    os.symlink(other, schema.lock_path(path))
+    with pytest.raises(OSError):
+        with schema.locked(path):
+            pass
+    assert other.read_text() == "keep"

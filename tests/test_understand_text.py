@@ -485,3 +485,62 @@ def test_same_named_topics_merged_across_window_edge():
     assert len(client.topic_kw) == 2
     n = len(topics)
     assert all(t["name"].endswith(f"/{n})") for t in topics)
+
+
+# ---------------------------------------------------------------- KI-32：输入没变就不重新标注
+def _seg_file(tmp_path, n=6):
+    sp = tmp_path / "segments.json"
+    sp.write_text(json.dumps({"segments": make_segments(n)}), encoding="utf-8")
+    return sp
+
+
+def test_complete_unchanged_input_is_not_reannotated(tmp_path):
+    sp, out = _seg_file(tmp_path), tmp_path / "text.json"
+    first = ut.run(sp, out, client=FakeClient())
+    again = FakeClient()
+    res = ut.run(sp, out, client=again)
+    assert again.calls == 0 and res["cached"] is True
+    assert res["segments"] == first["segments"]
+
+
+def test_cache_hit_does_not_create_client(tmp_path, monkeypatch):
+    sp, out = _seg_file(tmp_path), tmp_path / "text.json"
+    ut.run(sp, out, client=FakeClient(), model="deepseek-chat")
+    monkeypatch.setattr(ut, "DeepSeekClient", lambda **kw: pytest.fail("命中缓存不应读 Key / 建客户端"))
+    assert ut.run(sp, out, model="deepseek-chat")["cached"] is True
+
+
+def test_prompt_version_change_invalidates_cache(tmp_path, monkeypatch):
+    sp, out = _seg_file(tmp_path), tmp_path / "text.json"
+    ut.run(sp, out, client=FakeClient())
+    monkeypatch.setattr(ut, "PROMPT_VERSION", ut.PROMPT_VERSION + 1)
+    again = FakeClient()
+    ut.run(sp, out, client=again)
+    assert again.calls > 0
+
+
+def test_changed_text_or_model_invalidates_cache(tmp_path):
+    sp, out = _seg_file(tmp_path), tmp_path / "text.json"
+    ut.run(sp, out, client=FakeClient())
+    other = FakeClient()
+    other.model = "other-model"
+    ut.run(sp, out, client=other)
+    assert other.calls > 0
+
+
+def test_artifact_schema_stamped(tmp_path):  # KI-37
+    from pipeline import schema
+    sp, out = _seg_file(tmp_path), tmp_path / "text.json"
+    ut.run(sp, out, client=FakeClient())
+    assert json.loads(out.read_text())["artifact_schema"] == schema.ARTIFACT_SCHEMA
+
+
+def test_changed_timing_or_speaker_invalidates_cache(tmp_path):  # 审查修复 M7
+    sp, out = _seg_file(tmp_path), tmp_path / "text.json"
+    ut.run(sp, out, client=FakeClient())
+    segs = make_segments(6)
+    segs[0] = {**segs[0], "start": 99.0, "speaker": "2"}
+    sp.write_text(json.dumps({"segments": segs}), encoding="utf-8")
+    again = FakeClient()
+    ut.run(sp, out, client=again)
+    assert again.calls > 0

@@ -12,6 +12,21 @@ _EPS = 1e-6
 WHOLE_TOLERANCE = 0.01    # 秒：镜头出入点取两位小数，差这么点仍算整句
 
 
+def _ascii_word_edge(ch: str) -> bool:
+    """ASCII 字母 / 数字 / 标点（不含空白）：两边都是它才需要补空格。"""
+    return "!" <= ch <= "~"
+
+
+def join_lines(texts: list[str]) -> str:
+    """分句拼整句（KI-87）：中文直接相连；两侧都是 ASCII 字母 / 数字 / 标点时补一个空格（"world. Good"）。"""
+    out = ""
+    for text in texts:
+        if out and text and _ascii_word_edge(out[-1]) and _ascii_word_edge(text[0]):
+            out += " "
+        out += text
+    return out
+
+
 def _span(line) -> tuple[float, float, str] | None:
     if not isinstance(line, dict):
         return None
@@ -42,5 +57,5 @@ def sub_for(seg: dict, start: float, end: float) -> str:
     if not text or s1 <= s0 or (start <= s0 + WHOLE_TOLERANCE and end >= s1 - WHOLE_TOLERANCE):
         return text
     spans = [x for x in (_span(line) for line in seg.get("lines") or []) if x]
-    picked = "".join(t for a, b, t in spans if _inside(a, b, start, end))
+    picked = join_lines([t for a, b, t in spans if _inside(a, b, start, end)])
     return picked or _proportional(text, s0, s1, start, end)

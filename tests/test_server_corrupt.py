@@ -162,3 +162,30 @@ def test_presets_skips_corrupt_and_warns(gui_server, monkeypatch, tmp_path_facto
 def test_presets_clean_has_empty_warnings(gui_server, preset_dir):
     status, data = _get(gui_server, "/api/presets")
     assert status == 200 and data["warnings"] == [] and len(data["presets"]) == 1
+
+
+def test_browse_topic_stats_not_doubled(tmp_path):  # 审查修复 M9：scored 里的统计不能再叠加一次
+    import json as _json
+    from gui import payloads
+    from pipeline import classify
+    segs = [{"id": "s1", "start": 0, "end": 10, "text": "a", "topic": "T", "key_info": False,
+             "annotation_failed": False, "speaker": "A", "level": 3}]
+    res = classify._assemble(segs)
+    (tmp_path / "work").mkdir()
+    (tmp_path / "project.json").write_text(_json.dumps(
+        {"name": "x", "title": "x", "schema_version": 2, "material": "/x", "preset": "p"}))
+    (tmp_path / "work/segments_scored.json").write_text(_json.dumps(res))
+    t = payloads.browse(tmp_path, "x")["topics"][0]
+    assert (t["count"], t["duration"], t["usable_dur"]) == (1, 10.0, 10.0)
+
+
+def test_browse_topic_without_count_field(tmp_path):  # 旧 / 手改文件：缺 count 也不 500
+    import json as _json
+    from gui import payloads
+    (tmp_path / "work").mkdir()
+    (tmp_path / "project.json").write_text(_json.dumps(
+        {"name": "x", "title": "x", "schema_version": 2, "material": "/x", "preset": "p"}))
+    (tmp_path / "work/segments_scored.json").write_text(_json.dumps({"topics": [{"name": "T"}], "segments": [
+        {"id": "s1", "start": 0, "end": 4, "text": "a", "topic": "T", "level": 2}]}))
+    t = payloads.browse(tmp_path, "x")["topics"][0]
+    assert (t["count"], t["duration"], t["usable_dur"]) == (1, 4.0, 0.0)

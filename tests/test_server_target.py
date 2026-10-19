@@ -187,3 +187,22 @@ def test_state_survives_corrupt_scored_file(gui_server):
     status, body, _ = call(gui_server, "GET", "/api/state?project=p1")
     warnings = json.loads(body)["warnings"]
     assert status == 200 and len(warnings) == 1 and "三档判定" in warnings[0]
+
+
+# ---------------------------------------------------------------- KI-51：/api/calibrate 不覆盖别人刚改的目标时长
+def test_server_calibrate_does_not_clobber_target(gui_server, monkeypatch):
+    import json as _json
+    from conftest import call, make_project
+    from pipeline import schema
+    pdir = make_project(gui_server.root)
+    real = schema.update_project
+
+    def rival_first(path, mutate):
+        return real(path, lambda c: mutate({**c, "target_duration": 333}))
+
+    monkeypatch.setattr(schema, "update_project", rival_first)
+    status, _, _ = call(gui_server, "POST", "/api/calibrate",
+                        {"project": "p1", "calibration": {"tone": "emotion"}})
+    assert status == 200
+    cfg = _json.loads((pdir / "project.json").read_text())
+    assert cfg["target_duration"] == 333 and cfg["calibration"]["tone"] == "emotion"

@@ -7,8 +7,8 @@ Level 语义（2026-10-18 定）：废片 / 待定 / 可用 —— 是"处置状
     待定 = AI 拿不准，交给人 30 秒裁决（A 标可用 / D 标废片）
     可用 = 进入选段池，参与话题覆盖
 
-产物：gui/static/prototype.html
-打开：http://127.0.0.1:8765/static/prototype.html
+产物：prototype/prototype.html（KI-52：不放进 gui/static，剪辑台不对外提供它）
+打开：open prototype/prototype.html
 """
 from __future__ import annotations
 
@@ -334,7 +334,7 @@ def main() -> None:
     data = build()
     html = (HTML.replace("__DATA__", json.dumps(data, ensure_ascii=False))
                 .replace("__PROJ__", json.dumps("2026-09-01_活动", ensure_ascii=False)))
-    out = ROOT / "gui/static/prototype.html"
+    out = ROOT / "prototype/prototype.html"
     out.write_text(html, encoding="utf-8")
     n = {1: 0, 2: 0, 3: 0}
     for s in data["segments"]:

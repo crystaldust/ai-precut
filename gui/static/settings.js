@@ -8,6 +8,7 @@ const COPY_SETTINGS_TITLE = '设置 · API Key';
 const COPY_KEY_CONFIGURED = '已配置 {masked}';
 const COPY_KEY_FROM_ENV = '（来自环境变量，此处修改不生效）';
 const COPY_KEY_FROM_LEGACY = '（来自旧版文件 ~/.mediakit/api_key；在这里保存新 Key 即可替换）';
+const COPY_KEY_LEGACY_LEFT = '（旧版明文文件 ~/.mediakit/api_key 仍在电脑上，剪辑台已不再读取；不需要的话请自己删除它）';
 const CLEARABLE_SOURCES = ['keyring', 'file'];  // env / 旧版文件不归剪辑台管，不给「清除」
 const COPY_KEY_NOT_SET = '未配置';
 const COPY_KEY_PLACEHOLDER = '粘贴 Key';
@@ -32,7 +33,7 @@ const COPY_CONSENT_KEYS = '两个服务的 API Key 只保存在本机钥匙串�
 const COPY_CONSENT_OK = '我知道了，继续';
 const COPY_CONSENT_LATER = '暂不使用';
 const SETTINGS_TOAST_MS = 3500;
-const PROVIDER_KEY_RE = /^[a-z]{1,32}$/;  // provider 名会拼进 id / onclick，只认服务端白名单的形状
+const PROVIDER_KEY_RE = /^[a-z]{1,32}$/;  // provider 名会拼进 id / data-provider，只认服务端白名单的形状
 
 // then：填好 Key 后要继续做的事（如重新起任务）；required：这次必须有的 Key（来自服务端 409 的 missing）
 const settingsUi = {then: null, required: null};
@@ -43,14 +44,15 @@ function consentHtml(){
     <p class="hint">${esc(COPY_CONSENT_KEYS)}</p>
     <div class="job-actions">
       <button class="primary" id="consentOk">${esc(COPY_CONSENT_OK)}</button>
-      <button class="ghost" onclick="closeModal()">${esc(COPY_CONSENT_LATER)}</button>
+      <button class="ghost" data-act="closeModal">${esc(COPY_CONSENT_LATER)}</button>
     </div>`;
 }
 
 function keyStatusText(p){
-  if(!p.configured) return COPY_KEY_NOT_SET;
+  const left = p.legacy_file ? COPY_KEY_LEGACY_LEFT : '';  // 审查修复 L18
+  if(!p.configured) return COPY_KEY_NOT_SET + left;
   const from = {env: COPY_KEY_FROM_ENV, legacy: COPY_KEY_FROM_LEGACY}[p.source] || '';
-  return COPY_KEY_CONFIGURED.replace('{masked}', p.masked || '') + from;
+  return COPY_KEY_CONFIGURED.replace('{masked}', p.masked || '') + from + left;
 }
 
 function settingsRowsHtml(cfg){
@@ -60,8 +62,8 @@ function settingsRowsHtml(cfg){
       <div class="hint key-status">${esc(keyStatusText(p))}</div>
       <div class="key-row">
         <input type="password" autocomplete="off" spellcheck="false" id="key_${p.key}" placeholder="${esc(COPY_KEY_PLACEHOLDER)}">
-        <button class="primary" onclick="saveKey('${p.key}')">${esc(COPY_KEY_SAVE)}</button>
-        ${p.configured && CLEARABLE_SOURCES.includes(p.source) ? `<button class="danger" onclick="deleteKey('${p.key}')">${esc(COPY_KEY_CLEAR)}</button>` : ''}
+        <button class="primary" data-act="saveKey" data-provider="${esc(p.key)}">${esc(COPY_KEY_SAVE)}</button>
+        ${p.configured && CLEARABLE_SOURCES.includes(p.source) ? `<button class="danger" data-act="deleteKey" data-provider="${esc(p.key)}">${esc(COPY_KEY_CLEAR)}</button>` : ''}
       </div>
     </div>`).join('');
 }
@@ -84,10 +86,10 @@ async function openSettings(then, required){
   settingsUi.then = then || null;
   settingsUi.required = Array.isArray(required) ? required : null;
   showModal(COPY_SETTINGS_TITLE, settingsRowsHtml(cfg) + `
-    <p class="hint">${esc(COPY_KEY_STORAGE)} <a href="#" onclick="openConsent();return false">${esc(COPY_SHOW_CONSENT)}</a></p>
+    <p class="hint">${esc(COPY_KEY_STORAGE)} <a href="#" data-act="showConsent">${esc(COPY_SHOW_CONSENT)}</a></p>
     <div class="job-actions">
-      <button class="primary" onclick="finishSettings()">${esc(COPY_SETTINGS_DONE)}</button>
-      <button class="ghost" onclick="closeSettings()">${esc(COPY_SETTINGS_CLOSE)}</button>
+      <button class="primary" data-act="finishSettings">${esc(COPY_SETTINGS_DONE)}</button>
+      <button class="ghost" data-act="closeSettings">${esc(COPY_SETTINGS_CLOSE)}</button>
     </div>`);
 }
 
@@ -142,3 +144,9 @@ async function checkFirstRun(){
   if(!cfg.consent) return openConsent(null);
   if(cfg.providers.some(p=>!p.configured)) toast(COPY_KEYS_MISSING_HINT, SETTINGS_TOAST_MS);
 }
+
+Object.assign(ACTIONS, {  // KI-53：设置弹窗与外发告知的按钮
+  openSettings: ()=>openSettings(), saveKey: el=>saveKey(el.dataset.provider),
+  deleteKey: el=>deleteKey(el.dataset.provider), finishSettings: ()=>finishSettings(),
+  closeSettings: ()=>closeSettings(), showConsent: (el, ev)=>{ ev.preventDefault(); openConsent(); },
+});

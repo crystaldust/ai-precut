@@ -129,3 +129,5 @@
 | KI-85 | `review.clear()` 按存储时 id 删除，裁决被重定位后删不到（目前无调用方） | `pipeline/review.py`（`clear`） | fixed `bc3c705` |
 | KI-86 | 旧项目的 `questions.json` 由旧提示词生成，focus 为自由文本，M6 后只警告不生效；需提供「重新生成决策问题」入口或提示 | `pipeline/questions.py`；`gui/static/confirm.html` | open |
 | KI-87 | 英文素材分句拼整句时无空格（"world.good"） | `pipeline/format_transcript.py:116` | open |
+| KI-88 | 同机其他用户可经 `GET /` 取到页面里的 token 后调用全部 API（单用户威胁模型下可接受）；改为一次性 nonce 换 HttpOnly SameSite=Strict cookie | `gui/server.py`（`_send_page`、`_deny_reason`） | open |
+| KI-89 | 各版本共用 `work/clips`：新版本重切同名镜头会改动旧版本引用的切片（旧版本重新导出可能与当初不一致） | `aicut.py`（`ensure_clips`）；`pipeline/clips.py` | open |

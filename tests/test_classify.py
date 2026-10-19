@@ -314,3 +314,10 @@ def test_interrupt_proxy_with_raised_voice_usable():  # KI-08
 def test_real_overlap_usable():  # KI-08
     res = classify.classify([seg(1, 0, dur=8, info_type="事实陈述")], {"S001": {"overlap": True}})
     assert res["segments"][0]["level"] == 3
+
+
+def test_artifact_schema_stamped(tmp_path):  # KI-37
+    tp = _write_text(tmp_path)
+    classify.run(tp, None, tmp_path / "s.json")
+    from pipeline import schema
+    assert json.loads((tmp_path / "s.json").read_text())["artifact_schema"] == schema.ARTIFACT_SCHEMA

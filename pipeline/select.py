@@ -554,10 +554,12 @@ def markdown(selection: dict) -> str:
     return "\n".join(lines)
 
 
-def _current_rules(answers: dict, questions: dict | None, stored: dict | None) -> dict:
-    """已存规则只在答案仍对得上当前题目时才用；题目重新生成过（答案对不上）→ 按当前题目重算并报警告。"""
+def _current_rules(answers: dict, questions: dict | None, stored: dict | None,
+                   version: object = None) -> dict:
+    """已存规则只在「由当前换算版本存下」且答案仍对得上当前题目时才用；
+    题目重新生成过（答案对不上）→ 按当前题目重算并报警告；旧版本存下的规则 → 重算（KI-84）。"""
     fresh = select_rules.rules_from_answers(answers, questions)
-    if stored and not fresh["ignored_answers"]:
+    if stored and version == select_rules.RULES_VERSION and not fresh["ignored_answers"]:
         return dict(stored)
     return fresh
 
@@ -609,7 +611,7 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
             topics = classify.allocate_budget([dict(t) for t in topics], target)
         else:
             extra_warnings.append(BUDGET_LEGACY_WARNING)
-    rules = _current_rules(answers, questions, stored_rules)
+    rules = _current_rules(answers, questions, stored_rules, payload.get("rules_version"))
     # KI-03：确认页兜底题的原话 + 剪辑偏好里的原话（按换行 /「；」分，句内逗号保留）
     lines = select_rules.parse_must_lines((calibration or {}).get("must_lines"))
     rules = {**rules, "must_lines": list(dict.fromkeys(
@@ -620,7 +622,7 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "selection.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(schema.stamp(result), ensure_ascii=False, indent=2), encoding="utf-8")
     (out_dir / "分镜表-选段.md").write_text(markdown(result), encoding="utf-8")
     if title and material:
         (out_dir / "shots-selected.json").write_text(

@@ -342,3 +342,81 @@ def test_score_passes_preset_must_topic(monkeypatch, tmp_path):  # M6 · KI-07
     aicut.cmd_score(Namespace(name="p"))
     assert seen["must_topic"]["words"][:2] == ["合同", "退费"]
     assert seen["must_topic"]["min_key_hits"] == 2
+
+
+# ---------------------------------------------------------------- KI-32：预算 / 复用提示 / 用量
+def test_text_budget_exceeded_dies(monkeypatch, tmp_path, capsys):
+    from pipeline import usage
+    monkeypatch.setattr(aicut, "PROJECTS", tmp_path)
+    pdir = _project(tmp_path, **{"segments.json": {"segments": [{"id": "S001", "text": "x"}]}})
+    monkeypatch.setattr(aicut.secrets, "get", lambda *_: "k")
+    monkeypatch.setenv(usage.BUDGET_ENV, "10")
+    usage.record(pdir / "work", "text", {"total_tokens": 10})
+
+    def run(*a, client, **k):  # 审查修复：预算在真正调用模型时才查（命中缓存不受影响）
+        return client.chat_json("s", "u")
+
+    monkeypatch.setattr(aicut.understand_text, "run", run)
+    monkeypatch.setattr(aicut, "DeepSeekClient", lambda **k: pytest.fail("超预算不应建客户端"))
+    with pytest.raises(SystemExit):
+        aicut.cmd_text(Namespace(name="p", batch=40, model="m"))
+    assert usage.BUDGET_ENV in capsys.readouterr().out
+
+
+def test_text_passes_metered_client_and_reports_cache(monkeypatch, tmp_path, capsys):
+    from pipeline import usage
+    monkeypatch.setattr(aicut, "PROJECTS", tmp_path)
+    _project(tmp_path, **{"segments.json": {"segments": []}})
+    monkeypatch.setattr(aicut.secrets, "get", lambda *_: "k")
+    seen = {}
+
+    def run(*a, **k):
+        seen.update(k)
+        return {"topics": [], "segments": [], "failures": [], "cached": True}
+
+    monkeypatch.setattr(aicut.understand_text, "run", run)
+    aicut.cmd_text(Namespace(name="p", batch=40, model="m"))
+    assert isinstance(seen["client"], usage.MeteredClient) and seen["client"].model == "m"
+    assert "沿用上次的标注结果" in capsys.readouterr().out
+
+
+def test_summary_accepts_model_and_meters(monkeypatch, tmp_path):  # KI-83
+    from pipeline import usage
+    monkeypatch.setattr(aicut, "PROJECTS", tmp_path)
+    _project(tmp_path, **{"segments_text.json": {}, "segments_scored.json": {}})
+    seen = {}
+
+    def run(*a, **k):
+        seen.update(k)
+        return {"summary": "s", "fallback": False}
+
+    monkeypatch.setattr(aicut.summarize, "run", run)
+    aicut.main(["summary", "p", "--model", "deepseek-reasoner"])
+    assert seen["model"] == "deepseek-reasoner"
+    assert isinstance(seen["client"], usage.MeteredClient) and seen["client"].model == "deepseek-reasoner"
+
+
+def test_summary_budget_exceeded_dies_before_fallback(monkeypatch, tmp_path, capsys):
+    from pipeline import usage
+    monkeypatch.setattr(aicut, "PROJECTS", tmp_path)
+    pdir = _project(tmp_path, **{"segments_text.json": {}, "segments_scored.json": {}})
+    monkeypatch.setenv(usage.BUDGET_ENV, "5")
+    usage.record(pdir / "work", "text", {"total_tokens": 5})
+
+    def run(*a, client, **k):  # summarize 遇到超预算会原样抛出（不走兜底）
+        return client.chat_json("s", "u")
+
+    monkeypatch.setattr(aicut.summarize, "run", run)
+    with pytest.raises(SystemExit):
+        aicut.cmd_summary(Namespace(name="p"))
+    assert usage.BUDGET_ENV in capsys.readouterr().out
+
+
+def test_status_prints_llm_usage(monkeypatch, tmp_path, capsys):
+    from pipeline import usage
+    monkeypatch.setattr(aicut, "PROJECTS", tmp_path)
+    pdir = _project(tmp_path)
+    monkeypatch.delenv(usage.BUDGET_ENV, raising=False)
+    usage.record(pdir / "work", "text", {"total_tokens": 1234})
+    aicut.cmd_status(Namespace(name="p"))
+    assert "LLM 用量：1234 tokens（上限 3000000）" in capsys.readouterr().out

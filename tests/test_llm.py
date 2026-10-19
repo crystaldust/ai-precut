@@ -176,3 +176,26 @@ def test_default_transport_gives_up_after_retries(monkeypatch):
     c = llm.DeepSeekClient(api_key="k", sleep=lambda _: None, transport=llm.default_transport)
     with pytest.raises(llm.LLMError, match="网络错误"):
         c.chat_json("s", "u")
+
+
+# ---------------------------------------------------------------- KI-70：第三方错误文本脱敏
+def test_http_error_message_is_redacted():
+    body = json.dumps({"error": {"message": "bad key sk-abcdefgh12345678 Bearer tok.en-1"}})
+    c = llm.DeepSeekClient(api_key="k", sleep=lambda _: None, transport=lambda *a: (401, body))
+    with pytest.raises(llm.LLMError) as ei:
+        c.chat_json("s", "u")
+    msg = str(ei.value)
+    assert "sk-abcdefgh12345678" not in msg and "tok.en-1" not in msg and "sk-****" in msg
+
+
+def test_network_error_message_is_redacted(monkeypatch):
+    from pipeline import applog
+    applog.register_secret("DSKsecretvalue12345")
+
+    def boom(req, timeout):
+        raise OSError("connect failed for DSKsecretvalue12345")
+
+    monkeypatch.setattr(llm, "_open", boom)
+    with pytest.raises(llm.LLMError) as ei:
+        llm.default_transport("https://x.invalid/a", {}, b"{}", 1)
+    assert "DSKsecretvalue12345" not in str(ei.value)

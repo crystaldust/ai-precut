@@ -59,7 +59,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| GET | `/api/projects` | 项目列表 |
+| GET | `/api/projects` | 项目列表 + `stale_job`（上次退出时留下、仍在跑的任务，顶部提示条显示） |
 | GET | `/api/presets` | 预设列表 |
 | GET | `/api/state?project=` | 项目全量状态（阶段/版本/分镜/文稿/废片） |
 | GET | `/api/job/<id>` | 任务进度（轮询，含日志）：`{status: running/done/failed/cancelled, log, exit, task, project}` |
@@ -67,7 +67,10 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | POST | `/api/new` | 新建项目 |
 | POST | `/api/pick` | 弹 macOS 选文件对话框，返回路径（浏览器拿不到本地路径，必须走这里） |
 | POST | `/api/shots?project=` | 保存分镜表 |
-| POST | `/api/job` | 起任务：`{project, task:'prepare'|'build'|'select'|'export', no_draft, version, target}`；已有任务在跑 → 409 `{job_id}`；处理素材缺告知 / 缺 Key → 409 `{need:'consent'|'keys', missing}` |
+| POST | `/api/job` | 起任务：`{project, task:'prepare'|'build'|'select'|'export'|'questions', no_draft, version, target}`；已有任务在跑 → 409 `{job_id}`；处理素材 / 重新生成决策问题缺告知 / 缺 Key → 409 `{need:'consent'|'keys', missing}` |
+| GET | `/api/cache?project=` | 「清理缓存」弹窗：可清理的项 `{items:[{label,path,bytes}], total}` |
+| POST | `/api/cache/clean` | 清理缓存 `{project}` → `{freed}`；这个项目有任务在跑 → 409 |
+| POST | `/api/window` | App 内开子窗口 `{project, page:'browse'|'calibrate'|'confirm'}` → `{opened}`；`false` 时页面自己 `window.open`（浏览器模式） |
 | POST | `/api/job/<id>/cancel` | 取消任务（连同它拉起的 ffmpeg 一起停） |
 | POST | `/api/config/consent` | 记录「已阅读数据外发说明」（存 `~/.config/ai-cut/consent.json`，不进项目） |
 | POST | `/api/config/key` | 保存 Key：`{provider:'mediakit'|'deepseek', value}`，存本机钥匙串，响应只含掩码 |
@@ -76,8 +79,21 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | GET | `/media/<project>/proxy` | 代理片（支持 Range，能拖进度条） |
 | GET | `/media/<project>/preview/v3` | 某一版的预览片 |
 
+### 安全模型（单用户本机）
+
+- 服务只监听 `127.0.0.1`，校验 `Host` / `Origin`，写接口要求 `application/json`；每次启动随机生成 API token，
+  由服务端注入到页面里，所有 `/api/` 请求都要带它。这挡住的是**别的网站**（浏览器里的跨站请求、DNS 重绑定）。
+- 它**不防同一台 Mac 上的其他本地用户或进程**：任何能连上 `127.0.0.1` 端口的本机程序都可以先 `GET /` 拿到页面里的
+  token，再调用接口（读项目、起任务、导出诊断包）。剪辑台按「一台 Mac 只有剪辑师自己在用」设计；多人共用的电脑
+  不要开着剪辑台。改成「一次性 nonce + HttpOnly cookie」的方案另行登记跟进。
+- 页面 CSP 只允许同源脚本（`script-src 'self'`）；静态文件只发 `gui/static_files.py` 白名单里的。
+
 ### 界面改哪里
 
+- 脚本：每个页面的脚本在同名 `.js` 里（`index.js` / `browse.js` / `confirm.js` / `calibrate.js`）。
+  CSP 只允许同源脚本：**不要写 `onclick=` 之类的内联事件**，在元素上写 `data-act="动作名"`
+  （输入框 `data-input`、下拉框 `data-change`），再在脚本末尾的 `ACTIONS` 里注册；新增静态文件要加进
+  `gui/static_files.py` 的白名单，否则服务端 404、打包也不带；
 - 配色：`index.html` 顶部 `:root` 里的 CSS 变量；
 - 文案/按钮：搜中文即可，都是硬编码；
 - 分镜表一行：搜 `viewShots()`；
@@ -88,10 +104,10 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 
 | 依赖 | 怎么装 |
 |---|---|
-| Python 3.10+ | `brew install python` 或官网安装包 |
+| uv | 按 https://docs.astral.sh/uv/ 安装；双击 `启动剪辑台.command` 会用 uv 按 `uv.lock` 准备 Python 3.12 与依赖 |
 | ffmpeg | `brew install ffmpeg` |
 | API Key | 首次打开剪辑台后，在左下角「⚙ 设置 · API Key」里填（存本机钥匙串） |
-| pyJianYingDraft | 不用管，第一次点"生成成片"时自动装到 `~/.aicut/venv` |
+| pyJianYingDraft | 不用管：uv 环境里已装（锁定 0.3.1）；不在 uv 环境里运行时才自动装到 `~/.aicut/venv`（同样锁版本） |
 | 剪映专业版 | Mac 版即可；生成草稿前要先退出剪映 |
 
 交付时把整个目录拷过去，**再把 `projects/` 里旧项目清掉**（或保留一个做示范）。

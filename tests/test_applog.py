@@ -54,7 +54,7 @@ def test_registered_secret_is_masked(log_dir):
     log = applog.setup("app")
     log.info(f"key={KEY}")
     text = _text(log_dir / "app.log")
-    assert "AKLT****3456" in text and KEY not in text
+    assert "****3456" in text and KEY not in text  # KI-67 新掩码
 
 
 def test_short_secret_not_registered():
@@ -83,7 +83,7 @@ def test_args_and_exception_text_masked(log_dir):
     except RuntimeError:
         log.exception("出错了")
     text = _text(log_dir / "app.log")
-    assert KEY not in text and "Traceback" in text and "boom AKLT****3456" in text
+    assert KEY not in text and "Traceback" in text and "boom ****3456" in text
 
 
 def test_rotation(log_dir):

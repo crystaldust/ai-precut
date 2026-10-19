@@ -33,3 +33,11 @@ def test_legacy_media_adopted_like_cli(gui_server, monkeypatch):
     monkeypatch.setattr(media_io, "_probe_duration", lambda *a: 9.0)
     make_project(gui_server.root, "p1", **{"work/proxy.mp4": b"legacy"})
     assert _state(gui_server)["has_proxy"] is True
+
+
+def test_state_reports_llm_usage(gui_server, monkeypatch):  # KI-32
+    from pipeline import usage
+    monkeypatch.setenv(usage.BUDGET_ENV, "0")
+    pdir = make_project(gui_server.root)
+    usage.record(pdir / "work", "text", {"total_tokens": 777})
+    assert _state(gui_server)["llm_usage"] == {"total_tokens": 777, "budget": None}

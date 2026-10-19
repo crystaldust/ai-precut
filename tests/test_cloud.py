@@ -162,7 +162,7 @@ def test_401_is_helpful_never_contains_key_and_not_retried(tmp_path):
         c.submit_asr(_wav(tmp_path))
     msg = str(ei.value)
     assert "MediaKit API Key 无效" in msg
-    assert KEY not in msg and "AKLT****3456" in msg
+    assert KEY not in msg and "****3456" in msg  # KI-67 新掩码
     assert http.count(UPLOAD) == 1
     assert ei.value.retryable is False and ei.value.terminal is False
 
@@ -631,3 +631,69 @@ def test_upload_without_content_type_gets_octet_stream(tmp_path, monkeypatch):
     monkeypatch.setattr(cloud, "_open", fake_open)
     cloud.default_upload("PUT", "https://tos.x/o", {}, _wav(tmp_path), 5)
     assert seen["ctype"] == "application/octet-stream"
+
+
+# ---------------------------------------------------------------- KI-29 / KI-70：failed.json 脱敏 + 原子写
+def test_record_failure_redacts_registered_secret_and_patterns(tmp_path):
+    from pipeline import applog
+    other = "DSKotherprovider9876"
+    applog.register_secret(other)
+    cloud.record_failure(tmp_path, "asr", f"x {other} sk-abcdefgh12345678 Bearer abc.def", {})
+    text = (tmp_path / "failed.json").read_text(encoding="utf-8")
+    assert other not in text and "sk-abcdefgh12345678" not in text and "abc.def" not in text
+
+
+@pytest.mark.parametrize("old", [b"{}", b"\xff\xfe not utf8", b"[1"])
+def test_record_failure_atomic_and_tolerates_bad_file(tmp_path, old, monkeypatch):
+    (tmp_path / "failed.json").write_bytes(old)
+    from pipeline import schema
+    calls = []
+    real = schema.write_json
+    monkeypatch.setattr(schema, "write_json", lambda p, o, **k: (calls.append(p), real(p, o, **k)))
+    cloud.record_failure(tmp_path, "asr", "boom", {})
+    data = json.loads((tmp_path / "failed.json").read_text(encoding="utf-8"))
+    assert isinstance(data, list) and data[-1]["error"] == "boom"
+    assert calls == [tmp_path / "failed.json"]
+
+
+# ---------------------------------------------------------------- KI-75：云端作废缓存的 file_id → 立即重传
+UP_TARGET2 = {"success": True, "result": {**UP_TARGET["result"], "file_id": "mediakit://F2"}}
+
+
+def _seed_upload_cache(tmp_path, wav):
+    c, _, _ = make({**ROUTES, SUBMIT: [(400, {"message": "nope"})]})
+    with pytest.raises(cloud.CloudError):
+        c.transcribe(wav, tmp_path)  # 上传成功、提交失败：留下有效的上传缓存
+    assert (tmp_path / cloud.UPLOAD_CACHE).exists()
+
+
+def test_stale_cached_file_id_reuploads_once_with_fresh_token(tmp_path, capsys):
+    wav = _wav(tmp_path)
+    _seed_upload_cache(tmp_path, wav)
+    c, http, ups = make({UPLOAD: [(200, UP_TARGET2)],
+                         SUBMIT: [(400, {"message": "file not found"}), ok_task()],
+                         TASK("t1"): [DONE]})
+    c.transcribe(wav, tmp_path)
+    bodies = http.bodies(SUBMIT)
+    assert len(ups) == 1 and len(bodies) == 2
+    assert bodies[0]["audio_url"] == "mediakit://F1" and bodies[1]["audio_url"] == "mediakit://F2"
+    assert bodies[0]["client_token"] != bodies[1]["client_token"]
+    assert cloud.UPLOAD_CACHE_STALE in capsys.readouterr().out
+
+
+def test_auth_error_with_cached_file_does_not_reupload(tmp_path):
+    wav = _wav(tmp_path)
+    _seed_upload_cache(tmp_path, wav)
+    c, http, ups = make({**ROUTES, SUBMIT: [(401, {"message": "bad key"})]})
+    with pytest.raises(cloud.CloudError):
+        c.transcribe(wav, tmp_path)
+    assert ups == [] and http.count(SUBMIT) == 1
+
+
+def test_terminal_task_failure_forgets_upload_cache(tmp_path):
+    wav = _wav(tmp_path)
+    failed = (200, {"task_id": "t1", "status": "failed", "message": "decode error"})
+    c, _, _ = make({**ROUTES, TASK("t1"): [failed]})
+    with pytest.raises(cloud.CloudError):
+        c.transcribe(wav, tmp_path)
+    assert not (tmp_path / cloud.UPLOAD_CACHE).exists()

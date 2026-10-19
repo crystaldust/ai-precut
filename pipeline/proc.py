@@ -14,7 +14,6 @@ import io
 import os
 import runpy
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -183,28 +182,38 @@ def dispatch(argv: list[str]) -> int | None:
 
 
 # ------------------------------------------------------------------ 父进程看门狗（不留孤儿任务）
-def _group_members(pgid: int) -> list[int]:
+# KI-72：不再用 pgrep 列出同组进程（PATH 里可能没有它）。看门狗给整组发 SIGTERM，
+# 本进程的 SIGTERM 处理函数认出「是自己发的」就不退，宽限期后再 SIGKILL 整组；其它来源的 SIGTERM 保持默认语义。
+_SELF_KILL = threading.Event()
+_HANDLER = {"installed": False}
+WATCHDOG_NO_HANDLER = "[!] 不在主线程，看门狗无法先体面停止子进程，届时直接强制结束"
+
+
+def _on_sigterm(signum, frame) -> None:
+    if _SELF_KILL.is_set():  # 自己发给整组的 SIGTERM：主进程不退，等宽限期后统一 SIGKILL
+        return
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)  # 剪辑台取消任务等：照常结束
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+def _install_sigterm_handler() -> None:
     try:
-        out = subprocess.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True,
-                             timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [int(x) for x in out.split() if x.isdigit()]
+        signal.signal(signal.SIGTERM, _on_sigterm)  # 只能在主线程装
+        _HANDLER["installed"] = True
+    except ValueError:
+        print(WATCHDOG_NO_HANDLER, file=sys.stderr)
 
 
 def _kill_own_group() -> None:
-    """先给同组其它进程（ffmpeg 等）发 SIGTERM 让它们体面退出，宽限期后 SIGKILL 整组（含自己）。
-
-    信号处理函数只能在主线程设置，看门狗在子线程里，所以不能先忽略自己的 SIGTERM，只能这样分两步。
-    """
+    """先给整组（含 ffmpeg）发 SIGTERM 让它们体面退出，宽限期后 SIGKILL 整组（含自己）。"""
     pgid = os.getpgrp()
     if pgid != os.getpid():  # 不是自己的进程组（例如终端里直接跑），只退自己
         os._exit(1)
-    for pid in _group_members(pgid):
-        if pid != os.getpid():
-            with contextlib.suppress(OSError):
-                os.kill(pid, signal.SIGTERM)
-    time.sleep(WATCHDOG_GRACE_S)
+    if _HANDLER["installed"]:
+        _SELF_KILL.set()
+        with contextlib.suppress(OSError):
+            os.killpg(pgid, signal.SIGTERM)
+        time.sleep(WATCHDOG_GRACE_S)
     os.killpg(pgid, signal.SIGKILL)
 
 
@@ -217,11 +226,12 @@ def _watch_parent(parent_pid: int) -> None:
 def start_parent_watchdog() -> bool:
     """剪辑台起的任务进程：剪辑台崩溃 / 被强杀（父进程变了）就带着整组退出。
 
-    环境变量用后即删，aicut 再拉起的子进程（如 --aicut-module）不会误判。
+    环境变量用后即删，aicut 再拉起的子进程（如 --aicut-module）不会误判。必须在主线程调用（装信号处理）。
     """
     raw = os.environ.pop(PARENT_PID_ENV, None)
     if not raw or not raw.isdigit():
         return False
+    _install_sigterm_handler()
     threading.Thread(target=_watch_parent, args=(int(raw),), daemon=True,
                      name="aicut-parent-watchdog").start()
     return True

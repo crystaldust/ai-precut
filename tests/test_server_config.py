@@ -43,7 +43,7 @@ def test_consent_endpoint_records_acceptance(gs):
 def test_set_key_returns_masked_only(gs, no_keys):
     status, text, data = post(gs, "/api/config/key", {"provider": "mediakit", "value": f"  {MK} "})
     assert status == 200
-    assert MK not in text and "AKLT****9f2a" in text
+    assert MK not in text and "****9f2a" in text  # KI-67 新掩码
     assert no_keys.get("mediakit") == MK  # 首尾空白去掉后保存
 
 
