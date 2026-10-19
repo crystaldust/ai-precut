@@ -50,8 +50,8 @@
 |---|---|---|---|---|---|
 | 1 | 本地服务安全，编辑不丢 | 任意网页无法调用剪辑台 API；路径穿越与 XSS 被拦截；保存不会被并发或坏请求覆盖；中文项目名可播放 | GL-05 GL-06 GL-07 GL-18 GL-21 GL-23 | complete | [plan](../PRPs/plans/m1-local-server-hardening.plan.md) · [report](../PRPs/reports/m1-local-server-hardening-report.md) · `624e979` |
 | 2 | 必留内容不丢 | 必留段 100% 进片；LLM 失败或待定超限时明确报错，不静默降级 | GL-08 GL-09 GL-24 GL-25 | complete | [plan](../PRPs/plans/m2-must-keep-guarantee.plan.md) · [report](../PRPs/reports/m2-must-keep-guarantee-report.md) · `ebabfcc` |
-| 3 | 交付物可信 | 草稿导出不崩；校验 FAIL 不交付；注册原子；中断后不复用半成品 | GL-10 GL-11 GL-12 GL-13 GL-15 | in-progress | [plan](../PRPs/plans/m3-trustworthy-output.plan.md) |
-| 4 | GUI 独立完成全流程 | 剪辑师在 GUI 内配置 Key（含外发告知）、导出 Mac + Windows 草稿；任务互斥；失败可关闭、可重试 | GL-02 GL-14 GL-16 GL-17 GL-20 GL-22 | planned | [plan](../PRPs/plans/m4-gui-full-flow.plan.md) |
+| 3 | 交付物可信 | 草稿导出不崩；校验 FAIL 不交付；注册原子；中断后不复用半成品 | GL-10 GL-11 GL-12 GL-13 GL-15 | complete | [plan](../PRPs/plans/m3-trustworthy-output.plan.md) · [report](../PRPs/reports/m3-trustworthy-output-report.md) · `ef3899f` |
+| 4 | GUI 独立完成全流程 | 剪辑师在 GUI 内配置 Key（含外发告知）、导出 Mac + Windows 草稿；任务互斥；失败可关闭、可重试 | GL-02 GL-14 GL-16 GL-17 GL-20 GL-22 | in-progress | [plan](../PRPs/plans/m4-gui-full-flow.plan.md) |
 | 5 | 干净 Mac 可装可用 | 转写不依赖 Node；ffmpeg 为 LGPL + VideoToolbox 并校验哈希、附许可声明；日志落盘可导诊断包；交付说明适配 macOS 15 | GL-01 GL-03 GL-04 GL-19 | planned | [plan](../PRPs/plans/m5-clean-mac-ready.plan.md) |
 | 6 | 成片质量 | 字幕、hook、必留原话、答题规则、情绪权重等按设计生效 | KI-01..KI-12 | pending | — |
 | 7 | 渲染与导出健壮 | 特殊字幕、无音轨、模板缺失等情况不崩且如实报错 | KI-13..KI-18 | pending | — |

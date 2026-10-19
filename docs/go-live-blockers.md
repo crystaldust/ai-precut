@@ -15,12 +15,12 @@
 | GL-07 | XSS：LLM / 转写内容直接 innerHTML；`confirm.html` 内联 JS 拼接未完整转义 | `gui/static/browse.html:116-175`；`index.html:186,419,429,498`；`confirm.html:92,99` | fixed `624e979` |
 | GL-08 | 「必留进片率 100%」无保证：话题预算为 0/用尽、`_trim`、exclude 都会丢 must_keep 段 | `pipeline/select.py:129-133, 173, 183-187` | fixed `ebabfcc` |
 | GL-09 | 必留/关键信息被静默丢弃：LLM 标注批次失败或漏 id 时该批句子被判废片且流程显示成功；待定超限时把必留话题段降为废片 | `pipeline/understand_text.py:167-181`；`pipeline/classify.py:56-59, 87-96` | fixed `ebabfcc` |
-| GL-10 | 导出剪映草稿崩溃：片头字幕卡与普通字幕同轨重叠抛 `SegmentOverlap`；`card.at` 超总时长产生负时长 | `pipeline/to_jianying.py:99-113`；`pipeline/build_documentary.py:103-108` | open |
-| GL-11 | 坏草稿照样交付：校验 FAIL 也打印 `[✓]`；打包版 `run_inprocess` 丢弃 `main()` 返回值 | `aicut.py:131-140`；`pipeline/proc.py:64-69` | open |
-| GL-12 | 打包版错误信息丢失：`int(exc.code)` 遇 `sys.exit("文字")` 抛 ValueError | `pipeline/proc.py:69` | open |
-| GL-13 | 草稿注册非原子：先 move 后 register，失败留孤儿草稿且重试报「已存在」；剪映未装/改过草稿目录时直接崩 | `pipeline/to_jianying.py:246-247, 299-316` | open |
+| GL-10 | 导出剪映草稿崩溃：片头字幕卡与普通字幕同轨重叠抛 `SegmentOverlap`；`card.at` 超总时长产生负时长 | `pipeline/to_jianying.py:99-113`；`pipeline/build_documentary.py:103-108` | fixed `ef3899f` |
+| GL-11 | 坏草稿照样交付：校验 FAIL 也打印 `[✓]`；打包版 `run_inprocess` 丢弃 `main()` 返回值 | `aicut.py:131-140`；`pipeline/proc.py:64-69` | fixed `ef3899f` |
+| GL-12 | 打包版错误信息丢失：`int(exc.code)` 遇 `sys.exit("文字")` 抛 ValueError | `pipeline/proc.py:69` | fixed `ef3899f` |
+| GL-13 | 草稿注册非原子：先 move 后 register，失败留孤儿草稿且重试报「已存在」；剪映未装/改过草稿目录时直接崩 | `pipeline/to_jianying.py:246-247, 299-316` | fixed `ef3899f` |
 | GL-14 | GUI 只能导出 Mac 剪映草稿，没有 Windows 导出入口（`/api/job` 只有 prepare/build）；PRD §13 要求两平台都支持 | `gui/server.py:215-251`；`gui/static/index.html` | open |
-| GL-15 | 中断后半成品被当成完成：ffmpeg 直写最终文件，`exists()` 判完成 → 只转写前半段且计费 | `aicut.py:205-209, 284-289, 442-449`；`pipeline/build_documentary.py:80` | open |
+| GL-15 | 中断后半成品被当成完成：ffmpeg 直写最终文件，`exists()` 判完成 → 只转写前半段且计费 | `aicut.py:205-209, 284-289, 442-449`；`pipeline/build_documentary.py:80` | fixed `ef3899f` |
 | GL-16 | ASR 任务失败后 `asr_task.json` 不清，3 天内重试永远失败；任务未绑定音频指纹 | `pipeline/cloud.py:148-184` | open |
 | GL-17 | 任务无互斥/取消：同项目可并发多个任务（重复计费、互相覆盖）；冻结模式全局 `redirect_stdout`/`sys.argv` 多线程互踩；未知任务留幽灵 running | `gui/server.py:42-57, 215-295`；`pipeline/proc.py:61-67` | open |
 | GL-18 | 保存丢数据：固定 `.tmp` 名并发保存失败（实测 200 次失败 90 次）；请求体解析失败返回 `{}` 后用空列表覆盖分镜；`overrides.json` 损坏时当空并在下次裁决时永久覆盖 | `gui/server.py:81-85, 323-330, 524-543`；`pipeline/review.py:23-67` | fixed `624e979` |

@@ -101,7 +101,7 @@
 | KI-57 | `createProject` 残留按 URL hash 选项目的启动代码，与随后的 `selectProject(name)` 抢切项目 | `gui/static/index.html`（`createProject`） | open |
 | KI-58 | `_level_of` 只按话题名判必留话题，按关键信息占比判出的必留话题内句子拿不到「必留→待定」保护，与 `topics[].must` 口径不一 | `pipeline/classify.py`（`_level_of`） | open |
 | KI-59 | 同名草稿重跑先拷完媒体才在 `install()` 报「已存在」，白耗时间 | `pipeline/to_jianying.py`（`install`） | open |
-| KI-60 | 子任务失败输出只打印末尾 600/500 字符，「草稿静态校验未通过」的开头可能被截掉 | `aicut.py`（`cmd_build` 调 to_jianying 处） | open |
+| KI-60 | 子任务失败输出只打印末尾 600/500 字符，「草稿静态校验未通过」的开头可能被截掉 | `aicut.py`（`cmd_build` 调 to_jianying 处） | fixed `ef3899f` |
 | KI-61 | ffmpeg 调用无超时，坏素材/网络盘卡住时 GUI 任务永远 running（取消见 GL-17） | `pipeline/media_io.py`（`run_ffmpeg`） | open |
 | KI-62 | `.done` 只绑定产物大小，不绑定输入指纹：换素材后 `proxy.mp4`/`asr.wav` 仍算完成 | `pipeline/media_io.py`（`is_complete`）；`aicut.py` 音轨/代理处 | open |
 | KI-63 | `.partial-*` 临时文件与成品同目录，未来对 `clips/*.mp4` 的 glob 会读到半成品；`_clear_stale_partials` 会删并发写者的临时文件 | `pipeline/media_io.py` | open |
