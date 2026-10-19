@@ -6,6 +6,7 @@ AI 粗剪工具：素材 → 三路分析 → 片段浏览 → 覆盖式选段 �
 
 - 环境：`uv python install 3.12 && uv sync --group dev`（Python 3.11–3.12）
 - 测试：`uv run pytest`
+- 覆盖率：`uv run pytest --cov`（门槛 80%，配置在 pyproject 的 `[tool.coverage]`；端到端 `tests/test_e2e_draft.py` 需要带 h264_videotoolbox 的 ffmpeg，否则跳过）
 - CLI：`uv run python aicut.py list|new|run|status|build`
 - 桌面壳（开发）：`uv run python app/main.py`
 - 浏览器版剪辑台：`python3 gui/server.py --open`
