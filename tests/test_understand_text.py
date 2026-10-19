@@ -342,3 +342,146 @@ def test_is_incomplete_detects_legacy_failures(tmp_path):
     assert ut.is_incomplete(out) is True
     out.write_text(json.dumps({"segments": [], "failures": []}), encoding="utf-8")
     assert ut.is_incomplete(out) is False
+
+
+# ================================================================ M6 · KI-09 话题分段分窗 + 脏输出
+class TopicRecorder(FakeClient):
+    def __init__(self, replies=None):
+        super().__init__()
+        self.topic_kw, self.replies = [], list(replies or [])
+
+    def chat_json(self, system, user, **kw):
+        if "归并成" in user:
+            self.topic_kw.append(kw)
+            if self.replies:
+                self.calls += 1
+                return self.replies.pop(0)
+        return super().chat_json(system, user, **kw)
+
+
+def test_topic_segmentation_windows_long_input():
+    segs = [{"id": f"S{i:03d}", "start": i * 2.0, "end": i * 2.0 + 1.5, "text": f"第{i}句"}
+            for i in range(1, 301)]
+    client = TopicRecorder()
+    topics = ut.segment_topics(client, segs)
+    assert len(client.topic_kw) == 3
+    assert all(kw["max_tokens"] >= ut.TOPIC_MAX_TOKENS for kw in client.topic_kw)
+    flat = [i for t in topics for i in t["segment_ids"]]
+    assert sorted(flat) == [s["id"] for s in segs] and len(flat) == len(set(flat))
+
+
+def test_single_window_prompt_keeps_8_to_15():
+    seen = []
+
+    class C(FakeClient):
+        def chat_json(self, system, user, **kw):
+            seen.append(user)
+            return super().chat_json(system, user, **kw)
+    ut.segment_topics(C(), make_segments(10))
+    assert "8–15" in seen[0]
+
+
+def test_topic_window_retried_on_bad_shape():
+    client = TopicRecorder(replies=[["x"]])
+    topics = ut.segment_topics(client, make_segments(10))
+    assert len(client.topic_kw) == 2
+    assert {i for t in topics for i in t["segment_ids"]} == {s["id"] for s in make_segments(10)}
+
+
+def test_topic_window_persistent_failure_raises_llmerror(tmp_path):
+    from pipeline.llm import LLMError
+    client = TopicRecorder(replies=[{"topics": "oops"}] * 5)
+    sp = tmp_path / "segments.json"
+    sp.write_text(json.dumps({"segments": make_segments(10)}), encoding="utf-8")
+    out = tmp_path / "o.json"
+    with pytest.raises(LLMError) as exc:
+        ut.run(sp, out, client=client)
+    assert "话题分段" in str(exc.value) and "1/1" in str(exc.value)
+    assert len(client.topic_kw) == ut.TOPIC_RETRIES + 1
+    assert not out.exists()
+
+
+def test_topic_window_fatal_error_not_retried():
+    from pipeline.llm import LLMError
+
+    class Fatal(FakeClient):
+        def chat_json(self, system, user, **kw):
+            self.calls += 1
+            raise LLMError("鉴权失败", status=401)
+    client = Fatal()
+    with pytest.raises(LLMError, match="话题分段"):
+        ut.segment_topics(client, make_segments(5))
+    assert client.calls == 1
+
+
+def test_topic_items_non_dict_and_non_list_ids_skipped():
+    client = TopicRecorder(replies=[{"topics": [5, {"name": "a", "segment_ids": "S001"},
+                                                {"name": "b", "segment_ids": ["S001", 7]}]}])
+    topics = ut.segment_topics(client, make_segments(3))
+    assert topics[0]["name"] == "b" and topics[0]["segment_ids"][0] == "S001"
+    assert {i for t in topics for i in t["segment_ids"]} == {"S001", "S002", "S003"}
+    assert len(topics) == 1  # 漏掉的句子兜底并入最后一个话题
+
+
+@pytest.mark.parametrize("raw,expected", [("false", False), ("False", False), ("否", False), ("", False),
+                                          (None, False), (0, False), ("true", True), (True, True),
+                                          (1, True), ("是", True)])
+def test_key_info_string_false_is_false(raw, expected):
+    assert ut._normalize({"info_type": "事实陈述", "key_info": raw})["key_info"] is expected
+
+
+def test_unknown_info_type_defaults():
+    assert ut._normalize({"info_type": "价格"})["info_type"] == "事实陈述"
+    assert ut._normalize({"info_type": "金额价格"})["info_type"] == "金额价格"
+
+
+@pytest.mark.parametrize("data", [["x"], {"groups": "x"}, {"groups": [3]}, {"groups": [{"indexes": "0"}]}])
+def test_merge_topics_non_dict_returns_none(data):
+    class C:
+        def chat_json(self, *a, **k):
+            return data
+    topics = [{"name": f"t{i}", "segment_ids": [f"S{i:03d}"]} for i in range(3)]
+    assert ut._merge_topics_via_llm(C(), topics) is None
+
+
+# ================================================================ M6 · KI-10 --model 真正传给客户端
+def test_model_passed_to_client(tmp_path, monkeypatch):
+    made = []
+
+    class Spy(FakeClient):
+        def __init__(self, **kw):
+            made.append(kw)
+            super().__init__()
+    monkeypatch.setattr(ut, "DeepSeekClient", Spy)
+    sp = tmp_path / "segments.json"
+    sp.write_text(json.dumps({"segments": make_segments(3)}), encoding="utf-8")
+    res = ut.run(sp, tmp_path / "o.json", model="deepseek-reasoner")
+    assert made == [{"model": "deepseek-reasoner"}] and res["model"] == "deepseek-reasoner"
+    ut.run(sp, tmp_path / "o2.json")
+    assert made[-1] == {}
+
+
+# ================================================================ M6 审查修复：尾窗并入 + 跨窗同名合并
+def _many(n):
+    return [{"id": f"S{i:03d}", "start": i * 2.0, "end": i * 2.0 + 1.5, "text": f"第{i}句"}
+            for i in range(1, n + 1)]
+
+
+def test_tiny_trailing_window_folded_into_previous():
+    client = TopicRecorder()
+    ut.segment_topics(client, _many(130))
+    assert len(client.topic_kw) == 1
+
+
+def test_same_named_topics_merged_across_window_edge():
+    class Same(TopicRecorder):
+        def chat_json(self, system, user, **kw):
+            if "归并成" in user:
+                self.topic_kw.append(kw)
+                return {"topics": [{"name": "同一话题", "segment_ids": re.findall(r"^(S\d{3}) ", user, flags=re.M)}]}
+            return super().chat_json(system, user, **kw)
+    client = Same()
+    topics = ut.segment_topics(client, _many(250))
+    assert len(client.topic_kw) == 2
+    n = len(topics)
+    assert all(t["name"].endswith(f"/{n})") for t in topics)

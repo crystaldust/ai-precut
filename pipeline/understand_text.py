@@ -2,7 +2,7 @@
 """b 路：让 LLM 把文稿切成话题，并标注每句的信息类型与关键信息。
 
 两件事分两次调用：
-  1. 话题分段：把整段对话归成 8–15 个话题（全局视角，一次调用）
+  1. 话题分段：把整段对话归成 8–15 个话题（每 120 句一窗，逐窗校验 + 重试）
   2. 逐句标注：信息类型、实体、是否关键信息（分批，每批 40 句）
 
 设计取舍：
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 from pathlib import Path
 
@@ -26,6 +27,16 @@ ANNOTATE_BACKOFF = (2.0, 5.0)  # 批次重试前等待的秒数（第 1 次、�
 ANNOTATION_MISSING_ERROR = "模型漏标 {n} 句"
 ANNOTATION_SHAPE_ERROR = "标注结果结构异常：{detail}"
 ANNOTATION_SKIPPED_ERROR = "前面的批次遇到无法重试的错误，未调用：{error}"
+TOPIC_WINDOW = 120           # 话题分段每次最多送这么多句：输出的 id 列表不会被 max_tokens 截断（KI-09）
+TOPIC_MIN_TAIL = 20          # 最后一窗不足这么多句就并进前一窗，不单独调一次
+TOPIC_MAX_TOKENS = 4000
+TOPIC_RETRIES = ANNOTATE_RETRIES
+TOPIC_RANGE = (8, 15)        # 整段素材的话题数范围；分窗时按句数比例缩
+TOPIC_SHAPE_ERROR = "话题分段结果结构异常：{detail}"
+TOPIC_FAILED_ERROR = "话题分段失败（第 {k}/{n} 段，已重试 {r} 次）：{error}"
+INFO_TYPES = ("金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑", "事实陈述", "个人故事", "闲聊寒暄")
+DEFAULT_INFO_TYPE = "事实陈述"
+_TRUE_WORDS = ("true", "是", "1", "yes")
 _sleep = time.sleep  # 测试里替换成空操作
 _ANN_KEYS = ("info_type", "key_info", "entities", "reason")
 
@@ -43,7 +54,7 @@ class AnnotationIncomplete(LLMError):
 TOPIC_SYSTEM = "你是纪录片剪辑助理。只输出 JSON，不要解释。"
 
 TOPIC_USER = """下面是一段现场对话的逐句清单（id 起始时间 文本）。
-请把它归并成 8–15 个话题（**最多 15 个，超过算不合格**），覆盖全部句子，每句只出现一次。
+请把它归并成 {lo}–{hi} 个话题（**最多 {hi} 个，超过算不合格**），覆盖全部句子，每句只出现一次。
 
 要求：
 - 话题名 6–12 个字，用"做什么"的动宾结构，例如"讲解合同条款""谈课程与价格"
@@ -107,10 +118,14 @@ def _merge_topics_via_llm(client, topics: list[dict], max_n: int = 15) -> list[d
                                 temperature=0.1, max_tokens=1200)
     except Exception:  # noqa: BLE001 - 合并失败就走体量兜底
         return None
-    groups = data.get("groups") or []
+    groups = data.get("groups") if isinstance(data, dict) else None
+    if not isinstance(groups, list) or not all(isinstance(g, dict) for g in groups):
+        return None  # KI-09：形状不对 → 走 _cap_topics，不崩
     used: set[int] = set()
     out = []
     for g in groups:
+        if not isinstance(g.get("indexes"), list):
+            return None
         idx = [i for i in (g.get("indexes") or []) if isinstance(i, int)
                and 0 <= i < len(topics) and i not in used]
         if not idx:
@@ -155,26 +170,77 @@ def _cap_topics(topics: list[dict], max_n: int = 15) -> list[dict]:
     return out
 
 
-def segment_topics(client, segments: list[dict]) -> list[dict]:
-    prompt = TOPIC_USER.format(listing=_listing(segments, max_chars=40))
-    data = client.chat_json(TOPIC_SYSTEM, prompt, temperature=0.1, max_tokens=3000)
-    topics = data.get("topics") or []
-    valid = {s["id"] for s in segments}
+def _topic_range(window: int, total: int) -> tuple[int, int]:
+    """单窗口 8–15；分窗时每窗按句数比例给话题数（合起来仍约 8–15，超出由合并兜底）。"""
+    lo, hi = TOPIC_RANGE
+    if window >= total:
+        return lo, hi
+    hi_w = max(2, math.ceil(hi * window / total))
+    return max(1, min(hi_w, math.ceil(lo * window / total))), hi_w
+
+
+def _topics_once(client, window: list[dict], lo: int, hi: int) -> list[dict]:
+    """一窗话题分段 + 形状校验。形状不对 → LLMError（可重试）；单个坏条目跳过。"""
+    prompt = TOPIC_USER.format(lo=lo, hi=hi, listing=_listing(window, max_chars=40))
+    data = client.chat_json(TOPIC_SYSTEM, prompt, temperature=0.1, max_tokens=TOPIC_MAX_TOKENS)
+    topics = data.get("topics") if isinstance(data, dict) else None
+    if not isinstance(topics, list):
+        raise LLMError(TOPIC_SHAPE_ERROR.format(detail=describe(str(data))))
+    order = [s["id"] for s in window]
+    valid = set(order)
     seen: set[str] = set()
     out = []
     for t in topics:
-        ids = [i for i in (t.get("segment_ids") or []) if i in valid and i not in seen]
+        raw_ids = t.get("segment_ids") if isinstance(t, dict) else None
+        if not isinstance(raw_ids, list):
+            continue
+        ids = [i for i in raw_ids if isinstance(i, str) and i in valid and i not in seen]
         if not ids:
             continue
         seen.update(ids)
         out.append({"name": str(t.get("name") or "未命名")[:20], "segment_ids": ids})
-    missing = valid - seen
-    if missing:  # 模型漏掉的句子兜底并入最后一个话题
-        if out:
-            out[-1]["segment_ids"].extend(sorted(missing))
-        else:
-            out = [{"name": "全部内容", "segment_ids": sorted(missing)}]
-    if len(out) > 15:
+    if not out:
+        raise LLMError(TOPIC_SHAPE_ERROR.format(detail="没有一个话题对得上句子 id"))
+    missing = [i for i in order if i not in seen]
+    if missing:  # 模型漏掉的句子兜底并入这一窗最后一个话题
+        out[-1] = {**out[-1], "segment_ids": [*out[-1]["segment_ids"], *missing]}
+    return out
+
+
+def _topics_with_retry(client, window: list[dict], k: int, n: int, total: int, sleep) -> list[dict]:
+    lo, hi = _topic_range(len(window), total)
+    error = ""
+    for attempt in range(TOPIC_RETRIES + 1):
+        if attempt:
+            sleep(ANNOTATE_BACKOFF[min(attempt - 1, len(ANNOTATE_BACKOFF) - 1)])
+        try:
+            return _topics_once(client, window, lo, hi)
+        except LLMError as exc:
+            error = str(exc)[:200]
+            if not exc.retryable:
+                raise LLMError(TOPIC_FAILED_ERROR.format(k=k, n=n, r=attempt, error=error),
+                               retryable=False) from exc
+    raise LLMError(TOPIC_FAILED_ERROR.format(k=k, n=n, r=TOPIC_RETRIES, error=error))
+
+
+def _merge_same_named(done: list[dict], new: list[dict]) -> list[dict]:
+    """跨窗口边界的同名相邻话题合并（同一话题被窗口切成两半）。"""
+    if done and new and done[-1]["name"] == new[0]["name"]:
+        head = {**done[-1], "segment_ids": [*done[-1]["segment_ids"], *new[0]["segment_ids"]]}
+        return [*done[:-1], head, *new[1:]]
+    return [*done, *new]
+
+
+def segment_topics(client, segments: list[dict], *, sleep=None) -> list[dict]:
+    """按 TOPIC_WINDOW 句分窗做话题分段；每窗校验 + 重试，仍失败就报错停（D8，不静默降级）。"""
+    sleep = sleep or _sleep
+    windows = list(_chunks(segments, TOPIC_WINDOW))
+    if len(windows) > 1 and len(windows[-1]) < TOPIC_MIN_TAIL:
+        windows = [*windows[:-2], windows[-2] + windows[-1]]
+    out: list[dict] = []
+    for k, window in enumerate(windows, 1):
+        out = _merge_same_named(out, _topics_with_retry(client, window, k, len(windows), len(segments), sleep))
+    if len(out) > TOPIC_RANGE[1]:
         out = _merge_topics_via_llm(client, out) or _cap_topics(out)
     return _split_large(out)
 
@@ -185,10 +251,18 @@ def _normalize(item: dict) -> dict:
     if not isinstance(entities, list):
         raise LLMError(ANNOTATION_SHAPE_ERROR.format(
             detail=f"entities 是 {type(entities).__name__}"))
-    return {"info_type": str(item.get("info_type") or "事实陈述")[:12],
-            "key_info": bool(item.get("key_info")),
+    info_type = str(item.get("info_type") or "")
+    return {"info_type": info_type if info_type in INFO_TYPES else DEFAULT_INFO_TYPE,
+            "key_info": _as_bool(item.get("key_info")),
             "entities": [str(e)[:30] for e in entities][:8],
             "reason": str(item.get("reason") or "")[:40]}
+
+
+def _as_bool(value) -> bool:
+    """模型常把布尔写成字符串（"false" 被 bool() 当真，KI-09）：只认真值、1、"true"/"是"/"yes"。"""
+    if isinstance(value, str):
+        return value.strip().lower() in _TRUE_WORDS
+    return value is True or (isinstance(value, int) and value == 1)
 
 
 def _annotate_once(client, chunk: list[dict], style: str) -> dict[str, dict]:
@@ -301,7 +375,7 @@ def run(segments_path: Path, out_path: Path, *, client=None,
     segments = schema.read_field(segments_path, "segments")  # 结构不对 → CorruptJSON（带文件名）
     # 只把有文本的句子送进模型
     usable = [s for s in segments if (s.get("text") or "").strip()]
-    client = client or DeepSeekClient()
+    client = client or (DeepSeekClient(model=model) if model else DeepSeekClient())  # KI-10
     label = model or getattr(client, "model", "")
     fp = _fingerprint(segments, style, label)
     partial = partial_path(out_path)
@@ -314,7 +388,7 @@ def run(segments_path: Path, out_path: Path, *, client=None,
                                    batch=batch, style=style, sleep=sleep)
         annotations = {**done, **fresh}
     else:
-        topics = segment_topics(client, usable)
+        topics = segment_topics(client, usable, sleep=sleep)
         annotations, failures = annotate(client, usable, batch=batch, style=style,
                                          sleep=sleep)
     failed = {sid for f in failures for sid in f["ids"]}

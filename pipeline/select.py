@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-from pipeline import classify, review, schema
+from pipeline import classify, review, schema, select_rules, shot_sub
 
 HARD_TYPES = {"金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑"}
 MIN_SHOT = 1.5      # 最短镜头
@@ -32,16 +32,22 @@ MUST_KEEP_MISSING = "分镜表缺少 {n} 段必留内容：{items}；{remedy}"
 MUST_KEEP_REMEDY_MANUAL = "在分镜表里加回，或在「浏览素材」取消★后再出片"
 MUST_KEEP_REMEDY_SELECTED = "重新选段（「改目标时长」或重新「处理素材」）后再出片，或在「浏览素材」取消★"
 MUST_KEEP_MISSING_SHOWN = 5  # 报错里最多列几段
-MUST_LINE_UNMATCHED = "指定必须保留的原话「{line}」在转写里找不到，没能进片：检查是否和原话一字不差"
 MUST_LINE_TOO_SHORT = "指定必须保留的原话「{line}」所在的句子不足 {min} 秒，没能单独成镜"
+MUST_LINE_NOT_COVERED = "指定必须保留的原话「{line}」没能完整进片：请在分镜表里手动调整这一镜的入出点"
+COVER_TOLERANCE = 0.01   # 秒：出入点取两位小数的误差
 MUST_TOPIC_UNMATCHED = "必留话题「{topic}」对不上任何话题，已忽略"
 EXCLUDE_TOPIC_UNMATCHED = "排除话题「{topic}」对不上任何话题，没有排除任何内容"
 ANSWER_UNMATCHED = "答案「{label}」不在当前的决策问题里（问题可能已重新生成），已忽略：请到「确认与提问」重新作答"
+# 结尾关键词（D4）：只收「动作已经发生」的说法；「走进」「谢谢」这类泛词会把任意镜头挪到片尾（KI-02）
 END_KEYWORDS = {
-    "sign": ("签", "缴费", "转账", "落笔"),
-    "leave": ("走", "离开", "出门", "下楼"),
-    "emotion": ("谢", "信", "钱", "白学", "放心"),
+    "sign": ("签合同", "签字", "签约", "签了", "缴费", "交钱", "转账", "付款", "刷卡"),
+    "leave": ("走了", "离开", "出门", "下楼", "再见", "拜拜"),
 }
+EMOTION_MIN_REL_DB = 1.0   # 情绪结尾：音量至少高于中位 1dB 才算「有力」
+ENDING_SILENCE_WARNING = "结尾选了「留白」：程序不会自动加空镜，请在剪映里手动补"
+ENDING_NOT_FOUND_WARNING = "结尾偏好「{label}」没找到合适的镜头，结尾保持时间顺序：可在分镜表里手动调整"
+ENDING_LABELS = {"sign": "签约 / 缴费", "leave": "离开", "emotion": "最有力的句子", "info": "最后一个关键信息"}
+OVERRIDES_STALE_WARNING = "{n} 条人工裁决对应的句子在重新分析后变了，已不套用：{ids}；请在「浏览素材」重新标"
 
 
 class SelectionError(RuntimeError):
@@ -52,21 +58,6 @@ def fmt_duration(sec: float) -> str:
     """给人看的时长：「3 分 34 秒」/「45 秒」。"""
     sec = int(round(sec))
     return f"{sec // 60} 分 {sec % 60} 秒" if sec >= 60 else f"{sec} 秒"
-
-
-def _norm_ending(value: str | None) -> str | None:
-    """把模型生成的中文结尾描述归一到枚举。"""
-    if not value:
-        return None
-    if value in {"sign", "leave", "emotion", "silence"}:
-        return value
-    for canon, keys in (("sign", ("签", "缴费", "转账", "付款")),
-                        ("leave", ("离", "走", "出门", "背影")),
-                        ("emotion", ("情绪", "有力", "金句", "感动")),
-                        ("silence", ("留白", "空镜", "静"))):
-        if any(k in value for k in keys):
-            return canon
-    return None
 
 
 def _best_topic(value: str, names: list[str]) -> str | None:
@@ -109,49 +100,18 @@ def _score(seg: dict, weights: dict | None = None) -> float:
         s += 1
     if seg.get("level") == 3:
         s += 1
+    if seg.get("focus"):  # KI-04：主角说话人加分
+        s += select_rules.FOCUS_BONUS
     return round(s, 2)
 
 
-def _rules(answers: dict, questions: dict | None) -> dict:
-    """把答案翻译成选段规则。对不上任何选项的答案记进 ignored_answers（KI-23）。"""
-    rules = {"must_topics": [], "exclude_topics": [], "ending": None,
-             "focus": None, "pacing": "normal"}
-    ignored: list[str] = []
-    labels: dict[str, dict] = {}
-    for q in (questions or {}).get("questions", []):
-        for o in q.get("options", []):
-            labels[o["label"]] = o.get("rule") or {}
-
-    for value in answers.values():
-        values = value if isinstance(value, list) else [value]
-        for v in values:
-            rule = labels.get(v)
-            if not rule:
-                if isinstance(v, str) and v:
-                    ignored.append(v)
-                continue
-            kind, val = rule.get("kind"), rule.get("value")
-            if kind == "must_topics":
-                rules["must_topics"].extend(val if isinstance(val, list) else [val])
-            elif kind == "exclude":
-                rules["exclude_topics"].extend(val if isinstance(val, list) else [val])
-            elif kind == "ending":
-                rules["ending"] = _norm_ending(val)
-            elif kind == "focus":
-                rules["focus"] = val
-            elif kind == "pacing":
-                rules["pacing"] = "tight" if "紧凑" in v or "快" in v else "normal"
-    rules["ignored_answers"] = ignored
-    return rules
-
-
-def _clip(seg: dict, budget: float | None) -> tuple[float, float]:
+def _clip(seg: dict, budget: float | None, max_shot: float = MAX_SHOT) -> tuple[float, float]:
     start, end = float(seg["start"]), float(seg["end"])
     dur = end - start
     if budget is not None and dur > budget:
         end = start + max(MIN_SHOT, budget)
-    if end - start > MAX_SHOT:
-        end = start + MAX_SHOT
+    if end - start > max_shot:
+        end = start + max_shot
     return round(start, 2), round(end, 2)
 
 
@@ -179,7 +139,6 @@ def _must_keep_shot(seg: dict, weights: dict | None) -> dict:
     why = seg.get("level_reason") or ""
     return {"segment_id": seg["id"], "topic": seg.get("topic") or "未归类",
             "start": start, "end": end, "dur": round(end - start, 2),
-            "sub": (seg.get("text") or "")[:28],
             "reason": MUST_KEEP_REASON + (f"；{why}" if why else ""),
             "score": _score(seg, weights), "forced": True, "must_keep": True}
 
@@ -282,39 +241,81 @@ def _must_keep_report(segments: list[dict], shots: list[dict], covered: list[str
             "warnings": warnings}
 
 
-def _force_lines(segments: list[dict], shots: list[dict], lines: list[str],
-                 target: float, weights: dict | None) -> tuple[list[dict], list[str]]:
-    """剪辑员指定必须保留的原话：无论档位/预算，一律强制进片。→ (镜头, 没能进片的原因)（KI-23）。"""
-    used = {s["segment_id"] for s in shots}
-    problems: list[str] = []
-    for line in lines:
-        hits = [seg for seg in segments if line in (seg.get("text") or "")]
-        if not hits:
-            problems.append(MUST_LINE_UNMATCHED.format(line=line))
+def _covers(shot: dict, a: float, b: float) -> bool:
+    return shot["start"] <= a + COVER_TOLERANCE and shot["end"] >= b - COVER_TOLERANCE
+
+
+def _forced_bounds(seg: dict, a: float, b: float, max_shot: float) -> tuple[float, float]:
+    """强制镜头的出入点：必须覆盖原话 [a, b]；尽量从更早的分句起头（不超过单镜上限）。
+
+    原话本身比上限还长 → 这一镜不受上限（和必留一样，指定的话必须完整）。
+    """
+    if b - a >= max_shot:
+        return round(a, 2), round(b, 2)
+    starts = {float(seg["start"]), a}
+    for line in seg.get("lines") or []:
+        try:
+            starts.add(float(line["start"]))
+        except (KeyError, TypeError, ValueError):
             continue
-        placed = any(seg["id"] in used for seg in hits)
-        for seg in hits:
-            if seg["id"] in used:
-                continue
-            start, end = _clip(seg, MAX_SHOT)
-            if end - start < MIN_SHOT:
-                continue
-            shots.append({"segment_id": seg["id"], "topic": seg.get("topic") or "未归类",
-                          "start": start, "end": end, "dur": round(end - start, 2),
-                          "sub": (seg.get("text") or "")[:28],
-                          "reason": "剪辑员指定必须保留", "score": _score(seg, weights),
-                          "forced": True})
-            used.add(seg["id"])
-            placed = True
-        if not placed:
+    start = min(t for t in starts if b - max_shot - COVER_TOLERANCE <= t <= a + COVER_TOLERANCE)
+    end = max(b, min(float(seg["end"]), start + max_shot))
+    return round(start, 2), round(end, 2)
+
+
+def _line_spans(hits: list[dict]) -> dict[str, tuple[float, float, str]]:
+    """同一句命中多条原话 → 合并成一个时间区间。"""
+    spans: dict[str, tuple[float, float, str]] = {}
+    for h in hits:
+        a, b, line = spans.get(h["id"], (h["start"], h["end"], h["line"]))
+        spans[h["id"]] = (min(a, h["start"]), max(b, h["end"]), line)
+    return spans
+
+
+def _force_lines(segments: list[dict], shots: list[dict], hits: list[dict], target: float,
+                 weights: dict | None, max_shot: float) -> tuple[list[dict], list[str]]:
+    """剪辑员指定的原话（KI-03）：无论档位/预算，一律强制进片，且镜头必须覆盖原话本身。
+
+    已入选但被截短、没覆盖到原话的镜头换成强制镜头。→ (镜头, 没能进片的原因)。
+    """
+    by_id = {seg["id"]: seg for seg in segments}
+    out = list(shots)
+    problems: list[str] = []
+    for sid, (a, b, line) in _line_spans(hits).items():
+        seg = by_id.get(sid)
+        if seg is None or any(_covers(x, a, b) for x in out if x["segment_id"] == sid):
+            continue
+        start, end = _forced_bounds(seg, a, b, max_shot)
+        if end - start < MIN_SHOT:
             problems.append(MUST_LINE_TOO_SHORT.format(line=line, min=MIN_SHOT))
-    shots.sort(key=lambda x: x["start"])
-    shots, _ = _trim(shots, target)
-    return shots, problems
+            continue
+        out = [x for x in out if x["segment_id"] != sid] + [{
+            "segment_id": sid, "topic": seg.get("topic") or "未归类",
+            "start": start, "end": end, "dur": round(end - start, 2),
+            "reason": "剪辑员指定必须保留", "score": _score(seg, weights), "forced": True}]
+    out.sort(key=lambda x: x["start"])
+    out, _ = _trim(out, target)
+    return out, problems
+
+
+def _uncovered_lines(hits: list[dict], shots: list[dict], segments: list[dict]) -> list[str]:
+    """出片前最后核对：每条命中的原话都有镜头完整覆盖（太短成不了镜的已单独报过）。"""
+    dur = {s["id"]: float(s["end"]) - float(s["start"]) for s in segments}
+    return [MUST_LINE_NOT_COVERED.format(line=line)
+            for sid, (a, b, line) in _line_spans(hits).items()
+            if dur.get(sid, 0.0) >= MIN_SHOT
+            and not any(_covers(x, a, b) for x in shots if x["segment_id"] == sid)]
 
 
 def select(segments: list[dict], topics: list[dict], rules: dict,
            target: float, weights: dict | None = None) -> dict:
+    # 旧版存下的规则可能是中文描述（ending「微信缴费完成」、pacing「紧凑快剪」）：先归一
+    rules = {**rules, "ending": select_rules.norm_ending(rules.get("ending")),
+             "pacing": select_rules.norm_pacing(rules.get("pacing"))}
+    max_shot = select_rules.max_shot_for(rules)          # KI-04：pacing=tight → 单镜 12 秒
+    speakers, notes = select_rules.focus_speakers(segments, rules.get("focus"))
+    if speakers:  # KI-04：主角说话人加分（新列表，不改输入）
+        segments = [{**s, "focus": str(s.get("speaker") or "") in speakers} for s in segments]
     names = [t.get("name", "") for t in topics]
     unmatched_topics = [str(v) for v in rules.get("must_topics") or []
                         if v and not _best_topic(str(v), names)]
@@ -356,8 +357,8 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
                     break
                 if dur > remaining * 1.15 and dur > 4:  # 放不下就跳过
                     continue
-                start, end = start0, min(end0, start0 + MAX_SHOT)
-            end = min(end, start0 + MAX_SHOT)
+                start, end = start0, min(end0, start0 + max_shot)
+            end = min(end, start0 + max_shot)
             if end - start < MIN_SHOT:
                 continue
             picked.append((start, end, seg))
@@ -369,7 +370,6 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
             shots.append({"segment_id": seg["id"], "topic": topic,
                           "start": start, "end": end,
                           "dur": round(end - start, 2),
-                          "sub": (seg.get("text") or "")[:28],
                           "reason": seg.get("level_reason") or "",
                           "score": _score(seg, weights)})
         covered.append(topic)
@@ -399,12 +399,11 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
         if dur > room + 3:
             continue
         start, end = float(seg["start"]), min(float(seg["end"]),
-                                              float(seg["start"]) + MAX_SHOT)
+                                              float(seg["start"]) + max_shot)
         if end - start < MIN_SHOT:
             continue
         shots.append({"segment_id": seg["id"], "topic": topic,
                       "start": start, "end": end, "dur": round(end - start, 2),
-                      "sub": (seg.get("text") or "")[:28],
                       "reason": seg.get("level_reason") or "",
                       "score": _score(seg, weights)})
         total += end - start
@@ -420,7 +419,7 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
         seg = by_id.get(shot["segment_id"])
         if not seg:
             continue
-        max_end = min(float(seg["end"]), shot["start"] + MAX_SHOT)
+        max_end = min(float(seg["end"]), shot["start"] + max_shot)
         room = min(max_end - shot["end"], target - total,
                    topic_extra.get(shot["topic"], 0.0))
         if room <= 0:
@@ -434,13 +433,16 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
 
     shots = _ensure_must_keep(segments, shots, weights)
     shots, total = _trim(shots, target)
-    shots, line_problems = _force_lines(segments, shots, rules.get("must_lines") or [],
-                                        target, weights)
+    hits, line_notes = select_rules.resolve_must_lines(rules.get("must_lines") or [], segments)
+    shots, line_problems = _force_lines(segments, shots, hits, target, weights, max_shot)
+    line_problems += _uncovered_lines(hits, shots, segments)
     total = sum(x["dur"] for x in shots)
     shots = _build_hook(shots, segments)
-    shots = _fix_ending(shots, segments, rules.get("ending"))
-    for i, s in enumerate(shots, 1):
-        s["id"] = f"sel{i:02d}"
+    shots, ending_notes = _fix_ending(shots, segments, rules.get("ending"))
+    seg_of = {x["id"]: x for x in segments}
+    shots = [{**s, "id": f"sel{i:02d}",  # KI-01：字幕按最终出入点生成（整句 / 只留镜头内分句）
+              "sub": shot_sub.sub_for(seg_of[s["segment_id"]], s["start"], s["end"])}
+             for i, s in enumerate(shots, 1)]
 
     used_ids = {s["segment_id"] for s in shots}
     unused = [{"segment_id": s["id"], "topic": s.get("topic"),
@@ -453,7 +455,7 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
     warnings = [*report["warnings"],
                 *[MUST_TOPIC_UNMATCHED.format(topic=t) for t in unmatched_topics],
                 *[EXCLUDE_TOPIC_UNMATCHED.format(topic=t) for t in unmatched_excludes],
-                *line_problems,
+                *line_notes, *line_problems, *notes, *ending_notes,
                 *[ANSWER_UNMATCHED.format(label=x) for x in rules.get("ignored_answers") or []]]
 
     return {
@@ -473,7 +475,7 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
 
 
 def _build_hook(shots: list[dict], segments: list[dict]) -> list[dict]:
-    """把最有信息量的一镜提到最前当开场（冷开场），其余保持时间顺序。"""
+    """把最有信息量的一镜提到最前当开场（冷开场），其余保持时间顺序。返回新列表。"""
     if len(shots) < 3:
         return shots
     key_ids = {seg["id"] for seg in segments if seg.get("key_info")}
@@ -482,35 +484,41 @@ def _build_hook(shots: list[dict], segments: list[dict]) -> list[dict]:
     if not cands:
         return shots
     hook = max(cands, key=lambda s: s["score"])
-    if shots[0] is hook:
-        return shots
-    shots.remove(hook)
-    hook["role"] = "hook"
-    shots.insert(0, hook)
-    return shots
+    return [{**hook, "role": "hook"}, *(s for s in shots if s is not hook)]
 
 
-def _fix_ending(shots: list[dict], segments: list[dict], ending: str | None):
-    """按结尾偏好把最合适的镜头放到最后。"""
+def _ending_pick(pool: list[dict], by_id: dict, ending: str) -> dict | None:
+    def seg_of(shot: dict) -> dict:
+        return by_id.get(shot["segment_id"]) or {}
+    if ending in END_KEYWORDS:
+        hits = [s for s in pool if any(k in (seg_of(s).get("text") or "") for k in END_KEYWORDS[ending])]
+        return hits[-1] if hits else None
+    if ending == "info":
+        hits = [s for s in pool if seg_of(s).get("key_info")]
+        return hits[-1] if hits else None
+    if ending == "emotion":
+        def loud(s: dict) -> float:
+            return float((seg_of(s).get("signals") or {}).get("rel_db") or 0.0)
+        best = max(pool, key=loud, default=None)
+        return best if best is not None and loud(best) >= EMOTION_MIN_REL_DB else None
+    return None
+
+
+def _fix_ending(shots: list[dict], segments: list[dict],
+                ending: str | None) -> tuple[list[dict], list[str]]:
+    """按结尾偏好把最合适的镜头放到最后；开场 hook 永远不动（KI-02）。返回 (新列表, 警告)。"""
     if not shots or not ending:
-        return shots
-    keys = END_KEYWORDS.get(ending)
-    if not keys:
-        return shots
+        return shots, []
+    if ending == "silence":
+        return shots, [ENDING_SILENCE_WARNING]
     by_id = {s["id"]: s for s in segments}
-    best = None
-    for shot in shots:
-        text = (by_id.get(shot["segment_id"], {}).get("text") or "")
-        if any(k in text for k in keys):
-            best = shot
-            break
-    if best is None and ending == "emotion":
-        best = max(shots, key=lambda s: (by_id.get(s["segment_id"], {})
-                                         .get("signals", {}).get("rel_db", 0)))
-    if best is not None:
-        shots.remove(best)
-        shots.append(best)
-    return shots
+    pool = sorted((s for s in shots if s.get("role") != "hook"), key=lambda s: s["start"])
+    best = _ending_pick(pool, by_id, ending)
+    if best is None:  # 找不到不能静默：说出来
+        return shots, [ENDING_NOT_FOUND_WARNING.format(label=ENDING_LABELS.get(ending, ending))]
+    if shots[-1] is best:
+        return shots, []
+    return [s for s in shots if s is not best] + [best], []
 
 
 def to_shot_list(selection: dict, title: str, material: str) -> dict:
@@ -548,10 +556,21 @@ def markdown(selection: dict) -> str:
 
 def _current_rules(answers: dict, questions: dict | None, stored: dict | None) -> dict:
     """已存规则只在答案仍对得上当前题目时才用；题目重新生成过（答案对不上）→ 按当前题目重算并报警告。"""
-    fresh = _rules(answers, questions)
+    fresh = select_rules.rules_from_answers(answers, questions)
     if stored and not fresh["ignored_answers"]:
         return dict(stored)
     return fresh
+
+
+def _with_lines(segments: list[dict], segments_path: Path) -> list[dict]:
+    """KI-01：从 segments.json 取分句时间码（只放在内存里，不写进镜头 / selection.json）。
+
+    文件缺失或损坏 → 没有分句，字幕按时长比例截；损坏已由 notices 在警告栏点名。
+    """
+    raw = schema.read_json_lenient(segments_path, {}).get("segments")
+    lines = {x.get("id"): x.get("lines") for x in raw if isinstance(x, dict)} if isinstance(raw, list) else {}
+    return [{**x, "lines": lines.get(x["id"]) if isinstance(lines.get(x["id"]), list) else []}
+            for x in segments]
 
 
 def run(scored_path: Path, answers_path: Path, out_dir: Path,
@@ -572,10 +591,18 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
 
     out_dir = Path(out_dir)
     overrides = review.load(out_dir)
-    segments = review.apply(scored_segments, overrides)
+    segments = _with_lines(review.apply(scored_segments, overrides), out_dir / "segments.json")
+    if not all("signals" in x for x in segments):  # KI-06：旧项目的 scored 段没并入音频信号 → 回填
+        audio = classify.load_audio_signals(out_dir / "segments_audio.json")
+        segments = [x if "signals" in x else {**x, "signals": dict(audio.get(x["id"]) or {})}
+                    for x in segments]
     target = float(target or scored.get("target") or 175)
     topics = scored.get("topics", [])
     extra_warnings = []
+    stale = review.stale_ids(scored_segments, overrides)
+    if stale:  # KI-12：重新分析后对不上的裁决不套用，但要让剪辑师知道
+        extra_warnings.append(OVERRIDES_STALE_WARNING.format(
+            n=len(stale), ids="、".join(stale[:MUST_KEEP_MISSING_SHOWN]) + ("…" if len(stale) > MUST_KEEP_MISSING_SHOWN else "")))
     if target != float(scored.get("target") or 0):
         if all("must" in t and "usable_dur" in t for t in topics):
             # 剪辑师改了目标时长：按新目标重分话题预算（副本，不改 scored 文件），不必重跑 score
@@ -583,10 +610,10 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
         else:
             extra_warnings.append(BUDGET_LEGACY_WARNING)
     rules = _current_rules(answers, questions, stored_rules)
-    lines = [x.strip() for x in str((calibration or {}).get("must_lines") or "")
-             .replace("，", ",").replace("；", ",").split(",") if x.strip()]
-    if lines:
-        rules["must_lines"] = lines
+    # KI-03：确认页兜底题的原话 + 剪辑偏好里的原话（按换行 /「；」分，句内逗号保留）
+    lines = select_rules.parse_must_lines((calibration or {}).get("must_lines"))
+    rules = {**rules, "must_lines": list(dict.fromkeys(
+        [*select_rules.parse_must_lines(rules.get("must_lines")), *lines]))}
     result = select(segments, topics, rules, target, weights)
     if extra_warnings:
         result = {**result, "warnings": [*result["warnings"], *extra_warnings]}

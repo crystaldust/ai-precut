@@ -321,3 +321,24 @@ def test_ensure_jy_python_dev_delegates_and_dies_on_error(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         aicut.ensure_jy_python()
     assert "[x] 安装 pyJianYingDraft 失败" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- M6 · KI-11 预览指纹含入出点
+def test_cmd_build_uses_fingerprint(project, monkeypatch):
+    import json
+    hashes = []
+    monkeypatch.setattr(aicut.select, "missing_must_keep", lambda *a: [])
+    monkeypatch.setattr(aicut, "ensure_clips", lambda *a: project / "work/clips")
+    monkeypatch.setattr(aicut, "actual_durations", lambda clips, shots: {s["id"]: 5.0 for s in shots})
+    monkeypatch.setattr(aicut, "compose_timeline", lambda *a: {"video": [], "text": []})
+    monkeypatch.setattr(aicut, "ensure_preview", lambda vdir, h: hashes.append(h) or vdir / "p.mp4")
+    monkeypatch.setattr(aicut, "install_draft", lambda *a: None)
+
+    def build(inn):
+        (project / "shots.json").write_text(json.dumps(
+            {"shots": [{"id": "S01", "in": inn, "out": inn + 5, "sub": "你好"}]}), encoding="utf-8")
+        aicut.cmd_build(argparse.Namespace(name="p", version="v1", no_draft=True))
+    build(10.0)
+    build(12.0)
+    build(12.0)
+    assert hashes[0] != hashes[1] and hashes[1] == hashes[2]

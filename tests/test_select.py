@@ -66,7 +66,7 @@ def test_rules_from_question_answers():
         {"id": "q2", "options": [{"label": "签字收尾", "rule": {"kind": "ending",
                                                                "value": "sign"}}]},
     ]}
-    rules = select._rules({"q1": "合同全额", "q2": "签字收尾"}, questions)
+    rules = select.select_rules.rules_from_answers({"q1": "合同全额", "q2": "签字收尾"}, questions)
     assert rules["must_topics"] == ["讲合同"]
     assert rules["ending"] == "sign"
 
@@ -124,9 +124,9 @@ def test_stored_rules_win_over_answers(tmp_path):
 
 
 def test_ending_value_normalized_from_label():
-    assert select._norm_ending("微信缴费完成") == "sign"
-    assert select._norm_ending("学员离校背影") == "leave"
-    assert select._norm_ending("随便看看") is None
+    assert select.select_rules.norm_ending("微信缴费完成") == "sign"
+    assert select.select_rules.norm_ending("学员离校背影") == "leave"
+    assert select.select_rules.norm_ending("随便看看") is None
 
 
 def test_exclude_label_matches_topic_by_similarity():
@@ -435,7 +435,7 @@ QUESTIONS = {"questions": [
 
 
 def test_unknown_answer_label_reported():
-    rules = select._rules({"q1": "旧选项", "q2": ["签字收尾", "旧多选", ""], "q3": None}, QUESTIONS)
+    rules = select.select_rules.rules_from_answers({"q1": "旧选项", "q2": ["签字收尾", "旧多选", ""], "q3": None}, QUESTIONS)
     assert rules["ignored_answers"] == ["旧选项", "旧多选"]
     assert rules["ending"] == "sign"
 
@@ -453,3 +453,311 @@ def test_run_reports_unmatched_must_line(tmp_path):
     assert _has(res, "推费", "找不到")
     saved = json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))
     assert any("推费" in w for w in saved["warnings"])
+
+
+# ================================================================ M6 · 成片质量
+def seg2(i, start, dur, topic, **kw):
+    """seg() + 任意额外字段（lines / speaker / signals …）。"""
+    base = seg(i, start, dur, topic, **{k: kw.pop(k) for k in
+                                        ("level", "key", "must", "text", "info") if k in kw})
+    return {**base, **kw}
+
+
+def _line(a, b, text):
+    return {"start": a, "end": b, "text": text}
+
+
+def _shot(res, sid):
+    return next(s for s in res["shots"] if s["segment_id"] == sid)
+
+
+def _write(path, obj):
+    path.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+# ---------------------------------------------------------------- KI-01：字幕整句 + 随镜头裁剪
+def test_sub_is_full_sentence_not_28_chars():
+    text = "这是一句很长很长的话" * 4
+    res = select.select([seg(1, 0, 10, "讲合同", must=True, text=text)], TOPICS, {}, 60)
+    assert _shot(res, "S001")["sub"] == text
+
+
+def test_budget_clipped_shot_sub_trimmed():
+    lines = [_line(0, 7, "第一句话。"), _line(7, 14, "第二句话。"), _line(14, 20, "第三句话。")]
+    s = seg2(1, 0, 20, "讲合同", text="第一句话。第二句话。第三句话。", lines=lines)
+    res = select.select([s], [{"name": "讲合同", "budget": 10}], {}, 10)
+    shot = _shot(res, "S001")
+    assert shot["end"] == 10
+    assert shot["sub"] == "第一句话。"
+
+
+def test_max_shot_clipped_sub_trimmed():
+    lines = [_line(0, 10, "甲"), _line(10, 21, "乙"), _line(21, 30, "丙")]
+    s = seg2(1, 0, 30, "讲合同", text="甲乙丙", lines=lines)
+    res = select.select([s], [{"name": "讲合同", "budget": 30}], {}, 30)
+    assert _shot(res, "S001")["sub"] == "甲乙"
+
+
+def test_extended_shot_sub_recomputed():
+    lines = [_line(0, 9.2, "甲"), _line(9.2, 11, "乙"), _line(11, 20, "丙")]
+    s = seg2(1, 0, 20, "讲合同", text="甲乙丙", lines=lines)
+    res = select.select([s], [{"name": "讲合同", "budget": 10}], {}, 30)
+    shot = _shot(res, "S001")
+    assert shot["end"] == 11.0
+    assert shot["sub"] == "甲乙"
+
+
+def test_run_reads_lines_from_segments_json(tmp_path):
+    sp = _write(tmp_path / "segments_scored.json",
+                {"target": 10, "topics": [{"name": "讲合同", "budget": 10}],
+                 "segments": [seg(1, 0, 20, "讲合同", text="甲乙丙")]})
+    _write(tmp_path / "segments.json", {"segments": [
+        {"id": "S001", "lines": [_line(0, 7, "甲"), _line(7, 14, "乙"), _line(14, 20, "丙")]}]})
+    res = select.run(sp, tmp_path / "none.json", tmp_path, title="片", material="/a.mp4")
+    assert _shot(res, "S001")["sub"] == "甲"
+    saved = json.loads((tmp_path / "shots-selected.json").read_text(encoding="utf-8"))
+    assert saved["shots"][0]["sub"] == "甲"
+    assert "lines" not in json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))["shots"][0]
+
+
+# ---------------------------------------------------------------- KI-02：hook 不动、结尾按偏好
+ONE_TOPIC = [{"name": "讲合同", "budget": 60}]
+
+
+def test_ending_never_moves_hook():
+    segs = [seg(1, 0, 6, "讲合同", text="开头普通"),
+            seg(2, 10, 6, "讲合同", text="现在缴费九千八", key=True, info="金额价格"),
+            seg(3, 20, 6, "讲合同", text="聊天"),
+            seg(4, 30, 6, "讲合同", text="然后签字了")]
+    res = select.select(segs, ONE_TOPIC, {"ending": "sign"}, 60)
+    assert res["shots"][0]["segment_id"] == "S002" and res["shots"][0]["role"] == "hook"
+    assert res["shots"][-1]["segment_id"] == "S004"
+    segs[3] = seg(4, 30, 6, "讲合同", text="聊聊")
+    res = select.select(segs, ONE_TOPIC, {"ending": "sign"}, 60)
+    assert [s["segment_id"] for s in res["shots"]] == ["S002", "S001", "S003", "S004"]
+
+
+def test_ending_picks_last_match_in_time():
+    segs = [seg(1, 0, 6, "讲合同", text="签合同了"), seg(2, 10, 6, "讲合同", text="普通"),
+            seg(3, 20, 6, "讲合同", text="再签合同"), seg(4, 30, 6, "讲合同", text="普通")]
+    res = select.select(segs, ONE_TOPIC, {"ending": "sign"}, 60)
+    assert res["shots"][-1]["segment_id"] == "S003"
+
+
+def test_ending_keywords_not_too_broad():
+    segs = [seg(1, 0, 6, "讲合同", text="我们走进教室"), seg(2, 10, 6, "讲合同", text="普通")]
+    assert select.select(segs, ONE_TOPIC, {"ending": "leave"}, 60)["shots"][-1]["segment_id"] == "S002"
+    segs = [seg(1, 0, 6, "讲合同", text="谢谢老师"), seg(2, 10, 6, "讲合同", text="普通")]
+    assert select.select(segs, ONE_TOPIC, {"ending": "emotion"}, 60)["shots"][-1]["segment_id"] == "S002"
+
+
+def test_emotion_ending_uses_loudest_non_hook():
+    segs = [seg2(i, i * 10, 6, "讲合同", signals={"rel_db": db})
+            for i, db in ((1, 0.5), (2, 3.2), (3, 1.1), (4, 0.2))]
+    assert select.select(segs, ONE_TOPIC, {"ending": "emotion"}, 60)["shots"][-1]["segment_id"] == "S002"
+    quiet = [seg2(i, i * 10, 6, "讲合同", signals={"rel_db": 0.5}) for i in range(1, 5)]
+    res = select.select(quiet, ONE_TOPIC, {"ending": "emotion"}, 60)
+    assert [s["segment_id"] for s in res["shots"]] == ["S001", "S002", "S003", "S004"]
+
+
+def test_info_ending_moves_last_key_info_shot():
+    segs = [seg(1, 0, 6, "讲合同", key=True, info="金额价格"), seg(2, 10, 6, "讲合同"),
+            seg(3, 20, 6, "讲合同", key=True), seg(4, 30, 6, "讲合同")]
+    res = select.select(segs, ONE_TOPIC, {"ending": "info"}, 60)
+    assert res["shots"][0]["segment_id"] == "S001"
+    assert res["shots"][-1]["segment_id"] == "S003"
+
+
+def test_silence_ending_warns():
+    segs = [seg(i, i * 10, 6, "讲合同") for i in range(1, 4)]
+    res = select.select(segs, ONE_TOPIC, {"ending": "silence"}, 60)
+    assert [s["segment_id"] for s in res["shots"]] == ["S001", "S002", "S003"]
+    assert select.ENDING_SILENCE_WARNING in res["warnings"]
+
+
+# ---------------------------------------------------------------- KI-03：必留原话不再碎片泛滥
+def test_must_line_fragment_does_not_flood_cut(tmp_path):
+    segs = [seg(i, i * 10, 6, "聊吃饭", level=1, text=f"对呀嗯第{i}句") for i in range(1, 31)]
+    segs.append(seg(40, 400, 6, "聊吃饭", level=1, text="嗯对就九千八"))
+    sp = _write(tmp_path / "segments_scored.json", {"target": 60, "topics": TOPICS, "segments": segs})
+    res = select.run(sp, tmp_path / "none.json", tmp_path,
+                     calibration={"must_lines": "嗯，对，就九千八"})
+    forced = [s["segment_id"] for s in res["shots"] if s["reason"] == "剪辑员指定必须保留"]
+    assert forced == ["S040"]
+
+
+def test_must_lines_from_answers_and_calibration_merged(tmp_path):
+    segs = [seg(1, 0, 6, "讲合同"), seg(2, 10, 6, "聊吃饭", level=1, text="包含所有耗材"),
+            seg(3, 20, 6, "聊吃饭", level=1, text="找不到工作不白学吗")]
+    sp = _write(tmp_path / "segments_scored.json", {"target": 60, "topics": TOPICS, "segments": segs})
+    ap = _write(tmp_path / "brief_answers.json",
+                {"answers": {}, "rules": {"must_lines": ["包含所有耗材"]}})
+    res = select.run(sp, ap, tmp_path, calibration={"must_lines": "找不到工作不白学吗"})
+    assert {"S002", "S003"} <= set(_ids(res))
+
+
+# ---------------------------------------------------------------- KI-04：pacing / focus 生效
+def test_tight_pacing_caps_shot_length():
+    segs = [seg(1, 0, 30, "讲合同"), seg(2, 40, 30, "讲合同")]
+    topics = [{"name": "讲合同", "budget": 60}]
+    tight = select.select(segs, topics, {"pacing": "tight"}, 60)
+    assert tight["shots"] and all(s["dur"] <= 12.0 + 1e-6 for s in tight["shots"])
+    normal = select.select(segs, topics, {"pacing": "normal"}, 60)
+    assert max(s["dur"] for s in normal["shots"]) > 12.0
+    assert all(s["dur"] <= 25.0 + 1e-6 for s in normal["shots"])
+    must = select.select([seg(1, 0, 30, "讲合同", must=True)], topics, {"pacing": "tight"}, 60)
+    assert _shot(must, "S001")["dur"] == 30.0  # GL-08：必留整段
+
+
+def test_tight_pacing_caps_forced_line_shot():
+    lines = [_line(10, 14, "不白学吗"), _line(14, 40, "后面还有很长很长的一段话")]
+    segs = [seg(1, 0, 6, "讲合同"),
+            seg2(2, 10, 30, "聊吃饭", level=1, text="不白学吗后面还有很长很长的一段话", lines=lines)]
+    res = select.select(segs, TOPICS, {"pacing": "tight", "must_lines": ["不白学吗"]}, 60)
+    shot = _shot(res, "S002")
+    assert shot["dur"] <= 12.0 + 1e-6 and "不白学吗" in shot["sub"]
+
+
+def test_forced_line_longer_than_cap_overrides_cap():
+    """原话本身比单镜上限还长：这一镜不受上限（和必留一样，指定的话必须完整）。"""
+    segs = [seg(1, 0, 6, "讲合同"), seg(2, 10, 30, "聊吃饭", level=1, text="不白学吗")]
+    res = select.select(segs, TOPICS, {"pacing": "tight", "must_lines": ["不白学吗"]}, 60)
+    shot = _shot(res, "S002")
+    assert (shot["start"], shot["end"]) == (10.0, 40.0) and "不白学吗" in shot["sub"]
+
+
+LONG_LINES = [_line(0, 20, "前面很多铺垫的话。"), _line(20, 30, "九千八包含所有耗材")]
+
+
+@pytest.mark.parametrize("pacing", ["tight", "normal"])
+def test_forced_line_at_end_of_long_sentence(pacing):
+    s = seg2(1, 0, 30, "讲合同", level=1, text="前面很多铺垫的话。九千八包含所有耗材", lines=LONG_LINES)
+    res = select.select([s], [{"name": "讲合同", "budget": 30}],
+                        {"must_lines": ["九千八包含所有耗材"], "pacing": pacing}, 30)
+    shot = _shot(res, "S001")
+    assert shot["start"] <= 20.0 and shot["end"] >= 30.0
+    assert "九千八包含所有耗材" in shot["sub"]
+    assert shot["dur"] <= select.select_rules.PACING_MAX_SHOT[pacing] + 1e-6
+
+
+def test_forced_line_in_already_selected_trimmed_shot():
+    s = seg2(1, 0, 30, "讲合同", text="前面很多铺垫的话。九千八包含所有耗材", lines=LONG_LINES)
+    res = select.select([s], [{"name": "讲合同", "budget": 10}], {"must_lines": ["九千八包含所有耗材"]}, 10)
+    shot = _shot(res, "S001")
+    assert shot["end"] >= 30.0 and "九千八包含所有耗材" in shot["sub"]
+    assert len(res["shots"]) == 1
+
+
+def test_forced_line_not_covered_warns(monkeypatch):
+    monkeypatch.setattr(select, "_force_lines", lambda segs, shots, hits, *a: (shots, []))
+    s = seg2(1, 0, 30, "讲合同", text="前面很多铺垫的话。九千八包含所有耗材", lines=LONG_LINES)
+    res = select.select([s], [{"name": "讲合同", "budget": 10}], {"must_lines": ["九千八包含所有耗材"]}, 10)
+    assert _has(res, "九千八包含所有耗材", "没能")
+
+
+def _focus_segs():
+    return [seg2(1, 0, 6, "讲合同", speaker="2"), seg2(2, 10, 6, "讲合同", speaker="1"),
+            seg2(3, 20, 15, "聊吃饭", speaker="1", level=1)]
+
+
+FOCUS_TOPICS = [{"name": "讲合同", "budget": 6}, {"name": "聊吃饭", "budget": 0}]
+
+
+def test_focus_main_prefers_main_speaker():
+    base = select.select(_focus_segs(), FOCUS_TOPICS, {}, 10)
+    assert "S001" in _ids(base) and "S002" not in _ids(base)
+    res = select.select(_focus_segs(), FOCUS_TOPICS, {"focus": "main"}, 10)
+    assert "S002" in _ids(res) and "S001" not in _ids(res)
+
+
+def test_focus_unmappable_warns():
+    base = select.select(_focus_segs(), FOCUS_TOPICS, {}, 10)
+    res = select.select(_focus_segs(), FOCUS_TOPICS, {"focus": "老师"}, 10)
+    assert _ids(res) == _ids(base)
+    assert _has(res, "老师", "没有生效")
+
+
+def test_focus_ensemble_no_bonus():
+    base = select.select(_focus_segs(), FOCUS_TOPICS, {}, 10)
+    res = select.select(_focus_segs(), FOCUS_TOPICS, {"focus": "ensemble"}, 10)
+    assert _ids(res) == _ids(base) and res["warnings"] == []
+
+
+def test_must_keep_invariant_randomized_with_m6_rules():
+    """GL-08：pacing / focus / 原话 / 新结尾规则下必留仍 100% 整段进片。"""
+    rng = random.Random(6)
+    names = ["讲合同", "聊吃饭", "谈价格"]
+    for _ in range(300):
+        segs = [seg2(i, i * 12.0, round(rng.uniform(0.5, 40), 1), rng.choice(names),
+                     level=rng.choice([1, 2, 3]), key=rng.random() < 0.3, must=rng.random() < 0.2,
+                     text=rng.choice(["签合同了", "普通一句", "嗯对就九千八", "再见"]),
+                     speaker=rng.choice(["1", "2"]), signals={"rel_db": rng.uniform(-2, 5)})
+                for i in range(1, rng.randint(2, 40))]
+        topics = [{"name": n, "budget": rng.choice([0, 5, 10, 30, 80])} for n in names]
+        rules = {"ending": rng.choice([None, "sign", "leave", "emotion", "info", "silence"]),
+                 "pacing": rng.choice(["tight", "normal"]),
+                 "focus": rng.choice([None, "main", "ensemble", "老师"]),
+                 "must_lines": rng.sample(["嗯，对，就九千八", "签合同了", "不存在的话"], rng.randint(0, 2))}
+        res = select.select(segs, topics, rules, rng.choice([10, 30, 60, 175]))
+        whole = {s["id"]: (round(s["start"], 2), round(s["end"], 2)) for s in segs
+                 if s["must_keep"] and round(s["end"], 2) > round(s["start"], 2)}
+        got = {s["segment_id"]: (s["start"], s["end"]) for s in res["shots"]}
+        for sid, span in whole.items():
+            assert got.get(sid) == span, "必留进片率必须 100% 且整段"
+        if rules["ending"] and res["shots"] and res["shots"][0].get("role") == "hook":
+            assert res["shots"][0]["role"] == "hook"
+
+
+# ---------------------------------------------------------------- KI-06：旧项目信号回填
+def test_run_backfills_signals_from_audio_file(tmp_path):
+    segs = [{k: v for k, v in seg(i, i * 10, 6, "讲合同").items() if k != "signals"}
+            for i in range(1, 4)]
+    sp = _write(tmp_path / "segments_scored.json",
+                {"target": 60, "topics": ONE_TOPIC, "segments": segs})
+    _write(tmp_path / "segments_audio.json",
+           {"segments": [{"id": "S002", "signals": {"rel_db": 6.0}}]})
+    ap = _write(tmp_path / "brief_answers.json", {"answers": {}, "rules": {"ending": "emotion"}})
+    res = select.run(sp, ap, tmp_path)
+    assert res["shots"][-1]["segment_id"] == "S002"
+
+
+# ---------------------------------------------------------------- KI-12：失效的人工裁决要说出来
+def test_run_warns_stale_overrides(tmp_path):
+    from pipeline import review
+    sp = _write(tmp_path / "segments_scored.json",
+                {"target": 60, "topics": TOPICS, "segments": [seg(1, 0, 6, "讲合同", text="乙")]})
+    _write(tmp_path / "overrides.json", {"S001": {"must_keep": True, "anchor": {
+        "text": review.text_key("甲"), "start": 0.0}}})
+    res = select.run(sp, tmp_path / "none.json", tmp_path)
+    assert _has(res, "1 条人工裁决", "S001")
+    assert res["must_keep_ids"] == []
+
+
+def test_stored_free_text_ending_and_pacing_normalized():
+    """旧版存下的规则里 ending 是中文描述（「微信缴费完成」）、pacing 是文字：选段时也要归一。"""
+    segs = [seg(1, 0, 6, "讲合同", text="签合同了"), seg(2, 10, 6, "讲合同", text="普通"),
+            seg(3, 20, 30, "讲合同", text="普通")]
+    res = select.select(segs, ONE_TOPIC, {"ending": "微信缴费完成", "pacing": "紧凑快剪"}, 60)
+    assert res["shots"][-1]["segment_id"] == "S001"
+    assert all(s["dur"] <= 12.0 + 1e-6 for s in res["shots"])
+
+
+def test_ending_without_candidate_warns():
+    """结尾偏好找不到合适镜头不能静默：说出来。"""
+    segs = [seg(i, i * 10, 6, "讲合同", text="普通") for i in range(1, 4)]
+    res = select.select(segs, ONE_TOPIC, {"ending": "sign"}, 60)
+    assert [s["segment_id"] for s in res["shots"]] == ["S001", "S002", "S003"]
+    assert _has(res, "结尾", "没找到")
+    ok = select.select([seg(1, 0, 6, "讲合同", text="签字了")], ONE_TOPIC, {"ending": "sign"}, 60)
+    assert not _has(ok, "没找到")
+
+
+def test_run_backfill_keeps_existing_signals(tmp_path):
+    segs = [seg2(1, 0, 6, "讲合同", signals={"rel_db": 5.0}),
+            {k: v for k, v in seg(2, 10, 6, "讲合同").items() if k != "signals"},
+            seg2(3, 20, 6, "讲合同", signals={"rel_db": 0.0})]
+    sp = _write(tmp_path / "segments_scored.json", {"target": 60, "topics": ONE_TOPIC, "segments": segs})
+    _write(tmp_path / "segments_audio.json", {"segments": [{"id": "S002", "signals": {"rel_db": 2.0}}]})
+    ap = _write(tmp_path / "brief_answers.json", {"answers": {}, "rules": {"ending": "emotion"}})
+    assert select.run(sp, ap, tmp_path)["shots"][-1]["segment_id"] == "S001"

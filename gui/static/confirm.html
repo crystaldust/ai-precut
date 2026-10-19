@@ -60,7 +60,7 @@ border:1px solid var(--line);padding:9px 16px;border-radius:20px;opacity:0;trans
 
   <div class="card">
     <h2>下一步</h2>
-    <div class="hint">确认后进入「选段」：系统按你的选择挑镜头、出分镜表与预览片。</div>
+    <div class="hint" id="nextstep"></div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -69,6 +69,18 @@ const PROJECT = new URLSearchParams(location.search).get('project') || '';
 const COPY_ANSWERS_UNREADABLE = '上次保存的答案读不出来，请重新作答';
 const COPY_SAVE_FAILED = '保存失败';
 const COPY_WARN_TITLE = '需要你留意';
+// KI-05：「保存并确认」后服务端自动起「重新选段」任务，这里跟踪它
+const COPY_NEXT_STEP = '点「保存并确认」后会按你的选择自动重新选段；你手动改过的分镜表不会被覆盖';
+const COPY_SAVED = '已保存';
+const COPY_CONFIRMED = '已确认';
+const COPY_RESELECT_RUNNING = '已保存 · 正在按你的答案重新选段…';
+const COPY_RESELECT_DONE = '选段完成：回到剪辑台查看新的分镜表';
+const COPY_RESELECT_FAILED = '重新选段失败：';
+const COPY_RESELECT_CANCELLED = '重新选段已取消（答案已保存）';
+const COPY_RESELECT_BLOCKED = '答案已保存，但没能开始重新选段：';
+const COPY_RESELECT_UNKNOWN = '看不到选段进度（答案已保存），请回剪辑台查看';
+const JOB_POLL_MS = 1000;
+const JOB_PROBLEM = /^\[(x|!)\]\s*/;
 const TOAST_MS = 1600, TOAST_ERROR_MIN_MS = 6000, TOAST_MS_PER_CHAR = 120;
 let DATA = null, ANSWERS = {};
 
@@ -126,12 +138,38 @@ function pick(qi, oi){
 async function save(confirmed){
   const r = await fetch('/api/confirm/answers', {method:'POST',headers:{'Content-Type':'application/json'},
     body: JSON.stringify({project:PROJECT, answers:ANSWERS, confirmed})});
-  if(r.ok){ toast(confirmed?'已确认，可以进入选段':'已保存'); document.getElementById('status').textContent = confirmed?'已确认':'已保存'; }
-  else { const e = await r.json().catch(()=>({})); toastError(e.error || COPY_SAVE_FAILED); }
+  if(!r.ok){ const e = await r.json().catch(()=>({})); return toastError(e.error || COPY_SAVE_FAILED); }
+  const j = await r.json().catch(()=>({}));
+  if(j.job_id) return watchJob(j.job_id);
+  if(j.job_error) return setStatus(COPY_RESELECT_BLOCKED + j.job_error, true);
+  toast(confirmed ? COPY_CONFIRMED : COPY_SAVED);
+  setStatus(confirmed ? COPY_CONFIRMED : COPY_SAVED);
+}
+function setStatus(text, isError){
+  document.getElementById('status').textContent = text;  // textContent：日志原文不进 HTML
+  if(isError) toastError(text);
+}
+// 最后一行 [x] / [!] 日志就是失败原因（aicut 的人话）
+function lastProblem(log){
+  const lines = (Array.isArray(log) ? log : []).map(String).filter(l => JOB_PROBLEM.test(l));
+  return lines.length ? lines[lines.length - 1].replace(JOB_PROBLEM, '') : '';
+}
+async function watchJob(id){
+  setStatus(COPY_RESELECT_RUNNING);
+  for(;;){
+    const r = await fetch('/api/job/' + encodeURIComponent(id)).catch(() => null);
+    if(!r || !r.ok) return setStatus(COPY_RESELECT_UNKNOWN, true);
+    const job = await r.json().catch(() => ({}));
+    if(job.status === 'done') return setStatus(COPY_RESELECT_DONE), toast(COPY_RESELECT_DONE);
+    if(job.status === 'cancelled') return setStatus(COPY_RESELECT_CANCELLED, true);
+    if(job.status !== 'running') return setStatus(COPY_RESELECT_FAILED + (lastProblem(job.log) || job.status), true);
+    await new Promise(res => setTimeout(res, JOB_POLL_MS));
+  }
 }
 function toast(t, ms=TOAST_MS){ const el=document.getElementById('toast'); el.textContent=t; el.classList.add('on');
   clearTimeout(el._t); el._t=setTimeout(()=>el.classList.remove('on'), ms); }
 // 错误要看得完：至少 6 秒，按字数加长（KI-21）
 function toastError(t){ toast(t, Math.max(TOAST_ERROR_MIN_MS, String(t).length * TOAST_MS_PER_CHAR)); }
+document.getElementById('nextstep').textContent = COPY_NEXT_STEP;
 load();
 </script></body></html>

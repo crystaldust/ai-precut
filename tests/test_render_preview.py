@@ -158,3 +158,27 @@ def test_cli_failure_leaves_no_half_file_or_temp_dir(tmp_path, monkeypatch):
     out, (code, log) = _render(tmp_path)
     assert code == 1 and "预览片渲染失败" in log
     assert list(out.parent.iterdir()) == [] and list(texts.iterdir()) == []
+
+
+# ---------------------------------------------------------------- M6 · KI-73 预览字幕字体
+def test_prefers_hiragino_sans_gb(tmp_path, monkeypatch):
+    assert rp.FONT_CANDIDATES[0] == "/System/Library/Fonts/Hiragino Sans GB.ttc"
+    second = tmp_path / "b.ttc"
+    second.write_bytes(b"x")
+    monkeypatch.setattr(rp, "FONT_CANDIDATES", [str(tmp_path / "missing.ttc"), str(second)])
+    assert rp.pick_font() == str(second)
+
+
+def test_build_uses_one_font_for_all_text(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(rp, "pick_font", lambda: calls.append(1) or "/Fonts/Hiragino Sans GB.ttc")
+    t = tl(["一", "二", "三"])
+    fc, _ = rp.build(t, text_paths=rp.subtitle_files(t["text"], tmp_path), has_audio=[True])
+    assert len(calls) == 1
+    assert fc.count("fontfile='/Fonts/Hiragino Sans GB.ttc'") == 3
+
+
+def test_no_font_exits(tmp_path, monkeypatch):
+    monkeypatch.setattr(rp, "FONT_CANDIDATES", [str(tmp_path / "none.ttc")])
+    with pytest.raises(SystemExit):
+        rp.pick_font()

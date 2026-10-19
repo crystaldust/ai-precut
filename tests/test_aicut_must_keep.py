@@ -326,3 +326,19 @@ def test_status_shows_text_incomplete(monkeypatch, tmp_path, capsys):
     aicut.cmd_status(Namespace(name="p"))
     out = capsys.readouterr().out
     assert "[!] 文本标注 (b)：未完成" in out
+
+
+def test_score_passes_preset_must_topic(monkeypatch, tmp_path):  # M6 · KI-07
+    monkeypatch.setattr(aicut, "PROJECTS", tmp_path)
+    pdir = _project(tmp_path, **{"segments_text.json": {"segments": []}})
+    cfg = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    (pdir / "project.json").write_text(json.dumps({**cfg, "preset": "纪实3min"}), encoding="utf-8")
+    seen = {}
+
+    def fake_run(*a, **k):
+        seen.update(k)
+        return {"summary": {"waste": 0, "pending": 0, "usable": 0}, "segments": [], "warnings": []}
+    monkeypatch.setattr(aicut.classify, "run", fake_run)
+    aicut.cmd_score(Namespace(name="p"))
+    assert seen["must_topic"]["words"][:2] == ["合同", "退费"]
+    assert seen["must_topic"]["min_key_hits"] == 2

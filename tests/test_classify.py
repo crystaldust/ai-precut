@@ -236,3 +236,81 @@ def test_run_corrupt_audio_raises_corrupt_json(tmp_path):
     with pytest.raises(schema.CorruptJSON, match="segments_audio.json"):
         classify.run(_write_text(tmp_path), ap, tmp_path / "s.json")
     assert not (tmp_path / "s.json").exists()
+
+
+# ================================================================ M6 · 成片质量
+def test_scored_segments_carry_audio_signals():  # KI-06
+    res = classify.classify([seg(1, 0)], {"S001": {"rel_db": 3.0}})
+    assert res["segments"][0]["signals"]["rel_db"] == 3.0
+    assert classify.classify([seg(1, 0)])["segments"][0]["signals"] == {}
+
+
+def test_attach_signals_backfills_without_mutation():  # KI-06
+    segs = [seg(1, 0)]
+    out = classify.attach_signals(segs, {"S001": {"rel_db": 2.0}})
+    assert out[0]["signals"] == {"rel_db": 2.0} and "signals" not in segs[0]
+
+
+def test_load_audio_signals(tmp_path):
+    assert classify.load_audio_signals(tmp_path / "none.json") == {}
+    ap = tmp_path / "a.json"
+    ap.write_text(json.dumps({"segments": [{"id": "S001", "signals": {"rel_db": 1}}]}), encoding="utf-8")
+    assert classify.load_audio_signals(ap) == {"S001": {"rel_db": 1}}
+
+
+def test_ratio_must_topic_protects_short_plain_segment():  # KI-58
+    segs = [seg(i, i * 10, key_info=True, topic="安排宿舍") for i in range(1, 5)]
+    segs.append(seg(9, 90, dur=4, info_type="事实陈述", topic="安排宿舍"))
+    res = classify.classify(segs)
+    s = res["segments"][-1]
+    assert s["level"] == 2 and "必留话题" in s["level_reason"]
+    assert next(t for t in res["topics"] if t["name"] == "安排宿舍")["must"] is True
+
+
+def test_must_topic_words_from_config():  # KI-07
+    one = [seg(1, 0, dur=8, info_type="事实陈述", topic="安排宿舍")]
+    assert classify.classify(one, must_topic={"words": ["宿舍"]})["topics"][0]["must"] is True
+    assert classify.classify(one)["topics"][0]["must"] is False
+    course = [seg(1, 0, key_info=True, topic="建议选养生美体课程")] + [
+        seg(i, i * 10, dur=8, info_type="事实陈述", topic="建议选养生美体课程") for i in range(2, 6)]
+    assert classify.classify(course)["topics"][0]["must"] is False  # 「课程」不再是必留词
+
+
+def test_min_key_hits_required_for_ratio_rule():  # KI-07
+    res = classify.classify([seg(1, 0, key_info=True, topic="闲聊日常")])
+    assert res["topics"][0]["must"] is False
+
+
+def test_must_topic_config_tolerates_bad_values():
+    cfg = classify.must_topic_config({"words": "宿舍", "key_ratio": "x", "min_key_hits": None})
+    assert cfg == classify.must_topic_config(None)
+    assert classify.must_topic_config({"words": ["宿舍", 3, ""]})["words"] == ("宿舍",)
+
+
+def test_run_passes_must_topic_config(tmp_path):  # KI-07
+    tp = tmp_path / "t.json"
+    tp.write_text(json.dumps({"segments": [seg(1, 0, dur=8, info_type="事实陈述", topic="安排宿舍"),
+                                           seg(2, 10, key_info=True, topic="闲聊日常")]},
+                             ensure_ascii=False), encoding="utf-8")
+    res = classify.run(tp, None, tmp_path / "s.json",
+                       must_topic={"words": ["宿舍"], "key_ratio": 0.9, "min_key_hits": 1})
+    must = {t["name"]: t["must"] for t in res["topics"]}
+    assert must == {"安排宿舍": True, "闲聊日常": True}
+
+
+def test_interrupt_proxy_on_long_split_segment_not_usable():  # KI-08
+    res = classify.classify([seg(1, 0, dur=34.5, info_type="事实陈述")],
+                            {"S001": {"interrupt": True, "duration": 34.5, "rel_db": 0.5}})
+    assert res["segments"][0]["level"] != 3
+
+
+def test_interrupt_proxy_with_raised_voice_usable():  # KI-08
+    res = classify.classify([seg(1, 0, dur=8, info_type="事实陈述")],
+                            {"S001": {"interrupt": True, "duration": 8, "rel_db": 1.5}})
+    s = res["segments"][0]
+    assert s["level"] == 3 and s["level_reason"] == "出现抢话/被打断"
+
+
+def test_real_overlap_usable():  # KI-08
+    res = classify.classify([seg(1, 0, dur=8, info_type="事实陈述")], {"S001": {"overlap": True}})
+    assert res["segments"][0]["level"] == 3

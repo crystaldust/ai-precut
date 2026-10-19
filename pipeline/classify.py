@@ -20,13 +20,15 @@ from pipeline import schema
 
 # 硬信息类型：出现即「可用」
 HARD_TYPES = {"金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑"}
-# 必留话题关键词（与 PRD 的信息骨架一致）
-MUST_TOPIC_WORDS = ("合同", "退费", "费用", "价格", "就业", "工作", "工资",
-                    "考证", "资格", "年龄", "签约", "缴费", "课程")
+# 必留话题判定参数：预设 presets/<名>.json 的 "must_topic" 可覆盖（KI-07 / D6）
+#   words：话题名命中即必留；key_ratio + min_key_hits：话题内关键信息句占比与最少句数
+DEFAULT_MUST_TOPIC = {"words": ("合同", "退费", "价格", "就业", "工资", "资格", "签约", "缴费"),
+                      "key_ratio": 0.30, "min_key_hits": 2}
+INTERRUPT_MAX_DUR = 30.0      # 秒：≥30s 的句子多半是 35s 长度上限切出来的假边界（KI-08 / D7）
+INTERRUPT_MIN_REL_DB = 1.0    # 抢话代理信号还要求音量高于中位 1dB
 WASTE_TYPES = {"闲聊寒暄"}
 
 MAX_PENDING_RATIO = 0.28  # 待定不超过总段数的 28%（60 分钟约 40 段）
-KEY_RATIO_MUST = 0.30     # 话题内关键信息句占比 ≥30% 也算必留话题
 ANNOTATION_FAILED_REASON = "AI 标注失败，需要你判断"
 PENDING_DEMOTED_REASON = "待定队列超限，按信息量判定为废片"
 DARK_REASON = "画面过暗，不可用"
@@ -45,8 +47,47 @@ class TextIncomplete(ValueError):
     """文本标注结果不完整：分档会把没标注的句子当成「无关键信息」。"""
 
 
-def _topic_must(name: str) -> bool:
-    return any(w in name for w in MUST_TOPIC_WORDS)
+def attach_signals(segments: list[dict], audio_by_id: dict) -> list[dict]:
+    """KI-06：把 a 路信号并入每句（新列表），选段打分与情绪结尾才拿得到 rel_db。"""
+    return [{**s, "signals": dict(audio_by_id.get(s["id"]) or {})} for s in segments]
+
+
+def load_audio_signals(audio_path: Path) -> dict[str, dict]:
+    """segments_audio.json → {句 id: signals}。没有文件 → {}；损坏 → CorruptJSON（不当「没有」）。"""
+    audio = schema.read_json(audio_path, default=None)
+    if audio is None:
+        return {}
+    return {s["id"]: s.get("signals", {})
+            for s in schema.require_key(audio, "segments", audio_path) if isinstance(s, dict) and "id" in s}
+
+
+def must_topic_config(raw: dict | None) -> dict:
+    """预设里的 must_topic → 规整后的配置；缺省 / 类型不对的字段用默认值。"""
+    raw = raw if isinstance(raw, dict) else {}
+    cfg = dict(DEFAULT_MUST_TOPIC)
+    words = raw.get("words")
+    if isinstance(words, list):
+        cfg["words"] = tuple(w for w in words if isinstance(w, str) and w)
+    ratio = raw.get("key_ratio")
+    if isinstance(ratio, (int, float)) and not isinstance(ratio, bool) and 0 < ratio <= 1:
+        cfg["key_ratio"] = float(ratio)
+    hits = raw.get("min_key_hits")
+    if isinstance(hits, int) and not isinstance(hits, bool) and hits >= 1:
+        cfg["min_key_hits"] = hits
+    return cfg
+
+
+def _topic_must(name: str, words: tuple[str, ...]) -> bool:
+    return any(w in name for w in words)
+
+
+def _is_interrupt(audio: dict, seg_dur: float) -> bool:
+    """真重叠 → 抢话；「换人且停顿 <0.25s」的代理信号只在短句且音量抬高时才算（KI-08）。"""
+    if audio.get("overlap"):
+        return True
+    return (bool(audio.get("interrupt"))
+            and float(audio.get("duration") or seg_dur) < INTERRUPT_MAX_DUR
+            and float(audio.get("rel_db") or 0.0) >= INTERRUPT_MIN_REL_DB)
 
 
 def _level_of(seg: dict, audio: dict | None, must_topic: bool) -> tuple[int, str]:
@@ -57,7 +98,7 @@ def _level_of(seg: dict, audio: dict | None, must_topic: bool) -> tuple[int, str
     entities = seg.get("entities") or []
     rel_db = (audio or {}).get("rel_db", 0.0)
     rate = (audio or {}).get("speech_rate", 0.0)
-    interrupt = (audio or {}).get("interrupt", False)
+    interrupt = _is_interrupt(audio or {}, dur)
 
     if key:
         why = "含关键信息" + (f"：{'、'.join(entities[:3])}" if entities else "")
@@ -83,15 +124,20 @@ def _level_of(seg: dict, audio: dict | None, must_topic: bool) -> tuple[int, str
     return 2, "有信息但主体混杂，需要你判断"
 
 
-def _must_topic_names(scored: list[dict]) -> set[str]:
-    """必留话题 = 名称命中关键词，或话题内关键信息句占比 ≥ KEY_RATIO_MUST。"""
+def _must_topic_names(scored: list[dict], cfg: dict | None = None) -> set[str]:
+    """必留话题 = 名称命中关键词，或话题内关键信息句 ≥ min_key_hits 且占比 ≥ key_ratio。
+
+    只依赖 topic / key_info：先定口径再判档位，档位与 topics[].must 用同一份结果（KI-58）。
+    """
+    cfg = cfg or must_topic_config(None)
     count: dict[str, int] = {}
     keys: dict[str, int] = {}
     for s in scored:
         name = s.get("topic") or "未归类"
         count[name] = count.get(name, 0) + 1
         keys[name] = keys.get(name, 0) + (1 if s.get("key_info") else 0)
-    return {n for n in count if _topic_must(n) or keys[n] / count[n] >= KEY_RATIO_MUST}
+    return {n for n in count if _topic_must(n, cfg["words"])
+            or (keys[n] >= cfg["min_key_hits"] and keys[n] / count[n] >= cfg["key_ratio"])}
 
 
 def _protected(s: dict, must_names: set[str]) -> bool:
@@ -132,7 +178,7 @@ def _cap_pending(scored: list[dict], must_names: set[str],
 def classify(segments: list[dict], audio_by_id: dict | None = None,
              topics: list[dict] | None = None,
              total_target: float = 175.0,
-             visual_by_id: dict | None = None) -> dict:
+             visual_by_id: dict | None = None, *, must_topic: dict | None = None) -> dict:
     audio_by_id = audio_by_id or {}
     visual_by_id = visual_by_id or {}
     topic_of = {}
@@ -140,14 +186,13 @@ def classify(segments: list[dict], audio_by_id: dict | None = None,
         for sid in t.get("segment_ids", []):
             topic_of[sid] = t["name"]
 
+    topical = [{**seg, "topic": seg.get("topic") or topic_of.get(seg["id"], "")} for seg in segments]
+    must_names = _must_topic_names(topical, must_topic_config(must_topic))  # KI-58：先定口径
     base = []
-    for seg in segments:
-        topic = seg.get("topic") or topic_of.get(seg["id"], "")
-        lv, why = _level_of(seg, audio_by_id.get(seg["id"]), _topic_must(topic))
+    for seg in attach_signals(topical, audio_by_id):  # KI-06：scored 段带 signals
+        lv, why = _level_of(seg, seg["signals"], (seg["topic"] or "未归类") in must_names)
         flags = visual_by_id.get(seg["id"], {}).get("flags") or []
-        base.append({**seg, "topic": topic, "level": lv, "level_reason": why,
-                     "visual_flags": flags})
-    must_names = _must_topic_names(base)
+        base.append({**seg, "level": lv, "level_reason": why, "visual_flags": flags})
     scored = [_apply_dark(s, must_names) for s in base]
     scored, pending, warnings = _cap_pending(scored, must_names, audio_by_id)
     result = _assemble(scored, total_target, must_names)
@@ -221,7 +266,8 @@ def _assemble(scored: list[dict], total_target: float = 175.0,
 
 
 def run(text_path: Path, audio_path: Path | None, out_path: Path,
-        total_target: float = 175.0, visual_path: Path | None = None) -> dict:
+        total_target: float = 175.0, visual_path: Path | None = None,
+        must_topic: dict | None = None) -> dict:
     text = schema.read_json(text_path)
     if text.get("complete") is False:
         raise TextIncomplete(TEXT_INCOMPLETE_ERROR)
@@ -233,12 +279,10 @@ def run(text_path: Path, audio_path: Path | None, out_path: Path,
     missing: list[str] = []
     audio_by_id: dict[str, dict] = {}
     if audio_path:
-        audio = schema.read_json(audio_path, default=None)
-        if audio is None:
+        if not Path(audio_path).exists():
             missing.append(AUDIO_MISSING_WARNING)
         else:
-            audio_by_id = {s["id"]: s.get("signals", {})
-                           for s in schema.require_key(audio, "segments", audio_path)}
+            audio_by_id = load_audio_signals(audio_path)
     visual_by_id: dict[str, dict] = {}
     if visual_path:
         visual = schema.read_json(visual_path, default=None)
@@ -246,7 +290,8 @@ def run(text_path: Path, audio_path: Path | None, out_path: Path,
             missing.append(VISUAL_MISSING_WARNING)
         else:
             visual_by_id = schema.require_key(visual, "segments", visual_path, dict)
-    result = classify(segments, audio_by_id, text.get("topics"), total_target, visual_by_id)
+    result = classify(segments, audio_by_id, text.get("topics"), total_target, visual_by_id,
+                      must_topic=must_topic)
     marked = sum(1 for s in segments if s["id"] in legacy_failed)
     legacy = [LEGACY_FAILED_WARNING.format(n=marked)] if marked else []
     if missing or legacy:

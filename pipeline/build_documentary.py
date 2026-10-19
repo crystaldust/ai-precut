@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -23,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # 脚本方式运行时可导入 pipeline.media_io；append 防遮蔽三方包
 
-from pipeline import encode, media_io  # noqa: E402
+from pipeline import encode, media_io, schema  # noqa: E402
 
 MAX_CHARS = 14          # 单行最多 14 字（1080 宽下 63px 字号刚好不溢出）
 W, H, FPS = 1080, 1920, 30
@@ -66,6 +67,19 @@ def cut_shot(src: Path, dst: Path, start: float, dur: float) -> None:
                              "-movflags", "+faststart"])
 
 
+def clip_key(shot: dict, src: Path) -> str:
+    """切片缓存键：源文件 + 入出点 + 镜头 id，任一变化就重切（KI-11）。"""
+    return hashlib.sha1(f"{src}:{shot['in']}:{shot['out']}:{shot.get('id')}"
+                        .encode()).hexdigest()[:12]
+
+
+def preview_fingerprint(timeline: dict, shots: list[dict], src: Path) -> str:
+    """预览哈希：timeline + 每镜切片键。入出点平移但时长不变时 timeline 一模一样（KI-11）。"""
+    payload = {"timeline": timeline, "clips": [clip_key(s, src) for s in shots]}
+    return hashlib.sha1(json.dumps(payload, ensure_ascii=False, sort_keys=True)
+                        .encode()).hexdigest()
+
+
 def card_entries(cards: list[dict], total: float, size: float = CARD_SIZE) -> list[dict]:
     """片头/片尾字幕卡 → 时间轴文字项；超出成片时长的卡跳过，结尾截到 total（GL-10）。"""
     out = []
@@ -102,14 +116,19 @@ def main() -> None:
                 "video": [], "audio": [], "text": []}
     t = 0.0
     rows = []
+    manifest_path = clips / "manifest.json"
+    manifest = media_io.read_manifest(manifest_path)  # KI-11：切片缓存绑定入出点
     for sh in spec["shots"]:
         dur = round(sh["out"] - sh["in"], 3)
         clip = clips / f"{sh['id']}.mp4"
-        if not media_io.complete_or_adopt(clip):
+        key = clip_key(sh, src)
+        if manifest.get(sh["id"]) != key or not media_io.complete_or_adopt(clip):
             try:
                 cut_shot(src, clip, sh["in"], dur)
             except media_io.MediaError as exc:
                 sys.exit(f"切镜头 {sh['id']} 失败：{exc}")
+            manifest = {**manifest, sh["id"]: key}
+            schema.write_json(manifest_path, manifest)
         timeline["video"].append({
             "id": sh["id"], "source": str(clip), "in": 0.0, "out": dur,
             "timeline_in": round(t, 3), "role": "broll" if not sh["sub"] else "speech",

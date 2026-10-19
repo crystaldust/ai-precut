@@ -32,9 +32,13 @@ SAFE_FILTER_PATH = re.compile(r"[A-Za-z0-9/._-]+")  # 滤镜图里不用转义�
 FALLBACK_TMP = "/tmp"
 TEXT_DIR_PREFIX = "aicut-preview-"
 
+# 首选简体黑体（KI-73 / D10）：drawtext 只能取 .ttc 第 0 个字形——
+#   Hiragino Sans GB #0 = W3 简体；STHeiti Medium #0 = 繁体字形；新版 macOS 的 PingFang 已不在 /System/Library/Fonts
 FONT_CANDIDATES = [
-    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/System/Library/Fonts/PingFang.ttc",                 # 旧版 macOS
     "/System/Library/Fonts/Supplemental/Songti.ttc",
+    "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/Helvetica.ttc",
 ]
 
@@ -99,6 +103,7 @@ def build(tl: dict, *, text_paths: list[Path], has_audio: list[bool]) -> tuple[s
     parts.append(interleaved + f"concat=n={len(segs)}:v=1:a=1[vc][ac]")
 
     chain = "[vc]"
+    font = pick_font() if tl.get("text") else ""  # 只选一次：所有字幕同一字体
     for i, (t, path) in enumerate(zip(_sorted_texts(tl.get("text", [])), text_paths)):
         st = t.get("style", {})
         size = int(st.get("size_px") or st.get("size", 7.0) * 9)
@@ -108,7 +113,7 @@ def build(tl: dict, *, text_paths: list[Path], has_audio: list[bool]) -> tuple[s
         # 2=底部字幕（避开快手/抖音 UI），5=居中字幕卡
         y = {2: "h*0.74", 5: "h*0.42"}.get(align, "(h-text_h)/2")
         parts.append(
-            f"{chain}drawtext=fontfile='{pick_font()}':textfile='{path}':expansion=none:"
+            f"{chain}drawtext=fontfile='{font}':textfile='{path}':expansion=none:"
             f"fontsize={size}:fontcolor={hexcolor}:"
             f"borderw={max(2, size // 16)}:bordercolor=black@0.85:"
             f"x=(w-text_w)/2:y={y}:"

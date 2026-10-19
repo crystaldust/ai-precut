@@ -139,3 +139,38 @@ def test_normalize_answers(answers, expected):
 
 def test_normalize_answers_without_questions():
     assert questions.normalize_answers(None, {"q1": "a"}) == {}
+
+
+# ================================================================ M6 · KI-04
+def test_normalize_dedupes_truncated_labels():
+    payload = good_payload()
+    payload["questions"][2]["options"] = [
+        {"label": "签字收尾一二三四五六七八A", "rule": {"kind": "ending", "value": "sign"}},
+        {"label": "签字收尾一二三四五六七八B", "rule": {"kind": "ending", "value": "leave"}},
+        {"label": "出门", "rule": {"kind": "ending", "value": "leave"}}]
+    q3 = questions._normalize(payload, TOPICS)["questions"][2]
+    assert [o["rule"]["value"] for o in q3["options"]] == ["sign", "leave"]
+    assert len({o["label"] for o in q3["options"]}) == 2
+
+
+def test_fallback_info_options_bind_must_lines():
+    text = "九千八包含所有耗材以及考证费用"
+    fb = questions.fallback([], [{"text": text, "key_info": True}, {"text": "闲聊", "key_info": False}])
+    q2 = fb["questions"][1]
+    assert q2["options"][0]["rule"] == {"kind": "must_lines", "value": [text]}
+    assert "must_lines" in questions.KINDS
+
+
+def test_prompt_restricts_focus_values():
+    assert "main" in questions.Q_USER and "ensemble" in questions.Q_USER
+
+
+def test_normalize_must_lines_requires_string_list():
+    payload = good_payload()
+    payload["questions"][2]["options"] += [
+        {"label": "原话甲", "rule": {"kind": "must_lines", "value": "九千八"}},
+        {"label": "原话乙", "rule": {"kind": "must_lines", "value": [3]}}]
+    q3 = questions._normalize(payload, TOPICS)["questions"][2]
+    rules = {o["label"]: o["rule"] for o in q3["options"]}
+    assert rules["原话甲"] == {"kind": "must_lines", "value": ["九千八"]}
+    assert "原话乙" not in rules

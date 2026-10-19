@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import shutil
 import subprocess
@@ -281,10 +280,9 @@ def cmd_score(args) -> None:
     if understand_text.partial_path(text).exists():
         warn(TEXT_PARTIAL_WARNING)
     try:
-        res = classify.run(text, work / "segments_audio.json",
-                           work / "segments_scored.json",
-                           total_target=float(c.get("target_duration") or 175),
-                           visual_path=work / "visual_quality.json")
+        res = classify.run(text, work / "segments_audio.json", work / "segments_scored.json",
+                           total_target=float(c.get("target_duration") or 175), visual_path=work / "visual_quality.json",
+                           must_topic=load_json(PRESETS / f"{c.get('preset')}.json", {}).get("must_topic"))  # KI-07：必留话题口径在预设里
     except classify.TextIncomplete as exc:
         die(str(exc))
     s = res["summary"]
@@ -477,12 +475,6 @@ def cmd_brief(args) -> None:
 
 
 # ------------------------------------------------------------------ build
-def clip_key(shot: dict, src: Path) -> str:
-    h = hashlib.sha1(f"{src}:{shot['in']}:{shot['out']}:{shot.get('id')}"
-                     .encode()).hexdigest()[:12]
-    return h
-
-
 def ensure_clips(pdir: Path, c: dict, shots: list[dict]) -> Path:
     """只重切"入出点变了"的镜头，其余复用缓存。"""
     check_or_die(schema.check_shot_ids, shots)  # id 即切片文件名：必须安全且唯一
@@ -493,7 +485,7 @@ def ensure_clips(pdir: Path, c: dict, shots: list[dict]) -> Path:
     src = Path(c["material"])
     changed = 0
     for sh in shots:
-        key = clip_key(sh, src)
+        key = build_documentary.clip_key(sh, src)
         dst = clips_dir / f"{sh['id']}.mp4"
         if manifest.get(sh["id"]) == key and media_io.complete_or_adopt(dst):
             continue
@@ -626,8 +618,7 @@ def cmd_build(args) -> None:
     durations = actual_durations(clips_dir, shots)
     tl = compose_timeline(c, preset, shots, clips_dir, durations)
     save_json(vdir / "timeline.json", tl)
-    tl_hash = hashlib.sha1(json.dumps(tl, ensure_ascii=False, sort_keys=True)
-                           .encode()).hexdigest()
+    tl_hash = build_documentary.preview_fingerprint(tl, shots, Path(c["material"]))  # KI-11
     total = sum(durations.values())
     ok(f"时间线：{len(shots)} 镜，{int(total // 60)}:{total % 60:05.2f}")
     with applog.stage(pdir / "work", "preview"):

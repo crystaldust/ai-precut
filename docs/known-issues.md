@@ -124,3 +124,8 @@
 | KI-80 | `to_jianying.py` 命令行直接传相对 `--staging` 时素材路径写成相对路径，静态校验 FAIL（aicut 调用不受影响） | `pipeline/to_jianying.py:250-270`（`bundle_media`） | open |
 | KI-81 | 研究用 `--minimal` 分支仍写死 11.0 模板路径，缺失时静默跳过 | `packaging/build_package.py:143`（`make_minimal_draft`） | fixed `71e44e7` |
 | KI-82 | `ensure_jy_python` 不检查已有 venv 的 Python 版本，≤3.10 的旧 venv 不认 `-P` | `aicut.py:136` | fixed `71e44e7` |
+| KI-83 | `aicut summary` 子命令无 `--model`，CLI 上 KI-10 只对 `text` 生效 | `aicut.py`（`summary` 子命令） | open |
+| KI-84 | 旧逻辑存下的跨题串规则会沿用到剪辑师重新保存确认页为止 | `pipeline/select.py`（`_current_rules`） | open |
+| KI-85 | `review.clear()` 按存储时 id 删除，裁决被重定位后删不到（目前无调用方） | `pipeline/review.py`（`clear`） | open |
+| KI-86 | 旧项目的 `questions.json` 由旧提示词生成，focus 为自由文本，M6 后只警告不生效；需提供「重新生成决策问题」入口或提示 | `pipeline/questions.py`；`gui/static/confirm.html` | open |
+| KI-87 | 英文素材分句拼整句时无空格（"world.good"） | `pipeline/format_transcript.py:116` | open |

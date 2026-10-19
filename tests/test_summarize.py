@@ -86,3 +86,18 @@ def test_style_injected(tmp_path):
     c = Rec()
     summarize.run(tp, sp, tmp_path / "o.json", client=c, style="剪辑偏好：情绪优先")
     assert "情绪优先" in c.users[0]
+
+
+def test_model_passed_to_client(tmp_path, monkeypatch):  # M6 · KI-10
+    made = []
+
+    class Spy(Fake):
+        def __init__(self, **kw):
+            made.append(kw)
+            super().__init__(payload={"summary": "一位母亲带女儿来报名", "key_points": [], "cast": []})
+    monkeypatch.setattr(summarize, "DeepSeekClient", Spy)
+    tp, sp = write_inputs(tmp_path)
+    res = summarize.run(tp, sp, tmp_path / "o.json", model="deepseek-reasoner")
+    assert made == [{"model": "deepseek-reasoner"}] and res["model"] == "deepseek-reasoner"
+    summarize.run(tp, sp, tmp_path / "o2.json")
+    assert made[-1] == {}

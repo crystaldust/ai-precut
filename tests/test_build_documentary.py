@@ -43,3 +43,46 @@ def test_card_entries_warns_when_card_is_shortened(capsys):
 def test_card_entries_quiet_when_card_fits(capsys):
     bd.card_entries([{"at": 0.0, "dur": 4.5, "text": "片头"}], total=150.0)
     assert capsys.readouterr().out == ""
+
+
+# ================================================================ M6 · KI-11 缓存绑定入出点
+def test_preview_fingerprint_changes_when_in_out_shift(tmp_path):
+    from pathlib import Path
+    tl = {"video": [{"id": "S01", "in": 0.0, "out": 5.0}], "text": []}
+    a = [{"id": "S01", "in": 10.0, "out": 15.0}]
+    b = [{"id": "S01", "in": 12.0, "out": 17.0}]
+    src = Path("/src.mov")
+    assert bd.preview_fingerprint(tl, a, src) != bd.preview_fingerprint(tl, b, src)
+    assert bd.preview_fingerprint(tl, a, src) == bd.preview_fingerprint(tl, [dict(a[0])], src)
+    assert bd.clip_key(a[0], src) != bd.clip_key(b[0], src)
+
+
+def _spec(tmp_path, inn, out):
+    import json
+    src = tmp_path / "src.mov"
+    src.write_bytes(b"x")
+    sp = tmp_path / "shots.json"
+    sp.write_text(json.dumps({"project": "片", "source": str(src),
+                              "shots": [{"id": "S01", "in": inn, "out": out, "sub": "你好"}]}),
+                  encoding="utf-8")
+    return sp
+
+
+def test_main_recuts_when_in_out_changed(tmp_path, monkeypatch):
+    import sys
+
+    from pipeline import media_io
+    cuts = []
+    monkeypatch.setattr(bd, "cut_shot", lambda src, dst, start, dur: cuts.append(start))
+    monkeypatch.setattr(media_io, "complete_or_adopt", lambda p: True)
+    out = tmp_path / "out"
+
+    def run(inn, outp):
+        monkeypatch.setattr(sys, "argv", ["bd", str(_spec(tmp_path, inn, outp)), "-o", str(out)])
+        bd.main()
+    run(0.0, 5.0)
+    assert cuts == [0.0]
+    run(2.0, 7.0)
+    assert cuts == [0.0, 2.0]
+    run(2.0, 7.0)
+    assert cuts == [0.0, 2.0]

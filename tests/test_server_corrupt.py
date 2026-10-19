@@ -1,5 +1,6 @@
 """剪辑台：损坏文件不能当「没有」（KI-21）、LLM 兜底进警告栏（KI-22）、答案类型容错（KI-49）。"""
 import json
+import sys
 
 from conftest import call, make_project
 
@@ -124,7 +125,9 @@ def test_confirm_multi_answer_coerced_to_list(gui_server):
     assert data["answers_unreadable"] is False
 
 
-def test_confirm_answers_post_normalized(gui_server):
+def test_confirm_answers_post_normalized(gui_server, monkeypatch):
+    from gui import jobs
+    monkeypatch.setattr(jobs, "job_command", lambda *a: [sys.executable, "-c", "pass"])  # M6：确认会起选段任务
     pdir = _confirm_project(gui_server)
     status, _, _ = call(gui_server, "POST", "/api/confirm/answers",
                         {"project": "p1", "answers": {"q2": "合同条款", "q1": 3}, "confirmed": True})

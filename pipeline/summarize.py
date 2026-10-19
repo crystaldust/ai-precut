@@ -99,7 +99,7 @@ def run(text_path: Path, scored_path: Path, out_path: Path,
     segments = schema.require_key(scored, "segments", scored_path)
     topics = scored.get("topics") or text.get("topics") or []
 
-    client = client or DeepSeekClient()
+    client = client or (DeepSeekClient(model=model) if model else DeepSeekClient())  # KI-10
     t_list, p_list = _listing(topics, segments)
     try:
         prompt = SUMMARY_USER.format(topics=t_list or "（无）", points=p_list or "（无）")

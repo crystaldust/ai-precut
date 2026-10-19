@@ -4,8 +4,9 @@
 不是问卷。每个选项都挂一条 rule，选段阶段（M3）据此调整：
     {"kind": "must_topics", "value": ["讲解合同退费条款"]}
     {"kind": "ending", "value": "sign"}
-    {"kind": "focus", "value": "老师"}
+    {"kind": "focus", "value": "main"}
     {"kind": "pacing", "value": "tight"}
+    {"kind": "must_lines", "value": ["九千八包含所有耗材"]}
 
 模型挂了就用固定三问兜底，保证流程不断。
 """
@@ -18,7 +19,10 @@ from pipeline import applog, schema
 from pipeline.llm import DeepSeekClient
 
 ANSWERS_FILE = "brief_answers.json"
-KINDS = {"must_topics", "ending", "focus", "pacing", "exclude"}
+KINDS = {"must_topics", "ending", "focus", "pacing", "exclude", "must_lines"}
+LABEL_MAX = 12          # 选项文字最多几个字（截断后同题重名的只留第一个，KI-04）
+FALLBACK_LABEL_MAX = 10
+FALLBACK_LINE_EFFECT = "强制保留这句原话"
 
 Q_SYSTEM = "你是纪录片剪辑顾问，只输出 JSON。"
 
@@ -28,8 +32,9 @@ Q_USER = """基于下面的素材摘要与话题，提出 3–5 个**会改变�
 - 每个问题 2–4 个选项，单选 type=single 或多选 type=multi
 - 每个选项给一句 effect（≤20 字），说明"选了会怎样"
 - 每个选项给 rule，kind 只能是：
-  focus（主角是谁）、must_topics（必须覆盖的话题）、ending（结尾落在哪）、
-  pacing（节奏松紧）、exclude（不能出现什么）
+  focus（主角：value 只能是 main=说话最多的人 或 ensemble=群像）、
+  must_topics（必须覆盖的话题）、ending（结尾：sign/leave/emotion/info/silence）、
+  pacing（节奏：tight=紧凑 或 normal=正常）、exclude（不能出现什么）
 - must_topics 的 value 必须来自下面的话题名
 - 不要问"风格是什么"这类无法落到剪辑动作上的问题
 
@@ -57,9 +62,10 @@ def _normalize(data: dict, topics: list[dict]) -> dict:
         if not text:
             continue
         options = []
+        seen: set[str] = set()
         for o in (q.get("options") or [])[:4]:
-            label = str(o.get("label") or "").strip()[:12]
-            if not label:
+            label = str(o.get("label") or "").strip()[:LABEL_MAX]
+            if not label or label in seen:
                 continue
             rule = o.get("rule") or {}
             kind = rule.get("kind")
@@ -72,6 +78,12 @@ def _normalize(data: dict, topics: list[dict]) -> dict:
                 value = [v for v in (value or []) if v in names]
                 if not value:
                     continue
+            if kind == "must_lines":
+                value = [value] if isinstance(value, str) else value
+                if not isinstance(value, list) or not value or \
+                        not all(isinstance(v, str) and v.strip() for v in value):
+                    continue
+            seen.add(label)
             options.append({"label": label,
                             "effect": str(o.get("effect") or "")[:20],
                             "rule": {"kind": kind, "value": value}})
@@ -90,8 +102,12 @@ def fallback(topics: list[dict], segments: list[dict]) -> dict:
     key = [s for s in segments if s.get("key_info")][:4]
     must_opts = [{"label": (n[:10] or "话题"), "effect": f"强制覆盖：{n[:10]}",
                   "rule": {"kind": "must_topics", "value": [n]}} for n in names]
-    info_opts = [{"label": str(s.get("text", ""))[:10], "effect": "强制进候选",
-                  "rule": {"kind": "must_topics", "value": []}} for s in key[:4]]
+    # KI-04：关键信息选项绑「这句原话」，选了真的会进片（以前绑空 must_topics，选了也没用）
+    info_opts: list[dict] = []
+    for text in (str(s.get("text", "")) for s in key[:4]):
+        if text.strip() and text[:FALLBACK_LABEL_MAX] not in {o["label"] for o in info_opts}:
+            info_opts.append({"label": text[:FALLBACK_LABEL_MAX], "effect": FALLBACK_LINE_EFFECT,
+                              "rule": {"kind": "must_lines", "value": [text]}})
     return {"fallback": True, "questions": [
         {"id": "q1", "text": "这条片子主角是谁？", "type": "single", "options": [
             {"label": "出镜最多的人", "effect": "主角镜头占比 ≥40%",

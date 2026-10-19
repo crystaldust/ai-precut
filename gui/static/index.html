@@ -142,6 +142,7 @@
     <div class="actions" id="actions" style="display:none">
       <button class="primary" id="btnPrepare" onclick="startJob('prepare')">① 处理素材</button>
       <button class="primary" id="btnBuild" onclick="openBuild()">② 生成成片</button>
+      <button class="ghost" id="btnConfirm" onclick="openConfirm()">确认与提问</button>
       <button class="ghost" onclick="openBrowse()">浏览素材</button>
       <button class="ghost" onclick="openTarget(false)">改目标时长</button>
       <button class="ghost" onclick="openCalibrate()">剪辑偏好</button>
@@ -187,6 +188,7 @@ const COPY_TARGET_LATER = '先不改';
 const COPY_TARGET_MANUAL_NOTE = '你已经手动编辑过分镜表，重新选段的结果不会覆盖它，只会更新「浏览素材」里的建议';
 const COPY_NEW_TARGET_LABEL = '想剪成多长（秒）· 预设只是默认值';
 const COPY_WARNBAR_TITLE = '需要你留意';
+const COPY_CONFIRM_ENTRY = '确认与提问';  // KI-05：确认页入口（确认后自动按答案重新选段）
 const TOAST_ERROR_MS = 6000;
 /* 任务弹窗文案在 /static/jobs.js，设置与外发告知文案在 /static/settings.js */
 
@@ -637,6 +639,10 @@ function openCalibrate(){
   if(!state.project) return toast('先选项目');
   window.open('/static/calibrate.html?project=' + encodeURIComponent(state.project), '_blank');
 }
+function openConfirm(){
+  if(!state.project) return toast('先选项目');
+  window.open('/static/confirm.html?project=' + encodeURIComponent(state.project), '_blank');
+}
 function openBrowse(){
   if(!state.project) return toast('先选项目');
   window.open('/static/browse.html?project=' + encodeURIComponent(state.project), '_blank');
@@ -645,6 +651,7 @@ async function openFolder(){ await api('/api/open', {method:'POST', headers:{'Co
 async function openJianying(){ await api('/api/open', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project:state.project, target:'jianying'})}); }
 
 $('#btnSettings').textContent = COPY_SETTINGS_ENTRY;
+$('#btnConfirm').textContent = COPY_CONFIRM_ENTRY;
 loadProjects().then(()=>{
   const h = new URLSearchParams(location.hash.slice(1));
   const p = h.get('project');

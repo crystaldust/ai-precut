@@ -33,8 +33,8 @@ sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
 from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
-from pipeline import applog, media_io, notices, proc, questions, review, schema, select, style  # noqa: E402
-from gui import jobs, payloads, settings, support  # noqa: E402
+from pipeline import applog, media_io, notices, proc, review, schema, select, style  # noqa: E402
+from gui import confirm, jobs, payloads, settings, support  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
     JOB_COMMANDS, JOBS, JOBS_LOCK, JobConflict, run_aicut, start_job,
 )
@@ -613,26 +613,15 @@ class Handler(BaseHTTPRequestHandler):
                                "directive": style.directive(cfg["calibration"])})
 
         if p == "/api/confirm/answers":
-            try:
-                pdir = existing_project(body.get("project", ""))
+            try:  # KI-05：「保存并确认」后服务端自动起重新选段任务
+                return self._json(confirm.save_answers(existing_project(body.get("project", "")),
+                                                       body.get("project", ""), body))
+            except schema.CorruptJSON as exc:  # 必须在 ValueError 之前
+                return self._json({"error": str(exc)}, 409)
             except FileNotFoundError as exc:
                 return self._json({"error": str(exc)}, 404)
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
-            try:
-                questions_def = schema.read_json(pdir / "work/questions.json", default=None)
-            except schema.CorruptJSON as exc:
-                return self._json({"error": str(exc)}, 409)
-            if questions_def is None:
-                return self._json({"error": payloads.NO_QUESTIONS_MSG}, 404)
-            answers = questions.normalize_answers(questions_def, body.get("answers"))  # KI-49
-            rules = select._rules(answers, questions_def)
-            data = {"answers": answers,
-                    "rules": rules,
-                    "confirmed": bool(body.get("confirmed", False)),
-                    "at": __import__("datetime").datetime.now().isoformat(timespec="seconds")}
-            jdump(pdir / "work/brief_answers.json", data)
-            return self._json({"ok": True})
 
         if p in ("/api/browse/level", "/api/browse/must"):
             name = body.get("project", "")
