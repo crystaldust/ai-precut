@@ -76,11 +76,11 @@
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-40 | 成功指标与验收不可检验：满意度无样本/方法；FR-5 验收样本 41 段违反自身 ≤40 上限；时间预算 PRD 与 PLAN 不一致 | `docs/PRD-AI粗剪工具.md` §5 §10；`docs/PLAN-AI粗剪工具.md:102` | open |
-| KI-41 | c 路（画面）PRD 要求景别/人脸/OCR/道具，代码只做画质，需实现或降级为 P1/P2 | PRD FR-2；`pipeline/understand_visual.py:5` | open |
-| KI-42 | PLAN 漏 PRD 需求（Brief 模型、FR-10 对比/回退、FR-11、FR-12、FR-13）且多出 PRD 没有的范围（剪辑偏好三问 / schema v2）；PLAN 排期、风险表、人天未随 M0 完成更新 | `docs/PLAN-AI粗剪工具.md` | open |
-| KI-43 | 术语三套并存（废片/待定/可用、L1–L3、必留/可选/可删），「必留」一词三义；闸门定义、分类名是否已定在文档间冲突 | PRD §12；`docs/产品设计-AI粗剪工作流.md`；`docs/选段与理解-改进方案.md` | open |
-| KI-44 | 非功能需求缺成本上限、断网/服务失败降级；DoD 无量化门槛和测试策略 | PRD §7；PLAN DoD | open |
+| KI-40 | 成功指标与验收不可检验：满意度无样本/方法；FR-5 验收样本 41 段违反自身 ≤40 上限；时间预算 PRD 与 PLAN 不一致 | `docs/PRD-AI粗剪工具.md` §5 §10；`docs/PLAN-AI粗剪工具.md:102` | fixed `83d2a1a` |
+| KI-41 | c 路（画面）PRD 要求景别/人脸/OCR/道具，代码只做画质，需实现或降级为 P1/P2 | PRD FR-2；`pipeline/understand_visual.py:5` | fixed `83d2a1a` |
+| KI-42 | PLAN 漏 PRD 需求（Brief 模型、FR-10 对比/回退、FR-11、FR-12、FR-13）且多出 PRD 没有的范围（剪辑偏好三问 / schema v2）；PLAN 排期、风险表、人天未随 M0 完成更新 | `docs/PLAN-AI粗剪工具.md` | fixed `83d2a1a`（PLAN 原有 FR-10..13 任务行，补的是验收与追溯） |
+| KI-43 | 术语三套并存（废片/待定/可用、L1–L3、必留/可选/可删），「必留」一词三义；闸门定义、分类名是否已定在文档间冲突 | PRD §12；`docs/产品设计-AI粗剪工作流.md`；`docs/选段与理解-改进方案.md` | fixed `83d2a1a` |
+| KI-44 | 非功能需求缺成本上限、断网/服务失败降级；DoD 无量化门槛和测试策略 | PRD §7；PLAN DoD | fixed `83d2a1a` |
 
 ## 2026-10-19 实施中新发现
 

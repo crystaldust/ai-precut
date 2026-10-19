@@ -58,13 +58,13 @@
 | 8 | 失败可见 | ffmpeg/LLM/JSON 失败不再伪装成成功 | KI-19..KI-27 KI-48 KI-49 KI-56 KI-66 KI-77 | complete | [plan](../PRPs/plans/m8-visible-failures.plan.md) · [report](../PRPs/reports/m8-visible-failures-report.md) · `ef3c020` |
 | 9 | 密钥与运维 | 密钥文件权限与脱敏正确；HTTP 边界校验；费用、进程、启动脚本、版本号可控 | KI-28..KI-37 KI-50..KI-55 KI-57 KI-61..KI-63 KI-65 KI-67..KI-72 KI-74 KI-75 KI-83 KI-84 KI-86 KI-87 | complete | [plan](../PRPs/plans/m9-secrets-ops.plan.md) · [report](../PRPs/reports/m9-secrets-ops-report.md) · `9017287` |
 | 10 | 测试达标 | 覆盖率 ≥ 80%；有素材 → 剪映草稿的端到端测试 | KI-38 KI-39 | in-progress | [plan](../PRPs/plans/m10-test-coverage.plan.md) |
-| 11 | 文档一致 | 指标可检验、PLAN 与 PRD 对齐、术语统一 | KI-40..KI-44 | planned | [plan](../PRPs/plans/m11-docs-consistency.plan.md) |
+| 11 | 文档一致 | 指标可检验、PLAN 与 PRD 对齐、术语统一 | KI-40..KI-44 | complete | [plan](../PRPs/plans/m11-docs-consistency.plan.md) · [report](../PRPs/reports/m11-docs-consistency-report.md) · `83d2a1a` |
 
 ## Open Questions
 
 - [ ] App 本身是否需要在 Windows 上运行？当前理解：只需导出的草稿能在 Windows 剪映打开（GL-14 覆盖）；若需要，另增 Windows 打包类阻断项。
 - [ ] KI-41：c 路画面的景别/人脸/OCR/道具是实现，还是在 PRD 中降为 P1/P2？（产品决策）
-- [ ] KI-40：满意度指标的样本量与测量方法；FR-5 验收样本与 ≤40 上限矛盾如何修订。（产品决策）
+- [x] KI-40：样本与测量方法、FR-5 验收已在 PRD v1.2 修订。
 
 ## Risks
 
