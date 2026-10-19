@@ -49,21 +49,21 @@
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-28 | 密钥文件先以默认权限创建再 chmod；`chmod` 父目录可能改动共享目录；`delete` 不清 legacy key；keyring 删除失败被吞 | `pipeline/secrets.py:58-141` | partial `6f8ba02`（凭证文件创建权限已修） |
-| KI-29 | CLI 输出原文写入 `failed.json`，未经 `secrets.mask` 脱敏；网络错误子串匹配过宽 | `pipeline/cloud.py:76-82, 187-203` | open |
-| KI-30 | Range 请求解析错误（后缀范围、越界未返回 416） | `gui/server.py:340-350` | open |
+| KI-28 | 密钥文件先以默认权限创建再 chmod；`chmod` 父目录可能改动共享目录；`delete` 不清 legacy key；keyring 删除失败被吞 | `pipeline/secrets.py:58-141` | fixed `9017287` |
+| KI-29 | CLI 输出原文写入 `failed.json`，未经 `secrets.mask` 脱敏；网络错误子串匹配过宽 | `pipeline/cloud.py:76-82, 187-203` | fixed `9017287` |
+| KI-30 | Range 请求解析错误（后缀范围、越界未返回 416） | `gui/server.py:340-350` | fixed `9017287` |
 | KI-31 | 请求体非法时未捕获异常直接断连；shots 入出点未校验（负数、nan、out≤in） | `gui/server.py:99-110, 534-543` | fixed `624e979` |
 
 ## 运维 / 体验
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-32 | 无费用控制：每次 prepare 重调 LLM，无用量统计与预算上限 | `aicut.py:590-597`；`pipeline/llm.py:95` | open |
-| KI-33 | 退出 App 不停后台任务，ffmpeg 成孤儿进程；无磁盘空间预检与缓存清理 | `app/main.py:35-38`；`gui/server.py:270` | open |
-| KI-34 | `.command` 启动脚本不走 uv、Python 版本不受控；非冻结 `pip install pyJianYingDraft` 未固定版本 | `启动剪辑台.command:5-13`；`aicut.py:98-112` | open |
-| KI-35 | 前端竞态：切项目旧响应覆盖新数据；出片前未 flush 防抖保存；乐观更新不检查响应 | `gui/static/index.html:202-216, 372-374, 435-443`；`browse.html:200-213` | open |
-| KI-36 | pywebview 中 `window.open(..., '_blank')` 可能无效（浏览素材、剪辑偏好按钮） | `gui/static/index.html:529, 533` | open |
-| KI-37 | 升级丢授权（adhoc cdhash 变化）、`CFBundleVersion` 固定为 1、无 CHANGELOG；中间产物无 schema 版本 | `packaging/ai-cut.spec` | open |
+| KI-32 | 无费用控制：每次 prepare 重调 LLM，无用量统计与预算上限 | `aicut.py:590-597`；`pipeline/llm.py:95` | fixed `9017287` |
+| KI-33 | 退出 App 不停后台任务，ffmpeg 成孤儿进程；无磁盘空间预检与缓存清理 | `app/main.py:35-38`；`gui/server.py:270` | fixed `9017287` |
+| KI-34 | `.command` 启动脚本不走 uv、Python 版本不受控；非冻结 `pip install pyJianYingDraft` 未固定版本 | `启动剪辑台.command:5-13`；`aicut.py:98-112` | fixed `9017287` |
+| KI-35 | 前端竞态：切项目旧响应覆盖新数据；出片前未 flush 防抖保存；乐观更新不检查响应 | `gui/static/index.html:202-216, 372-374, 435-443`；`browse.html:200-213` | fixed `9017287` |
+| KI-36 | pywebview 中 `window.open(..., '_blank')` 可能无效（浏览素材、剪辑偏好按钮） | `gui/static/index.html:529, 533` | fixed `9017287` |
+| KI-37 | 升级丢授权（adhoc cdhash 变化）、`CFBundleVersion` 固定为 1、无 CHANGELOG；中间产物无 schema 版本 | `packaging/ai-cut.spec` | fixed `9017287` |
 
 ## 测试
 
@@ -91,32 +91,32 @@
 | KI-47 | `/api/state` 项目名不合法时返回 404，应为 400 | `gui/server.py`（`/api/state`） | fixed `624e979` |
 | KI-48 | shots.json 缺 `shots` 键时 KeyError，用户只看到 traceback | `aicut.py`（`cmd_build`） | fixed `ef3c020` |
 | KI-49 | 磁盘上的多选答案不是数组时 `.includes` 抛错，确认页问题整页渲染失败 | `gui/static/confirm.html`（`renderQuestions`） | fixed `ef3c020` |
-| KI-50 | 前端 `move`/`dup`/`del` 的 `saveShots(true)` 不 await，连续操作时并发 POST 可能让旧状态覆盖新状态（原子写只保证不损坏，不保证顺序） | `gui/static/index.html`（`saveShots` 调用点） | open |
-| KI-51 | `project.json` 读改写无锁（`/api/calibrate` 与 aicut 子进程 `schema.save` 之间可丢更新）；`write_json` 未 `fsync`，被强杀留 `.tmp` 残片 | `gui/server.py`（`/api/calibrate`）；`pipeline/schema.py`（`write_json`） | open |
-| KI-52 | `gui/static/prototype.html` 是演示页但仍由 `/static/` 公开服务，含未转义插值 | `gui/static/prototype.html` | open |
-| KI-53 | CSP 仍需 `'unsafe-inline'`：内联脚本与内联事件改成 `addEventListener` 后才能收紧 | `gui/static/*.html` | open |
-| KI-54 | `gui/server.py` 834 行，超过 800 行软上限；路由宜拆到独立模块 | `gui/server.py` | open |
-| KI-55 | `aicut.py` 881 行，超过 800 行软上限（同 KI-54） | `aicut.py` | open |
+| KI-50 | 前端 `move`/`dup`/`del` 的 `saveShots(true)` 不 await，连续操作时并发 POST 可能让旧状态覆盖新状态（原子写只保证不损坏，不保证顺序） | `gui/static/index.html`（`saveShots` 调用点） | fixed `9017287` |
+| KI-51 | `project.json` 读改写无锁（`/api/calibrate` 与 aicut 子进程 `schema.save` 之间可丢更新）；`write_json` 未 `fsync`，被强杀留 `.tmp` 残片 | `gui/server.py`（`/api/calibrate`）；`pipeline/schema.py`（`write_json`） | fixed `9017287` |
+| KI-52 | `gui/static/prototype.html` 是演示页但仍由 `/static/` 公开服务，含未转义插值 | `gui/static/prototype.html` | fixed `9017287` |
+| KI-53 | CSP 仍需 `'unsafe-inline'`：内联脚本与内联事件改成 `addEventListener` 后才能收紧 | `gui/static/*.html` | fixed `9017287` |
+| KI-54 | `gui/server.py` 834 行，超过 800 行软上限；路由宜拆到独立模块 | `gui/server.py` | fixed `9017287` |
+| KI-55 | `aicut.py` 881 行，超过 800 行软上限（同 KI-54） | `aicut.py` | fixed `9017287` |
 | KI-56 | `overrides.json` 损坏时 `select`/`prepare` 不捕获 `OverridesCorrupt`，打出 traceback 而非人话 | `aicut.py`（`cmd_select`）；`pipeline/select.py`（`review.load` 调用处） | fixed `ef3c020` |
-| KI-57 | `createProject` 残留按 URL hash 选项目的启动代码，与随后的 `selectProject(name)` 抢切项目 | `gui/static/index.html`（`createProject`） | open |
+| KI-57 | `createProject` 残留按 URL hash 选项目的启动代码，与随后的 `selectProject(name)` 抢切项目 | `gui/static/index.html`（`createProject`） | fixed `9017287` |
 | KI-58 | `_level_of` 只按话题名判必留话题，按关键信息占比判出的必留话题内句子拿不到「必留→待定」保护，与 `topics[].must` 口径不一 | `pipeline/classify.py`（`_level_of`） | fixed `bc3c705` |
 | KI-59 | 同名草稿重跑先拷完媒体才在 `install()` 报「已存在」，白耗时间 | `pipeline/to_jianying.py`（`install`） | fixed `71e44e7` |
 | KI-60 | 子任务失败输出只打印末尾 600/500 字符，「草稿静态校验未通过」的开头可能被截掉 | `aicut.py`（`cmd_build` 调 to_jianying 处） | fixed `ef3899f` |
-| KI-61 | ffmpeg 调用无超时，坏素材/网络盘卡住时 GUI 任务永远 running（取消见 GL-17） | `pipeline/media_io.py`（`run_ffmpeg`） | open |
-| KI-62 | `.done` 只绑定产物大小，不绑定输入指纹：换素材后 `proxy.mp4`/`asr.wav` 仍算完成 | `pipeline/media_io.py`（`is_complete`）；`aicut.py` 音轨/代理处 | open |
-| KI-63 | `.partial-*` 临时文件与成品同目录，未来对 `clips/*.mp4` 的 glob 会读到半成品；`_clear_stale_partials` 会删并发写者的临时文件 | `pipeline/media_io.py` | open |
+| KI-61 | ffmpeg 调用无超时，坏素材/网络盘卡住时 GUI 任务永远 running（取消见 GL-17） | `pipeline/media_io.py`（`run_ffmpeg`） | fixed `9017287` |
+| KI-62 | `.done` 只绑定产物大小，不绑定输入指纹：换素材后 `proxy.mp4`/`asr.wav` 仍算完成 | `pipeline/media_io.py`（`is_complete`）；`aicut.py` 音轨/代理处 | fixed `9017287` |
+| KI-63 | `.partial-*` 临时文件与成品同目录，未来对 `clips/*.mp4` 的 glob 会读到半成品；`_clear_stale_partials` 会删并发写者的临时文件 | `pipeline/media_io.py` | fixed `9017287` |
 | KI-64 | `zip_pkg` 打印的是临时 zip 路径（`.xxx.partial-….zip`），易误导 | `packaging/build_package.py`（`zip_pkg`） | fixed `71e44e7` |
-| KI-65 | 旧项目 wav 认领：无标记的旧 wav 中断残片可能被 ffprobe 按大小估出正时长而被认领 | `pipeline/media_io.py`（`complete_or_adopt`） | open |
+| KI-65 | 旧项目 wav 认领：无标记的旧 wav 中断残片可能被 ffprobe 按大小估出正时长而被认领 | `pipeline/media_io.py`（`complete_or_adopt`） | fixed `9017287` |
 | KI-66 | 素材无法被 ffprobe 识别时 `cmd_ingest` 抛 `KeyError: 'format'`，用户看到 traceback | `aicut.py`（`cmd_ingest`） | fixed `ef3c020` |
-| KI-67 | `secrets.mask` 长度 >8 即显示前 4 后 4，9–12 位 Key 几乎全暴露 | `pipeline/secrets.py`（`mask`） | open |
-| KI-68 | `JOBS` 与任务日志从不清理，长时间使用内存持续增长 | `gui/jobs.py`（`JOBS`） | open |
-| KI-69 | `cmd_new` 判空目录与建目录之间有竞争窗口（GUI 有全局互斥，影响低） | `aicut.py`（`cmd_new`） | open |
-| KI-70 | 第三方错误文本（mediakit-cli 输出前 400 字、LLM 响应体前 300 字）未按已知 Key 脱敏就进任务日志与 `failed.json`（纵深防御） | `pipeline/cloud.py`；`pipeline/llm.py` | open |
-| KI-71 | 上次退出遗留的后台任务只在点按钮时以 409 出现，界面不主动提示 | `gui/server.py`（`report_stale_job`）；`gui/static/index.html` | open |
-| KI-72 | 看门狗依赖系统 `pgrep`，缺失时跳过「先正常退出」直接 SIGKILL 整组 | `pipeline/proc.py`（`start_parent_watchdog`） | open |
+| KI-67 | `secrets.mask` 长度 >8 即显示前 4 后 4，9–12 位 Key 几乎全暴露 | `pipeline/secrets.py`（`mask`） | fixed `9017287` |
+| KI-68 | `JOBS` 与任务日志从不清理，长时间使用内存持续增长 | `gui/jobs.py`（`JOBS`） | fixed `9017287` |
+| KI-69 | `cmd_new` 判空目录与建目录之间有竞争窗口（GUI 有全局互斥，影响低） | `aicut.py`（`cmd_new`） | fixed `9017287` |
+| KI-70 | 第三方错误文本（mediakit-cli 输出前 400 字、LLM 响应体前 300 字）未按已知 Key 脱敏就进任务日志与 `failed.json`（纵深防御） | `pipeline/cloud.py`；`pipeline/llm.py` | fixed `9017287` |
+| KI-71 | 上次退出遗留的后台任务只在点按钮时以 409 出现，界面不主动提示 | `gui/server.py`（`report_stale_job`）；`gui/static/index.html` | fixed `9017287` |
+| KI-72 | 看门狗依赖系统 `pgrep`，缺失时跳过「先正常退出」直接 SIGKILL 整组 | `pipeline/proc.py`（`start_parent_watchdog`） | fixed `9017287` |
 | KI-73 | 预览字幕首选字体 `/System/Library/Fonts/PingFang.ttc` 在当前 macOS 上不存在，实际回落宋体 | `pipeline/render_preview.py:20-24` | fixed `bc3c705` |
-| KI-74 | 从钥匙串/凭证文件读出的 Key 未去首尾空白，带换行时 LLM 请求头报错 | `pipeline/secrets.py`（`get`） | open |
-| KI-75 | ASR 上传缓存：云端提前作废 file_id 时要等 12h 过期才重传 | `pipeline/cloud.py`（`work/asr_upload.json`） | open |
+| KI-74 | 从钥匙串/凭证文件读出的 Key 未去首尾空白，带换行时 LLM 请求头报错 | `pipeline/secrets.py`（`get`） | fixed `9017287` |
+| KI-75 | ASR 上传缓存：云端提前作废 file_id 时要等 12h 过期才重传 | `pipeline/cloud.py`（`work/asr_upload.json`） | fixed `9017287` |
 | KI-76 | 预览字幕 `esc()` 不转义 `%`：LGPL ffmpeg 报 `Stray %` 该条字幕静默不显示，Homebrew ffmpeg 直接失败 | `pipeline/render_preview.py:37-40` | fixed `71e44e7` |
 | KI-77 | 废片判定：冻帧与静音完全重叠时只给「待定/参考」，「无语音 + 画面静止」强信号只对黑场成立 | `pipeline/junk_detect.py`（`judge`） | fixed `ef3c020` |
 | KI-78 | Windows `INSTALL.bat` 遇同名草稿用 `rd /s /q` 删除已有草稿，与 README「不会动你已有的任何草稿」矛盾 | `packaging/build_package.py` 生成的 `INSTALL.bat` | fixed `71e44e7`（Windows 实机待验证） |
@@ -124,10 +124,10 @@
 | KI-80 | `to_jianying.py` 命令行直接传相对 `--staging` 时素材路径写成相对路径，静态校验 FAIL（aicut 调用不受影响） | `pipeline/to_jianying.py:250-270`（`bundle_media`） | open |
 | KI-81 | 研究用 `--minimal` 分支仍写死 11.0 模板路径，缺失时静默跳过 | `packaging/build_package.py:143`（`make_minimal_draft`） | fixed `71e44e7` |
 | KI-82 | `ensure_jy_python` 不检查已有 venv 的 Python 版本，≤3.10 的旧 venv 不认 `-P` | `aicut.py:136` | fixed `71e44e7` |
-| KI-83 | `aicut summary` 子命令无 `--model`，CLI 上 KI-10 只对 `text` 生效 | `aicut.py`（`summary` 子命令） | open |
-| KI-84 | 旧逻辑存下的跨题串规则会沿用到剪辑师重新保存确认页为止 | `pipeline/select.py`（`_current_rules`） | open |
+| KI-83 | `aicut summary` 子命令无 `--model`，CLI 上 KI-10 只对 `text` 生效 | `aicut.py`（`summary` 子命令） | fixed `9017287` |
+| KI-84 | 旧逻辑存下的跨题串规则会沿用到剪辑师重新保存确认页为止 | `pipeline/select.py`（`_current_rules`） | fixed `9017287` |
 | KI-85 | `review.clear()` 按存储时 id 删除，裁决被重定位后删不到（目前无调用方） | `pipeline/review.py`（`clear`） | fixed `bc3c705` |
-| KI-86 | 旧项目的 `questions.json` 由旧提示词生成，focus 为自由文本，M6 后只警告不生效；需提供「重新生成决策问题」入口或提示 | `pipeline/questions.py`；`gui/static/confirm.html` | open |
-| KI-87 | 英文素材分句拼整句时无空格（"world.good"） | `pipeline/format_transcript.py:116` | open |
+| KI-86 | 旧项目的 `questions.json` 由旧提示词生成，focus 为自由文本，M6 后只警告不生效；需提供「重新生成决策问题」入口或提示 | `pipeline/questions.py`；`gui/static/confirm.html` | fixed `9017287` |
+| KI-87 | 英文素材分句拼整句时无空格（"world.good"） | `pipeline/format_transcript.py:116` | fixed `9017287` |
 | KI-88 | 同机其他用户可经 `GET /` 取到页面里的 token 后调用全部 API（单用户威胁模型下可接受）；改为一次性 nonce 换 HttpOnly SameSite=Strict cookie | `gui/server.py`（`_send_page`、`_deny_reason`） | open |
 | KI-89 | 各版本共用 `work/clips`：新版本重切同名镜头会改动旧版本引用的切片（旧版本重新导出可能与当初不一致） | `aicut.py`（`ensure_clips`）；`pipeline/clips.py` | open |
