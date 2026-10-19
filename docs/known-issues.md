@@ -121,7 +121,7 @@
 | KI-77 | 废片判定：冻帧与静音完全重叠时只给「待定/参考」，「无语音 + 画面静止」强信号只对黑场成立 | `pipeline/junk_detect.py`（`judge`） | fixed `ef3c020` |
 | KI-78 | Windows `INSTALL.bat` 遇同名草稿用 `rd /s /q` 删除已有草稿，与 README「不会动你已有的任何草稿」矛盾 | `packaging/build_package.py` 生成的 `INSTALL.bat` | fixed `71e44e7`（Windows 实机待验证） |
 | KI-79 | `INSTALL.bat` 里 `echo [!] JianYing is running…` 的 `!` 在延迟扩展下被吞，显示成 `[]` | `packaging/build_package.py:175` | fixed `71e44e7` |
-| KI-80 | `to_jianying.py` 命令行直接传相对 `--staging` 时素材路径写成相对路径，静态校验 FAIL（aicut 调用不受影响） | `pipeline/to_jianying.py:250-270`（`bundle_media`） | open |
+| KI-80 | `to_jianying.py` 命令行直接传相对 `--staging` 时素材路径写成相对路径，静态校验 FAIL（aicut 调用不受影响） | `pipeline/to_jianying.py:250-270`（`bundle_media`） | fixed `6478a24` |
 | KI-81 | 研究用 `--minimal` 分支仍写死 11.0 模板路径，缺失时静默跳过 | `packaging/build_package.py:143`（`make_minimal_draft`） | fixed `71e44e7` |
 | KI-82 | `ensure_jy_python` 不检查已有 venv 的 Python 版本，≤3.10 的旧 venv 不认 `-P` | `aicut.py:136` | fixed `71e44e7` |
 | KI-83 | `aicut summary` 子命令无 `--model`，CLI 上 KI-10 只对 `text` 生效 | `aicut.py`（`summary` 子命令） | fixed `9017287` |
@@ -129,7 +129,7 @@
 | KI-85 | `review.clear()` 按存储时 id 删除，裁决被重定位后删不到（目前无调用方） | `pipeline/review.py`（`clear`） | fixed `bc3c705` |
 | KI-86 | 旧项目的 `questions.json` 由旧提示词生成，focus 为自由文本，M6 后只警告不生效；需提供「重新生成决策问题」入口或提示 | `pipeline/questions.py`；`gui/static/confirm.html` | fixed `9017287` |
 | KI-87 | 英文素材分句拼整句时无空格（"world.good"） | `pipeline/format_transcript.py:116` | fixed `9017287` |
-| KI-88 | 同机其他用户可经 `GET /` 取到页面里的 token 后调用全部 API（单用户威胁模型下可接受）；改为一次性 nonce 换 HttpOnly SameSite=Strict cookie | `gui/server.py`（`_send_page`、`_deny_reason`） | open |
-| KI-89 | 各版本共用 `work/clips`：新版本重切同名镜头会改动旧版本引用的切片（旧版本重新导出可能与当初不一致） | `aicut.py`（`ensure_clips`）；`pipeline/clips.py` | open |
+| KI-88 | 同机其他用户可经 `GET /` 取到页面里的 token 后调用全部 API（单用户威胁模型下可接受）；改为一次性 nonce 换 HttpOnly SameSite=Strict cookie | `gui/server.py`（`_send_page`、`_deny_reason`） | fixed `6478a24` |
+| KI-89 | 各版本共用 `work/clips`：新版本重切同名镜头会改动旧版本引用的切片（旧版本重新导出可能与当初不一致） | `aicut.py`（`ensure_clips`）；`pipeline/clips.py` | fixed `6478a24` |
 | KI-90 | 浏览器模式下会话 cookie 不按端口隔离（RFC 6265）：本机另一用户在 127.0.0.1 其他端口起服务并诱导剪辑师用同一浏览器访问，可收到 cookie（App 内 WKWebView 不受影响；单用户本机威胁模型下低） | `gui/session.py`；`docs/GUI.md` 安全模型 | open（接受：多人共用电脑用 App） |
 | KI-91 | 会话凭据为进程级常量：所有窗口共用、无登出与轮换（进程退出即失效，本地单用户可接受） | `gui/session.py` | open |
