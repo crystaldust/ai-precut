@@ -9,11 +9,19 @@
 from __future__ import annotations
 
 import json
-import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pipeline import schema
+
 LEVELS = {1: "废片", 2: "待定", 3: "可用"}
+
+_LOCK = threading.Lock()  # GUI 是多线程服务，读-改-写必须串行
+
+
+class OverridesCorrupt(ValueError):
+    """overrides.json 读不出来：不能当空，否则下一次裁决会把人工结果全部覆盖。"""
 
 
 def _path(workdir: Path) -> Path:
@@ -22,49 +30,56 @@ def _path(workdir: Path) -> Path:
 
 def load(workdir: Path) -> dict:
     path = _path(workdir)
+    if not path.exists():
+        return {}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise OverridesCorrupt(f"人工裁决文件损坏，未做任何修改：{path}（{exc}）") from exc
+    if not isinstance(data, dict):
+        raise OverridesCorrupt(f"人工裁决文件格式不对（应为对象）：{path}")
+    return data
 
 
 def _save(workdir: Path, data: dict) -> None:
-    path = _path(workdir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    schema.write_json(_path(workdir), data)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def set_level(workdir: Path, segment_id: str, level: int) -> dict:
     if level not in LEVELS:
         raise ValueError(f"非法档位：{level}")
-    data = load(workdir)
-    item = data.setdefault(segment_id, {})
-    item["level"] = level
-    item["at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    _save(workdir, data)
-    return data
+    with _LOCK:
+        data = load(workdir)
+        item = data.setdefault(segment_id, {})
+        item["level"] = level
+        item["at"] = _now()
+        _save(workdir, data)
+        return data
 
 
 def set_must(workdir: Path, segment_id: str, flag: bool) -> dict:
-    data = load(workdir)
-    item = data.setdefault(segment_id, {})
-    item["must_keep"] = bool(flag)
-    item["at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    _save(workdir, data)
-    return data
+    with _LOCK:
+        data = load(workdir)
+        item = data.setdefault(segment_id, {})
+        item["must_keep"] = bool(flag)
+        item["at"] = _now()
+        _save(workdir, data)
+        return data
 
 
 def clear(workdir: Path, segment_id: str | None = None) -> dict:
-    if segment_id is None:
-        _save(workdir, {})
-        return {}
-    data = load(workdir)
-    data.pop(segment_id, None)
-    _save(workdir, data)
-    return data
+    with _LOCK:
+        if segment_id is None:  # 显式重置：不读旧文件
+            _save(workdir, {})
+            return {}
+        data = load(workdir)
+        data.pop(segment_id, None)
+        _save(workdir, data)
+        return data
 
 
 def apply(segments: list[dict], overrides: dict) -> list[dict]:

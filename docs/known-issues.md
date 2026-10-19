@@ -81,3 +81,18 @@
 | KI-42 | PLAN 漏 PRD 需求（Brief 模型、FR-10 对比/回退、FR-11、FR-12、FR-13）且多出 PRD 没有的范围（剪辑偏好三问 / schema v2）；PLAN 排期、风险表、人天未随 M0 完成更新 | `docs/PLAN-AI粗剪工具.md` | open |
 | KI-43 | 术语三套并存（废片/待定/可用、L1–L3、必留/可选/可删），「必留」一词三义；闸门定义、分类名是否已定在文档间冲突 | PRD §12；`docs/产品设计-AI粗剪工作流.md`；`docs/选段与理解-改进方案.md` | open |
 | KI-44 | 非功能需求缺成本上限、断网/服务失败降级；DoD 无量化门槛和测试策略 | PRD §7；PLAN DoD | open |
+
+## 2026-10-19 实施中新发现
+
+| 编号 | 问题 | 位置 | 状态 |
+|---|---|---|---|
+| KI-45 | `schema.SchemaTooNew` 继承 `Exception`，`except (ValueError, OSError)` 接不住，项目版本过新时连接直接断开 | `gui/server.py`（`/api/state`、POST `/api/calibrate`）；`pipeline/schema.py:21` | open |
+| KI-46 | `/api/new` 的 title 非字符串时 `.strip()` 抛 AttributeError，连接断开 | `gui/server.py`（`/api/new`） | open |
+| KI-47 | `/api/state` 项目名不合法时返回 404，应为 400 | `gui/server.py`（`/api/state`） | open |
+| KI-48 | shots.json 缺 `shots` 键时 KeyError，用户只看到 traceback | `aicut.py`（`cmd_build`） | open |
+| KI-49 | 磁盘上的多选答案不是数组时 `.includes` 抛错，确认页问题整页渲染失败 | `gui/static/confirm.html`（`renderQuestions`） | open |
+| KI-50 | 前端 `move`/`dup`/`del` 的 `saveShots(true)` 不 await，连续操作时并发 POST 可能让旧状态覆盖新状态（原子写只保证不损坏，不保证顺序） | `gui/static/index.html`（`saveShots` 调用点） | open |
+| KI-51 | `project.json` 读改写无锁（`/api/calibrate` 与 aicut 子进程 `schema.save` 之间可丢更新）；`write_json` 未 `fsync`，被强杀留 `.tmp` 残片 | `gui/server.py`（`/api/calibrate`）；`pipeline/schema.py`（`write_json`） | open |
+| KI-52 | `gui/static/prototype.html` 是演示页但仍由 `/static/` 公开服务，含未转义插值 | `gui/static/prototype.html` | open |
+| KI-53 | CSP 仍需 `'unsafe-inline'`：内联脚本与内联事件改成 `addEventListener` 后才能收紧 | `gui/static/*.html` | open |
+| KI-54 | `gui/server.py` 834 行，超过 800 行软上限；路由宜拆到独立模块 | `gui/server.py` | open |

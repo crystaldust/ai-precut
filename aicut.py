@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -69,13 +68,19 @@ def load_json(p: Path, default=None):
 
 
 def save_json(p: Path, obj) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, p)
+    schema.write_json(p, obj)
+
+
+def check_or_die(check, value) -> None:
+    """调用 schema 的白名单校验；不合法就 die（GL-06）。"""
+    try:
+        check(value)
+    except ValueError as exc:
+        die(str(exc))
 
 
 def project_dir(name: str) -> Path:
+    check_or_die(schema.check_project_name, name)
     p = PROJECTS / name
     if not (p / "project.json").exists():
         die(f"项目不存在：{name}（用 new 创建）")
@@ -149,6 +154,7 @@ def mediakit_env() -> dict:
 
 # ------------------------------------------------------------------ 命令
 def cmd_new(args) -> None:
+    check_or_die(schema.check_project_name, args.name)
     pdir = PROJECTS / args.name
     if (pdir / "project.json").exists():
         die(f"项目已存在：{pdir}")
@@ -428,6 +434,7 @@ def clip_key(shot: dict, src: Path) -> str:
 
 def ensure_clips(pdir: Path, c: dict, shots: list[dict]) -> Path:
     """只重切"入出点变了"的镜头，其余复用缓存。"""
+    check_or_die(schema.check_shot_ids, shots)  # id 即切片文件名：必须安全且唯一
     clips_dir = pdir / "work/clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
     manifest = load_json(pdir / "work/clips/manifest.json", {})
@@ -538,6 +545,8 @@ def cmd_build(args) -> None:
         die(f"缺少分镜表 {shots_file}（先跑 brief，再写 shots.json）")
     spec = load_json(shots_file)
     shots = spec["shots"]
+    if args.version:
+        check_or_die(schema.check_version, args.version)
 
     clips_dir = ensure_clips(pdir, c, shots)
     version = args.version or next_version(pdir)

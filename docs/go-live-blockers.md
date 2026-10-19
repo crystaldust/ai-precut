@@ -29,3 +29,5 @@
 | GL-21 | 中文/空格项目名视频全部 404（服务端未 percent-decode） | `gui/server.py` 路由；`gui/static/index.html:204,230,262,430` | open |
 | GL-22 | 字幕框点不进（点击冒泡触发整表重绘）；任务失败后模态层无法关闭，只能杀 App | `gui/static/index.html:344-370, 435-468` | open |
 | GL-23 | 前端镜头 id 重复（删一个再加一个）→ 切片互相覆盖，成片重复内容 | `gui/static/index.html:388` | open |
+| GL-24 | 画面过暗分支把必留话题段、标注失败的待定段直接判废片（与 GL-09 同类静默丢弃） | `pipeline/classify.py:82-83` | open |
+| GL-25 | build 不检查分镜表是否含全部必留段；GUI 手存的 `shots.json` 优先于 `shots-selected.json`，漏必留照样出片 | `aicut.py:531-536` | open |

@@ -1,5 +1,7 @@
 <!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>素材浏览 · 剪辑台</title>
+<meta name="aicut-token" content="__AICUT_TOKEN__">
+<script src="/static/common.js"></script>
 <style>
 :root{--bg:#16181d;--panel:#1e2128;--panel2:#252932;--line:#2f3440;--text:#e8eaf0;
 --muted:#9aa2b1;--accent:#4a9eff;--waste:#4b5563;--pending:#f59e0b;--usable:#3ddc84}
@@ -105,8 +107,9 @@ async function load(){
   const r = await fetch('/api/browse?project='+encodeURIComponent(PROJECT));
   if(!r.ok){ const e = await r.json().catch(()=>({}));
     document.getElementById('list').innerHTML =
-      `<div class="empty">${e.error || '还没有分析结果'}<br><br>先在剪辑台里跑「处理素材」</div>`; return; }
+      `<div class="empty">${esc(e.error || '还没有分析结果')}<br><br>先在剪辑台里跑「处理素材」</div>`; return; }
   DATA = await r.json();
+  DATA.segments.forEach((s, i) => { s._i = i; });  // 内联事件只传数字下标（GL-07）
   pv.src = '/media/'+encodeURIComponent(PROJECT)+'/proxy';
   document.getElementById('title').textContent = DATA.project.title || PROJECT;
   document.getElementById('sub').textContent =
@@ -116,13 +119,13 @@ async function load(){
 function renderSummary(){
   const s = DATA.summary || {};
   document.getElementById('summary').innerHTML =
-    (s.summary || '（暂无摘要）') + (s.fallback ? '<div style="color:#8a6a3a;font-size:11px;margin-top:6px">（兜底摘要）</div>' : '');
+    esc(s.summary || '（暂无摘要）') + (s.fallback ? '<div style="color:#8a6a3a;font-size:11px;margin-top:6px">（兜底摘要）</div>' : '');
   const box = document.getElementById('keypoints');
   box.innerHTML = (s.key_points||[]).map(p=>
-    `<div class="kp" onclick="jump(${p.at}, null, ${p.at+4})"><b>${fmt(p.at)}</b>${p.text}
-       <span style="color:#6b7c93">· ${p.why||''}</span></div>`).join('') || '<div class="kp">—</div>';
+    `<div class="kp" onclick="jump(${num(p.at)}, null, ${num(p.at)+4})"><b>${fmt(num(p.at))}</b>${esc(p.text)}
+       <span style="color:#6b7c93">· ${esc(p.why||'')}</span></div>`).join('') || '<div class="kp">—</div>';
   document.getElementById('castBox').innerHTML =
-    (s.cast||[]).map(c=>`<span>${c.name}<span style="color:#6b7c93"> · ${c.desc}</span></span>`).join('');
+    (s.cast||[]).map(c=>`<span>${esc(c.name)}<span style="color:#6b7c93"> · ${esc(c.desc)}</span></span>`).join('');
 }
 function density(){
   const d = document.getElementById('density'); d.innerHTML='';
@@ -148,17 +151,19 @@ function pass(s){
   return s.level===filter;
 }
 function row(s){
-  return `<div class="row" data-id="${s.id}" onclick="jump(${s.start},'${s.id}',${s.end})">
-    <div class="tc">${fmt(s.start)}</div>
-    <div class="cat" title="${s.topic||''}">${s.topic||'—'}</div>
-    <div class="lv lv${s.level}" title="${(s.level_reason||'').replace(/"/g,'')}">${LV[s.level]}</div>
-    <div class="sum">${escapeHtml(s.text).slice(0,60)}${s.inCut?'<span class="used">已用</span>':''}
-      <small>${escapeHtml(s.level_reason||'')}${s.visual_flags?.length?' · 画面:'+s.visual_flags.join('/'):''}</small></div>
-    <div class="dur">${s.dur.toFixed(1)}s</div>
-    <button class="star ${s.must_keep?'on':''}" onclick="event.stopPropagation();toggleMust('${s.id}')">★</button>
+  const lv = num(s.level);
+  return `<div class="row" data-id="${esc(s.id)}" onclick="jumpSeg(${s._i})">
+    <div class="tc">${fmt(num(s.start))}</div>
+    <div class="cat" title="${esc(s.topic||'')}">${esc(s.topic||'—')}</div>
+    <div class="lv lv${lv}" title="${esc(s.level_reason||'')}">${esc(LV[lv])}</div>
+    <div class="sum">${esc(String(s.text ?? '').slice(0,60))}${s.inCut?'<span class="used">已用</span>':''}
+      <small>${esc(s.level_reason||'')}${s.visual_flags?.length?' · 画面:'+s.visual_flags.map(esc).join('/'):''}</small></div>
+    <div class="dur">${num(s.dur).toFixed(1)}s</div>
+    <button class="star ${s.must_keep?'on':''}" onclick="event.stopPropagation();toggleMustIdx(${s._i})">★</button>
   </div>`;
 }
-function escapeHtml(t){ return (t||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function jumpSeg(i){ const s = DATA.segments[i]; jump(num(s.start), s.id, num(s.end)); }
+function toggleMustIdx(i){ toggleMust(DATA.segments[i].id); }
 
 function render(){
   if(!DATA) return;
@@ -172,9 +177,9 @@ function render(){
     list.innerHTML = Object.entries(groups).map(([name, arr])=>{
       const t = (DATA.topics||[]).find(x=>x.name===name) || {};
       const usable = arr.filter(s=>s.level===3).length;
-      return `<div class="group">${name}${t.must?' · <span style="color:#ffc45c">必留</span>':''}
+      return `<div class="group">${esc(name)}${t.must?' · <span style="color:#ffc45c">必留</span>':''}
         <span>${arr.length} 句 · 可用 <span class="num">${usable}</span> ·
-        可用时长 ${(t.usable_dur||0).toFixed(0)}s · 预算 ${t.budget||0}s</span></div>`
+        可用时长 ${num(t.usable_dur).toFixed(0)}s · 预算 ${num(t.budget)}s</span></div>`
         + arr.map(row).join('');
     }).join('');
   }
@@ -191,8 +196,8 @@ function jump(start, id, end){
   pv.currentTime = Math.max(0, start-0.3); pv.play();
   cur = id || null;
   const s = DATA.segments.find(x=>x.id===cur);
-  document.getElementById('now').innerHTML = `<b>${fmt(start)}–${fmt(end||start+1)}</b>　${s?escapeHtml(s.text).slice(0,40):''}<br>
-    <span style="color:var(--muted)">${s?escapeHtml(s.level_reason||''):''}</span>`;
+  document.getElementById('now').innerHTML = `<b>${fmt(start)}–${fmt(end||start+1)}</b>　${s?esc(String(s.text ?? '').slice(0,40)):''}<br>
+    <span style="color:var(--muted)">${s?esc(s.level_reason||''):''}</span>`;
   document.querySelectorAll('.row').forEach(r=>r.classList.toggle('active', r.dataset.id===cur));
   clearInterval(window._t);
   window._t = setInterval(()=>{ if(pv.currentTime>=(end||start+999)){pv.pause();clearInterval(window._t);} },120);

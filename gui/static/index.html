@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>剪辑台</title>
+<meta name="aicut-token" content="__AICUT_TOKEN__">
+<script src="/static/common.js"></script>
 <style>
   :root{
     --bg:#16181d; --panel:#1e2128; --panel2:#252932; --line:#2f3440;
@@ -183,7 +185,7 @@ async function loadProjects(){
   if(!projects.length){ ul.innerHTML = '<li><span>还没有项目</span></li>'; return; }
   projects.forEach(p=>{
     const li = document.createElement('li');
-    li.innerHTML = `<b>${p.title||p.name}</b><span>${p.versions.length? '已出片 '+p.versions.join(' / ') : '未出片'}</span>`;
+    li.innerHTML = `<b>${esc(p.title||p.name)}</b><span>${p.versions.length? '已出片 '+p.versions.map(esc).join(' / ') : '未出片'}</span>`;
     li.onclick = ()=>selectProject(p.name);
     if(p.name===state.project) li.classList.add('on');
     ul.appendChild(li);
@@ -206,7 +208,7 @@ async function refresh(){
   $('#title').textContent = c.title || c.name;
   const md = d.material_duration ? `素材 ${fmtLong(d.material_duration)} · ` : '';
   $('#meta').textContent = `${md}预设 ${c.preset} · 平台 ${c.platform} · 目标 ${c.target_duration||'—'} 秒`;
-  $('#steps').innerHTML = d.stages.map(s=>`<div class="step ${s.done?'done':''}">${s.done?'✓':'○'} ${s.label}</div>`).join('');
+  $('#steps').innerHTML = d.stages.map(s=>`<div class="step ${s.done?'done':''}">${s.done?'✓':'○'} ${esc(s.label)}</div>`).join('');
   $('#actions').style.display='flex';
   $('#tabs').style.display='flex';
   state.shots = (d.shots||[]).map(s=>({...s}));
@@ -317,12 +319,11 @@ function viewScript(){
     <button class="primary" onclick="startJob('prepare')">开始处理</button></div>`;
   return `<p class="hint">点句子可以跳到视频对应位置；点 <b>＋</b> 把它加进分镜表。</p>` +
     segs.map((s,i)=>`<div class="seg">
-      <div class="t">${fmt(s.start)}</div>
-      <div class="x" onclick="seek(${s.start})">${escapeHtml(s.text)}</div>
+      <div class="t">${fmt(num(s.start))}</div>
+      <div class="x" onclick="seek(${num(s.start)})">${esc(s.text)}</div>
       <div><button class="ghost" title="加入分镜表" onclick="addFromSeg(${i})">＋</button></div>
     </div>`).join('');
 }
-function escapeHtml(t){ return (t||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function seek(t){
   if(state.tab!=='preview'){ state.tab='preview'; document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on', x.dataset.tab==='preview')); renderTab(); }
   setTimeout(()=>{ const v=$('#pv')||activeVideo(); if(v){ v.currentTime=t; v.play(); } }, 60);
@@ -347,7 +348,7 @@ function viewShots(){
       <td class="tc">${fmt(s.in)}</td>
       <td class="tc">${fmt(s.out)}</td>
       <td class="tc">${(s.out-s.in).toFixed(1)}s</td>
-      <td><textarea class="sub-edit" oninput="edit(${i},'sub',this.value)" placeholder="字幕（留空=无字幕空镜）">${escapeHtml(s.sub)}</textarea></td>
+      <td><textarea class="sub-edit" oninput="edit(${i},'sub',this.value)" placeholder="字幕（留空=无字幕空镜）">${esc(s.sub)}</textarea></td>
       <td class="row-btns">
         <button title="上移" onclick="event.stopPropagation();move(${i},-1)">↑</button>
         <button title="下移" onclick="event.stopPropagation();move(${i},1)">↓</button>
@@ -385,7 +386,20 @@ async function saveShots(silent){
     return true;
   }catch(e){ toast('保存失败：'+e.message); return false; }
 }
-function renumber(){ state.shots.forEach((s,i)=>{ if(!s.id) s.id = 'sh'+String(i+1).padStart(2,'0'); }); }
+const SHOT_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
+// 新 id = 现有 shNN 的最大编号 +1，删镜头后不会和留下的镜头撞号（GL-23）
+function nextShotId(){
+  const nums = state.shots.map(s=>/^sh(\d+)$/.exec(s.id||'')).filter(Boolean).map(m=>+m[1]);
+  return 'sh'+String((nums.length ? Math.max(...nums) : 0)+1).padStart(2,'0');
+}
+// 补齐缺失 id、修正重复/非法 id（也能修好历史上已经存进 shots.json 的重复 id）
+function renumber(){
+  const seen = new Set();
+  state.shots.forEach(s=>{
+    if(!s.id || seen.has(s.id) || !SHOT_ID_RE.test(s.id)) s.id = nextShotId();
+    seen.add(s.id);
+  });
+}
 function move(i,d){
   const j=i+d; if(j<0||j>=state.shots.length) return;
   [state.shots[i],state.shots[j]]=[state.shots[j],state.shots[i]];
@@ -414,9 +428,9 @@ function viewJunk(){
   if(!items.length) return `<div class="empty">没有检测到技术废片<br><span class="hint">这类"一镜到底"素材，废片主要在内容层，去文稿里判断更准</span></div>`;
   return `<table><thead><tr><th>起</th><th>止</th><th>时长</th><th>原因</th><th>建议</th></tr></thead>
     <tbody>${items.map(j=>`<tr>
-      <td class="tc">${j.start_tc}</td><td class="tc">${j.end_tc}</td>
-      <td class="tc">${j.duration}s</td><td>${escapeHtml(j.reason)}</td>
-      <td>${j.suggest}</td></tr>`).join('')}</tbody></table>`;
+      <td class="tc">${esc(j.start_tc)}</td><td class="tc">${esc(j.end_tc)}</td>
+      <td class="tc">${esc(j.duration)}s</td><td>${esc(j.reason)}</td>
+      <td>${esc(j.suggest)}</td></tr>`).join('')}</tbody></table>`;
 }
 
 /* ---------------- 版本 ---------------- */
@@ -425,9 +439,9 @@ function viewVersions(){
   if(!vs.length) return `<div class="empty">还没有出过片<br><br>
     <button class="primary" onclick="startJob('build')">生成第一版</button></div>`;
   return vs.map(v=>`<div class="ver">
-    <h3>${v.name} <span class="hint">${v.shots} 镜 · ${fmtLong(v.duration)} · ${v.mtime}</span></h3>
-    <div class="m">剪映草稿名：<b>${v.draft}</b></div>
-    ${v.preview? `<video src="/media/${encodeURIComponent(state.project)}/preview/${v.name}" controls preload="metadata"></video>` : '<p class="hint">这一版只有工程，没有预览片</p>'}
+    <h3>${esc(v.name)} <span class="hint">${num(v.shots)} 镜 · ${fmtLong(num(v.duration))} · ${esc(v.mtime)}</span></h3>
+    <div class="m">剪映草稿名：<b>${esc(v.draft)}</b></div>
+    ${v.preview? `<video src="/media/${encodeURIComponent(state.project)}/preview/${encodeURIComponent(v.name)}" controls preload="metadata"></video>` : '<p class="hint">这一版只有工程，没有预览片</p>'}
   </div>`).join('');
 }
 
@@ -495,13 +509,13 @@ async function openNew(){
     <div class="field"><label>项目名（文件夹名，别用斜杠）</label><input id="npName" placeholder="例如 2026-09-15_探店"></div>
     <div class="field"><label>片名（会显示在剪映草稿上）</label><input id="npTitle" placeholder="例如 九月一号"></div>
     <div class="field"><label>风格预设</label>
-      <select id="npPreset">${presets.map(p=>`<option value="${p.key}">${p.name}（${p.duration}s·${p.platform}）</option>`).join('')}</select>
+      <select id="npPreset">${presets.map(p=>`<option value="${esc(p.key)}">${esc(p.name)}（${esc(p.duration)}s·${esc(p.platform)}）</option>`).join('')}</select>
     </div>
     <button class="primary" onclick="createProject()">创建</button>
     <button class="ghost" onclick="closeModal()">取消</button>`);
 }
 async function pickFile(){
-  const {path} = await api('/api/pick', {method:'POST'});
+  const {path} = await api('/api/pick', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
   if(path){ $('#npPath').value = path; if(!$('#npName').value){
     $('#npName').value = path.split('/').pop().replace(/\.[^.]+$/,'');
     $('#npTitle').value = $('#npName').value; } }

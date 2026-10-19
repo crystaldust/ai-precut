@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import mimetypes
 import os
@@ -20,11 +21,12 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 import uuid
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
@@ -37,6 +39,27 @@ PRESETS = ROOT / "presets"
 STATIC = (proc.resource_path("gui", "static") if proc.FROZEN
           else Path(__file__).resolve().parent / "static")
 PICKER = None  # 由桌面壳注入（pywebview 的文件选择框）
+
+# ---- GL-05：本地服务访问控制
+API_TOKEN = os.urandom(32).hex()  # 每次启动随机生成；页面加载时由服务端注入
+TOKEN_HEADER = "X-AICUT-Token"
+TOKEN_PLACEHOLDER = b"__AICUT_TOKEN__"
+TOKEN_EXPIRED_MSG = "页面已过期，请刷新"  # 浏览器模式下服务重启后，旧标签页会看到它
+ALLOWED_HOSTNAMES = ("127.0.0.1", "localhost")
+JSON_CTYPE = "application/json"
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+# 页面全是内联脚本/样式和内联事件，所以 script-src 需要 'unsafe-inline'；没有任何外部资源
+PAGE_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            "media-src 'self' blob:; connect-src 'self'; object-src 'none'; "
+            "base-uri 'none'; frame-ancestors 'none'")
+MAX_BODY_BYTES = 2 * 1024 * 1024  # 请求体上限：分镜表再大也到不了 2 MB
+REQUEST_TIMEOUT_S = 60            # 单次 socket 读写超时，慢速/半开连接不会永久占住线程
+INTERNAL_ERROR_MSG = "服务内部错误，请重试；如果反复出现请把终端里的报错发给开发"
 
 
 def run_aicut(args: list[str]) -> tuple[int, str]:
@@ -79,23 +102,38 @@ def jload(p: Path, default=None):
 
 
 def jdump(p: Path, obj) -> None:
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, p)
+    schema.write_json(p, obj)
+
+
+class BadRequest(ValueError):
+    """请求体不合法：必须返回 4xx，绝不能当空请求继续写盘（GL-18）。"""
+
+    def __init__(self, msg: str, code: int = 400) -> None:
+        super().__init__(msg)
+        self.code = code
 
 
 def project_path(name: str) -> Path:
+    schema.check_project_name(name)  # GL-06：白名单在前，下面的包含检查是第二道防线
     p = (PROJECTS / name).resolve()
     if PROJECTS.resolve() not in p.parents:
         raise ValueError("非法项目名")
     return p
 
 
+def existing_project(name: str) -> Path:
+    pdir = project_path(name)
+    if not (pdir / "project.json").exists():
+        raise FileNotFoundError(f"项目不存在：{name}")
+    return pdir
+
+
 def safe_name(name: str) -> str:
-    if not name or "/" in name or "\\" in name or name in (".", ".."):
-        raise ValueError("项目名不能用斜杠或点")
-    return name
+    return schema.check_project_name(name)
+
+
+def preset_names() -> set[str]:
+    return {f.stem for f in PRESETS.glob("*.json")}
 
 
 def project_state(name: str) -> dict:
@@ -103,6 +141,7 @@ def project_state(name: str) -> dict:
     cfg = jload(pdir / "project.json")
     if not cfg:
         raise FileNotFoundError(name)
+    schema.ensure_supported(cfg)  # 新版程序建的项目不能让旧界面去改
     work = pdir / "work"
     stages = [
         {"key": "ingest", "label": "素材台账", "done": (work / "materials.json").exists()},
@@ -298,6 +337,7 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
 # ------------------------------------------------------------------ HTTP
 class Handler(BaseHTTPRequestHandler):
     server_version = "aicut-gui/1.0"
+    timeout = REQUEST_TIMEOUT_S
 
     def log_message(self, fmt, *args):  # 静音访问日志
         pass
@@ -309,6 +349,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self._security_headers()
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -317,22 +358,98 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def _security_headers(self) -> None:
+        for k, v in SECURITY_HEADERS.items():
+            self.send_header(k, v)
+
+    def _send_page(self, f: Path) -> None:
+        """HTML 页面：把占位符替换成本次启动的 token。"""
+        body = f.read_bytes().replace(TOKEN_PLACEHOLDER, API_TOKEN.encode())
+        return self._send(200, body, "text/html; charset=utf-8",
+                          {"Content-Security-Policy": PAGE_CSP})
+
+    # ---------- 兜底：任何请求都不能直接断连
+    def send_response(self, code, message=None):
+        self._started = True
+        super().send_response(code, message)
+
+    def _safely(self, route) -> None:
+        self._started = False
+        try:
+            route()
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            self.close_connection = True
+        except Exception:  # noqa: BLE001 - 未预期的错误：记到终端，给前端 500
+            traceback.print_exc(file=sys.stderr)
+            if self._started:  # 响应已经开始写，只能断开
+                self.close_connection = True
+                return
+            try:
+                self._json({"error": INTERNAL_ERROR_MSG}, 500)
+            except OSError:
+                self.close_connection = True
+
+    def do_GET(self):  # noqa: N802
+        self._safely(self._route_get)
+
+    def do_POST(self):  # noqa: N802
+        self._safely(self._route_post)
+
+    # ---------- 访问控制（GL-05）
+    def _allowed_hosts(self) -> set[str]:
+        port = self.server.server_address[1]
+        return {f"{h}:{port}" for h in ALLOWED_HOSTNAMES}
+
+    def _deny_reason(self, path: str, post: bool) -> tuple[int, str] | None:
+        """返回 (状态码, 原因)；None 表示放行。"""
+        hosts = self._allowed_hosts()
+        if (self.headers.get("Host") or "").lower() not in hosts:
+            return 403, "拒绝：Host 不是本机剪辑台"
+        if post:
+            origin = self.headers.get("Origin")
+            if origin is not None and origin not in {f"http://{h}" for h in hosts}:
+                return 403, "拒绝：跨站请求"
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype != JSON_CTYPE:
+                return 415, f"请求必须是 {JSON_CTYPE}"
+        if path.startswith("/api/"):
+            given = self.headers.get(TOKEN_HEADER) or ""
+            if not hmac.compare_digest(given.encode(), API_TOKEN.encode()):
+                return 403, TOKEN_EXPIRED_MSG
+        return None
+
     def _json(self, obj, code: int = 200) -> None:
         self._send(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json")
 
     def _read_body(self) -> dict:
-        n = int(self.headers.get("Content-Length") or 0)
-        if not n:
+        raw = self.headers.get("Content-Length")
+        if raw is None:
+            raise BadRequest("缺少 Content-Length", 411)
+        if not re.fullmatch(r"[0-9]{1,12}", raw.strip()):
+            raise BadRequest("Content-Length 非法")
+        n = int(raw)
+        if n > MAX_BODY_BYTES:
+            raise BadRequest(f"请求体过大（上限 {MAX_BODY_BYTES // 1024 // 1024} MB）", 413)
+        if n == 0:
             return {}
         try:
-            return json.loads(self.rfile.read(n).decode("utf-8"))
-        except json.JSONDecodeError:
-            return {}
+            data = json.loads(self.rfile.read(n).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BadRequest(f"请求体不是合法 JSON：{exc}") from exc
+        if not isinstance(data, dict):
+            raise BadRequest("请求体必须是 JSON 对象")
+        return data
 
     # ---------- 视频（支持 Range，浏览器才能拖进度条）
-    def _serve_media(self, path: Path) -> None:
-        if not path.exists():
+    def _serve_media(self, path: Path, root: Path) -> None:
+        """只发项目目录内的普通文件：符号链接逃逸、目录一律 404。"""
+        try:
+            real = path.resolve(strict=True)
+        except (OSError, RuntimeError):
             return self._json({"error": "文件不存在"}, 404)
+        if root.resolve() not in real.parents or not real.is_file():
+            return self._json({"error": "文件不存在"}, 404)
+        path = real
         size = path.stat().st_size
         ctype = "video/mp4"
         rng = self.headers.get("Range")
@@ -347,6 +464,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(length))
+            self._security_headers()
             self.end_headers()
             with open(path, "rb") as f:
                 f.seek(start)
@@ -365,6 +483,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             self.send_header("Accept-Ranges", "bytes")
             self.send_header("Content-Length", str(size))
+            self._security_headers()
             self.end_headers()
             with open(path, "rb") as f:
                 while True:
@@ -377,18 +496,22 @@ class Handler(BaseHTTPRequestHandler):
                         return
 
     # ---------- 路由
-    def do_GET(self):  # noqa: N802
+    def _route_get(self) -> None:
         u = urlparse(self.path)
         q = parse_qs(u.query)
         p = u.path
+        deny = self._deny_reason(p, post=False)
+        if deny:
+            return self._json({"error": deny[1]}, deny[0])
 
         if p in ("/", "/index.html"):
-            f = STATIC / "index.html"
-            return self._send(200, f.read_bytes(), "text/html; charset=utf-8")
+            return self._send_page(STATIC / "index.html")
 
         if p.startswith("/static/"):
             f = (STATIC / p[len("/static/"):]).resolve()
             if STATIC.resolve() in f.parents and f.exists():
+                if f.suffix == ".html":
+                    return self._send_page(f)
                 ctype = mimetypes.guess_type(f.name)[0] or "application/octet-stream"
                 return self._send(200, f.read_bytes(), ctype)
             return self._json({"error": "not found"}, 404)
@@ -435,13 +558,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(browse_payload(name))
             except FileNotFoundError as exc:
                 return self._json({"error": str(exc)}, 404)
+            except review.OverridesCorrupt as exc:  # 必须在 ValueError 之前
+                return self._json({"error": str(exc)}, 409)
             except (ValueError, OSError) as exc:
                 return self._json({"error": str(exc)}, 400)
 
         if p == "/api/calibrate":
             name = q.get("project", [""])[0]
             try:
-                cfg = schema.load(project_path(name) / "project.json")
+                cfg = schema.load(existing_project(name) / "project.json")
+            except FileNotFoundError as exc:
+                return self._json({"error": str(exc)}, 404)
+            except schema.SchemaTooNew as exc:
+                return self._json({"error": str(exc)}, 409)
             except (ValueError, OSError) as exc:
                 return self._json({"error": str(exc)}, 400)
             return self._json({"calibration": style.normalize(cfg.get("calibration")),
@@ -453,13 +582,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(confirm_payload(name))
             except FileNotFoundError as exc:
                 return self._json({"error": str(exc)}, 404)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
 
         if p == "/api/state":
             name = q.get("project", [""])[0]
             try:
                 return self._json(project_state(name))
-            except (FileNotFoundError, ValueError) as e:
-                return self._json({"error": str(e)}, 404)
+            except FileNotFoundError as e:
+                return self._json({"error": f"项目不存在：{e}"}, 404)
+            except schema.SchemaTooNew as e:
+                return self._json({"error": str(e)}, 409)
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
 
         if p.startswith("/api/job/"):
             job_id = p.rsplit("/", 1)[-1]
@@ -472,37 +607,53 @@ class Handler(BaseHTTPRequestHandler):
 
         if p.startswith("/media/"):
             # /media/<project>/proxy  |  /media/<project>/preview/v2
-            parts = p[len("/media/"):].split("/")
+            # GL-21：先按 / 切分再逐段解码，%2F 不会制造新的路径层级
+            parts = [unquote(x) for x in p[len("/media/"):].split("/")]
             try:
                 pdir = project_path(parts[0])
             except ValueError:
                 return self._json({"error": "bad project"}, 400)
             if len(parts) == 2 and parts[1] == "proxy":
-                return self._serve_media(pdir / "work/proxy.mp4")
+                return self._serve_media(pdir / "work/proxy.mp4", pdir)
             if len(parts) == 3 and parts[1] == "preview":
-                return self._serve_media(pdir / "output" / parts[2] / "preview.mp4")
+                try:
+                    version = schema.check_version(parts[2])
+                except ValueError as exc:
+                    return self._json({"error": str(exc)}, 400)
+                return self._serve_media(pdir / "output" / version / "preview.mp4", pdir)
             return self._json({"error": "not found"}, 404)
 
         return self._json({"error": "not found"}, 404)
 
-    def do_POST(self):  # noqa: N802
+    def _route_post(self) -> None:
         u = urlparse(self.path)
         q = parse_qs(u.query)
         p = u.path
-        body = self._read_body()
+        deny = self._deny_reason(p, post=True)  # 未授权的请求连 body 都不读
+        if deny:
+            return self._json({"error": deny[1]}, deny[0])
+        try:
+            body = self._read_body()
+        except BadRequest as exc:
+            return self._json({"error": str(exc)}, exc.code)
 
         if p == "/api/new":
             try:
-                name = safe_name(body.get("name", "").strip())
+                name = safe_name(body.get("name", ""))  # 首尾空格直接拒绝，不偷偷 strip
+                raw_title = body.get("title") or name
+                title = schema.check_title(
+                    raw_title.strip() if isinstance(raw_title, str) else raw_title)
             except ValueError as e:
                 return self._json({"error": str(e)}, 400)
             material = body.get("material", "")
             preset = body.get("preset", "纪实3min")
-            title = (body.get("title") or name).strip()
-            if not material:
+            if not isinstance(material, str) or not material:
                 return self._json({"error": "缺少素材路径"}, 400)
-            code, out = run_aicut(["new", name, "--material", material,
-                                   "--preset", preset, "--title", title])
+            if not isinstance(preset, str) or preset not in preset_names():
+                return self._json({"error": f"未知预设：{preset}"}, 400)
+            # --x=value 形式：以 - 开头的值不会被 argparse 当成选项
+            code, out = run_aicut(["new", name, f"--material={material}",
+                                   f"--preset={preset}", f"--title={title}"])
             if code != 0:
                 return self._json({"error": out[-500:] or "创建失败"}, 400)
             return self._json({"ok": True, "name": name})
@@ -524,19 +675,19 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/shots":
             name = q.get("project", [""])[0]
             try:
-                pdir = project_path(name)
-            except ValueError:
-                return self._json({"error": "bad project"}, 400)
-            shots = body.get("shots", [])
-            clean = []
-            for i, s in enumerate(shots, 1):
-                clean.append({
-                    "id": s.get("id") or f"sh{i:02d}",
-                    "in": round(float(s.get("in", 0)), 3),
-                    "out": round(float(s.get("out", 0)), 3),
-                    "sub": s.get("sub", ""),
-                    "note": s.get("note", ""),
-                })
+                pdir = existing_project(name)
+            except FileNotFoundError as exc:
+                return self._json({"error": str(exc)}, 404)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
+            shots = body.get("shots")
+            if not isinstance(shots, list):
+                return self._json({"error": "缺少 shots 列表，未保存"}, 400)
+            try:
+                # GL-23：id 合法且唯一；KI-31：入出点是非负有限数且出点晚于入点
+                clean = schema.clean_shots(shots)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
             jdump(pdir / "shots.json", {"project": jload(pdir / "project.json", {}).get("title", name),
                                         "source": jload(pdir / "project.json", {}).get("material", ""),
                                         "shots": clean})
@@ -546,13 +697,14 @@ class Handler(BaseHTTPRequestHandler):
             name = body.get("project", "")
             task = body.get("task", "")
             extra = []
-            if task == "build":
-                v = body.get("version")
-                if v:
-                    extra += ["--version", v]
-                if body.get("no_draft"):
-                    extra.append("--no-draft")
             try:
+                existing_project(name)
+                if task == "build":
+                    v = body.get("version")
+                    if v:
+                        extra += ["--version", schema.check_version(v)]
+                    if body.get("no_draft"):
+                        extra.append("--no-draft")
                 job_id = start_job(name, task, extra)
             except (ValueError, FileNotFoundError) as e:
                 return self._json({"error": str(e)}, 400)
@@ -560,8 +712,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/calibrate":
             try:
-                pdir = project_path(body.get("project", ""))
+                pdir = existing_project(body.get("project", ""))
                 cfg = schema.load(pdir / "project.json")
+            except FileNotFoundError as exc:
+                return self._json({"error": str(exc)}, 404)
+            except schema.SchemaTooNew as exc:
+                return self._json({"error": str(exc)}, 409)
             except (ValueError, OSError) as exc:
                 return self._json({"error": str(exc)}, 400)
             cfg["calibration"] = style.normalize(body.get("calibration") or {})
@@ -571,9 +727,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/confirm/answers":
             try:
-                pdir = project_path(body.get("project", ""))
-            except ValueError:
-                return self._json({"error": "bad project"}, 400)
+                pdir = existing_project(body.get("project", ""))
+            except FileNotFoundError as exc:
+                return self._json({"error": str(exc)}, 404)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
             work = pdir / "work"
             questions = jload(work / "questions.json")
             answers = body.get("answers") or {}
@@ -590,9 +748,11 @@ class Handler(BaseHTTPRequestHandler):
             name = body.get("project", "")
             sid = body.get("id", "")
             try:
-                pdir = project_path(name)
-            except ValueError:
-                return self._json({"error": "bad project"}, 400)
+                pdir = existing_project(name)
+            except FileNotFoundError as exc:
+                return self._json({"error": str(exc)}, 404)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
             if not sid:
                 return self._json({"error": "缺少 id"}, 400)
             work = pdir / "work"
@@ -601,6 +761,8 @@ class Handler(BaseHTTPRequestHandler):
                     review.set_level(work, sid, int(body.get("level")))
                 else:
                     review.set_must(work, sid, bool(body.get("must")))
+            except review.OverridesCorrupt as exc:  # 必须在 ValueError 之前
+                return self._json({"error": str(exc)}, 409)
             except (ValueError, TypeError) as exc:
                 return self._json({"error": str(exc)}, 400)
             return self._json({"ok": True})
@@ -609,9 +771,11 @@ class Handler(BaseHTTPRequestHandler):
             name = body.get("project", "")
             target = body.get("target", "project")
             try:
-                pdir = project_path(name)
-            except ValueError:
-                return self._json({"error": "bad project"}, 400)
+                pdir = existing_project(name)
+            except FileNotFoundError as exc:
+                return self._json({"error": str(exc)}, 404)
+            except ValueError as exc:
+                return self._json({"error": str(exc)}, 400)
             if target == "jianying":
                 subprocess.run(["open", "-a", "/Applications/VideoFusion-macOS.app"],
                                capture_output=True)
