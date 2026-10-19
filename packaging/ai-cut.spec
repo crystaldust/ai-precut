@@ -15,7 +15,8 @@ BIN = ROOT / "vendor" / "bin"
 hidden = [
     "aicut",
     "gui.jobs", "gui.settings",
-    "pipeline.asr_state", "pipeline.consent", "pipeline.readiness",
+    "pipeline.applog", "pipeline.asr_state", "pipeline.consent", "pipeline.diagnostics",
+    "pipeline.encode", "pipeline.readiness", "pipeline.safe_http",
     "pipeline.build_documentary", "pipeline.classify", "pipeline.cloud",
     "pipeline.export_draft", "pipeline.format_transcript", "pipeline.junk_detect",
     "pipeline.llm", "pipeline.media_io",
@@ -33,7 +34,13 @@ datas += [
     (str(ROOT / "presets"), "presets"),
     (str(ROOT / "research" / "base_template_11.0.json"), "research"),
     (str(ROOT / "research" / "validate_draft.py"), "research"),
+    (str(ROOT / "packaging" / "THIRD-PARTY-NOTICES.txt"), "licenses"),  # GL-04：「关于」页也读它
 ]
+LICENSES = ROOT / "vendor" / "licenses"  # build_ffmpeg.sh 产物：LGPL / FTL 全文 + configure 行
+if LICENSES.exists():
+    datas.append((str(LICENSES), "licenses"))
+else:
+    print(f"[warn] 缺少 {LICENSES}，许可全文不会随包")
 
 binaries = []
 for name in ("ffmpeg", "ffprobe"):

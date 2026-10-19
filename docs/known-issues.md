@@ -114,3 +114,7 @@
 | KI-70 | 第三方错误文本（mediakit-cli 输出前 400 字、LLM 响应体前 300 字）未按已知 Key 脱敏就进任务日志与 `failed.json`（纵深防御） | `pipeline/cloud.py`；`pipeline/llm.py` | open |
 | KI-71 | 上次退出遗留的后台任务只在点按钮时以 409 出现，界面不主动提示 | `gui/server.py`（`report_stale_job`）；`gui/static/index.html` | open |
 | KI-72 | 看门狗依赖系统 `pgrep`，缺失时跳过「先正常退出」直接 SIGKILL 整组 | `pipeline/proc.py`（`start_parent_watchdog`） | open |
+| KI-73 | 预览字幕首选字体 `/System/Library/Fonts/PingFang.ttc` 在当前 macOS 上不存在，实际回落宋体 | `pipeline/render_preview.py:20-24` | open |
+| KI-74 | 从钥匙串/凭证文件读出的 Key 未去首尾空白，带换行时 LLM 请求头报错 | `pipeline/secrets.py`（`get`） | open |
+| KI-75 | ASR 上传缓存：云端提前作废 file_id 时要等 12h 过期才重传 | `pipeline/cloud.py`（`work/asr_upload.json`） | open |
+| KI-76 | 预览字幕 `esc()` 不转义 `%`：LGPL ffmpeg 报 `Stray %` 该条字幕静默不显示，Homebrew ffmpeg 直接失败 | `pipeline/render_preview.py:37-40` | open |

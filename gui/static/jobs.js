@@ -15,6 +15,7 @@ const COPY_JOB_RETRY = '重试';
 const COPY_JOB_CLOSE = '关闭';
 const COPY_JOB_VIEW_RUNNING = '查看进行中的任务';
 const COPY_JOB_ACK = '知道了';
+const COPY_JOB_DIAG = '导出诊断包';  // 失败 / 中断后给开发者交现场（GL-19，见 support.js）
 const COPY_JOB_FINISHED = '[完成]';
 const COPY_JOB_CANCELLED = '[已取消] 已经生成的内容会保留，下次接着处理';
 const COPY_JOB_FAILED = '[失败] 看上面的报错；也可以把这段日志发给开发者';
@@ -41,7 +42,8 @@ function jobActionsHtml(kind, canRetry = true){
   if(kind === 'conflict') return btn('primary', 'attachJob()', COPY_JOB_VIEW_RUNNING)
                                 + btn('ghost', 'closeModal()', COPY_JOB_CLOSE);
   if(kind === 'ack') return btn('primary', 'closeModal()', COPY_JOB_ACK);
-  return (canRetry ? btn('primary', 'retryJob()', COPY_JOB_RETRY) : '') + btn('ghost', 'closeModal()', COPY_JOB_CLOSE);
+  return (canRetry ? btn('primary', 'retryJob()', COPY_JOB_RETRY) : '')
+    + btn('ghost', 'exportDiag()', COPY_JOB_DIAG) + btn('ghost', 'closeModal()', COPY_JOB_CLOSE);
 }
 function setJobActions(kind){ const a = $('#jobActions'); if(a) a.innerHTML = jobActionsHtml(kind, !!jobUi.last); }
 // 任务还在跑、正在看进度时，Esc / 点遮罩不关弹窗（取消要明确点「取消任务」）

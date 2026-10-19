@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline import proc
+from pipeline import encode, proc
 from pipeline import to_jianying as tj
 
 SUB = {"style": {"align": 2}}
@@ -92,10 +92,14 @@ def test_layout_texts_clamps_negative_start():
 def clip(tmp_path_factory):
     if shutil.which("ffmpeg") is None:
         pytest.skip("本机无 ffmpeg")
+    encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True,
+                              text=True).stdout
+    # 与产品同一套编码参数（VideoToolbox）；没有 VT 的 LGPL 构建（如 Linux CI）退回原生 mpeg4
+    codec = encode.h264_args("clip") if " h264_videotoolbox " in encoders \
+        else ["-c:v", "mpeg4", "-pix_fmt", "yuv420p"]
     out = tmp_path_factory.mktemp("media") / "S01.mp4"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
-                    "color=c=black:s=108x192:r=30:d=1", "-c:v", "libx264", "-pix_fmt",
-                    "yuv420p", str(out)], check=True)
+                    "color=c=black:s=108x192:r=30:d=1", *codec, str(out)], check=True)
     return out
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pipeline import proc  # noqa: E402
+from pipeline import applog, proc  # noqa: E402
 
 # 打包版的任务子进程是 App 带标记重启自己（GL-17）：必须在 import webview 之前分发，
 # 否则会初始化 Cocoa、多出一个 Dock 图标
@@ -25,6 +25,7 @@ from gui import jobs, server  # noqa: E402
 
 
 def main() -> None:
+    applog.setup("app")  # 第一件事：窗口化 App 没有终端，之后的一切都要能在日志里找到
     proc.ensure_bundled_path()
     srv, url = server.serve_in_background()
     window = webview.create_window(

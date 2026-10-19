@@ -31,9 +31,9 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (build_documentary, classify, cloud, consent, export_draft, media_io, proc,
-                      questions, readiness, review, schema, secrets, select, style, summarize,
-                      to_jianying, understand_audio, understand_text, understand_visual)
+from pipeline import (applog, build_documentary, classify, cloud, consent, encode, export_draft,
+                      media_io, proc, questions, readiness, review, schema, secrets, select, style,
+                      summarize, to_jianying, understand_audio, understand_text, understand_visual)
 from pipeline.llm import LLMError
 
 ROOT = proc.app_root()
@@ -42,10 +42,12 @@ PRESETS = proc.resource_path("presets")
 PIPELINE = proc.resource_path("pipeline")
 proc.ensure_bundled_path()
 JY_VENV = Path.home() / ".aicut/venv"
+LOG = applog.get("cli")
 
 
 # ------------------------------------------------------------------ 基础
 def die(msg: str) -> None:
+    LOG.error(msg)
     print(f"[x] {msg}")
     sys.exit(1)
 
@@ -161,13 +163,6 @@ def require_consent() -> None:
         die(consent.CLI_REQUIRED_MSG)
 
 
-def mediakit_env() -> dict:
-    env = secrets.env_with_secret()
-    env["MEDIAKIT_SURFACE"] = "skill"
-    env["MEDIAKIT_RUNTIME"] = "aicut"
-    return env
-
-
 # ------------------------------------------------------------------ 命令
 def cmd_new(args) -> None:
     check_or_die(schema.check_project_name, args.name)
@@ -249,7 +244,7 @@ def cmd_transcribe(args) -> None:
         if not secrets.get("mediakit"):
             die("未配置 MEDIAKIT_API_KEY：运行 `uv run python aicut.py config set mediakit`")
         info("获取云端转写结果（长素材要几分钟，中断后重跑会接着查）…")
-        client = cloud.CloudClient(env=mediakit_env())
+        client = cloud.CloudClient()
         try:
             client.transcribe(wav, work, duration_s=probe_duration(wav))
         except cloud.CloudError as exc:
@@ -334,7 +329,7 @@ def cmd_junk(args) -> None:
         info("生成 540p 分析代理…")
         try:
             media_io.ffmpeg_to(proxy, ["-i", c["material"], "-vf", "scale=-2:540,fps=30",
-                                       "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+                                       *encode.h264_args("proxy"),
                                        "-c:a", "aac", "-b:a", "64k"])
         except media_io.MediaError as exc:
             die(f"生成分析代理失败：{exc}")
@@ -517,7 +512,7 @@ def ensure_clips(pdir: Path, c: dict, shots: list[dict]) -> Path:
         try:
             media_io.ffmpeg_to(dst, ["-ss", f"{sh['in']:.3f}", "-t", f"{sh['out'] - sh['in']:.3f}",
                                      "-i", str(src), "-vf", CLIP_VF,
-                                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                                     *encode.h264_args("clip"),
                                      "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2"])
         except media_io.MediaError as exc:
             die(f"切镜头 {sh['id']} 失败：{exc}")
@@ -634,7 +629,8 @@ def cmd_build(args) -> None:
     if missing:
         die(select.describe_missing(missing, from_selection=shots_file != pdir / "shots.json"))
 
-    clips_dir = ensure_clips(pdir, c, shots)
+    with applog.stage(pdir / "work", "clips"):
+        clips_dir = ensure_clips(pdir, c, shots)
     version = args.version or next_version(pdir)
     vdir = pdir / "output" / version
     vdir.mkdir(parents=True, exist_ok=True)
@@ -646,10 +642,11 @@ def cmd_build(args) -> None:
                            .encode()).hexdigest()
     total = sum(durations.values())
     ok(f"时间线：{len(shots)} 镜，{int(total // 60)}:{total % 60:05.2f}")
-    ok(f"预览片：{ensure_preview(vdir, tl_hash)}")
-
+    with applog.stage(pdir / "work", "preview"):
+        ok(f"预览片：{ensure_preview(vdir, tl_hash)}")
     if not args.no_draft:
-        install_draft(vdir, f"{c['title']}_{version}")
+        with applog.stage(pdir / "work", "draft"):
+            install_draft(vdir, f"{c['title']}_{version}")
     ok(f"完成 → {vdir}")
 
 
@@ -682,10 +679,11 @@ def cmd_prepare(args) -> None:
     require_consent()
     if missing := readiness.missing_keys(pdir / "work"):
         die(PREPARE_KEYS_MISSING.format(names=readiness.describe(missing)))
-    cmd_ingest(args); cmd_transcribe(args); cmd_analyze(args); cmd_text(args)
-    cmd_junk(args); cmd_scenes(args); cmd_quality(args)
-    cmd_score(args); cmd_summary(args); cmd_questions(args); cmd_select(args)
-    cmd_brief(args)
+    if problem := encode.preflight():  # 付费步骤之前确认能出片
+        die(problem)
+    for step in readiness.PREPARE_STEPS:  # 每段计时进 work/timings.json（GL-19，诊断包会带上）
+        with applog.stage(pdir / "work", step):
+            globals()[f"cmd_{step}"](args)
     ok("前期处理完成，可以去挑镜头了")
 
 
@@ -846,6 +844,7 @@ def run_cli(argv: list[str]) -> int:
         return proc.exit_code(exc, sys.stdout)
     except Exception:  # noqa: BLE001
         import traceback
+        LOG.exception("命令异常：%s", argv[:2])
         traceback.print_exc()
         return 1
 
@@ -927,5 +926,6 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
+    applog.setup("cli")
     proc.start_parent_watchdog()  # 由剪辑台起的任务：剪辑台没了就带着 ffmpeg 一起退出
     main()

@@ -3,7 +3,7 @@
 
 规则：ffmpeg 永远写到同目录、同扩展名的临时文件，成功后 os.replace 到最终路径，
 再写 `<文件名>.done`；判断"已完成"只认标记且大小一致，不认 exists()。
-编码参数由调用方给（GL-04 会把 libx264 换成 h264_videotoolbox），本模块不关心。
+编码参数由调用方给（GL-04：见 pipeline/encode.py，统一 h264_videotoolbox），本模块不关心。
 """
 from __future__ import annotations
 

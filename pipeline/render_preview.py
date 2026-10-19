@@ -16,6 +16,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))  # 脚本方式运行时可导入 pipeline.encode；append 防遮蔽三方包
+
+from pipeline import encode  # noqa: E402
+
 FONT_CANDIDATES = [
     "/System/Library/Fonts/PingFang.ttc",
     "/System/Library/Fonts/Supplemental/Songti.ttc",
@@ -94,7 +100,7 @@ def main() -> None:
         cmd += ["-i", s["source"]]
     cmd += ["-filter_complex", filter_complex,
             "-map", "[vout]", "-map", "[ac]",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            *encode.h264_args("preview"),
             "-c:a", "aac", "-b:a", "192k",
             "-movflags", "+faststart", args.out]
     print(f"渲染 {n} 个镜头 → {args.out}")

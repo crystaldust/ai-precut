@@ -133,6 +133,22 @@ def get(provider: str) -> str | None:
     return None
 
 
+def peek(provider: str) -> str | None:
+    """不碰钥匙串的读取（环境变量 → 凭证文件 → 旧版文件），给日志脱敏登记用，绝不弹授权。"""
+    if provider not in PROVIDERS:
+        raise ValueError(f"未知凭证：{provider}")
+    if env := os.environ.get(ENV_KEYS[provider]):
+        return env.strip()
+    if value := _read_file().get(provider):
+        return value
+    legacy = LEGACY_FILES.get(provider)
+    try:
+        return (legacy.read_text(encoding="utf-8").strip() or None) if legacy and legacy.exists() \
+            else None
+    except OSError:
+        return None
+
+
 def set(provider: str, value: str) -> str:
     """写入凭证，返回实际使用的后端（keyring / file）。"""
     if provider not in PROVIDERS:
@@ -195,11 +211,3 @@ def status() -> dict[str, dict]:
             "masked": mask(value),
         }
     return out
-
-
-def env_with_secret(base: dict | None = None) -> dict:
-    """给 mediakit-cli 用的环境变量（注入 MEDIAKIT_API_KEY）。"""
-    env = dict(base or os.environ)
-    if key := get("mediakit"):
-        env["MEDIAKIT_API_KEY"] = key
-    return env

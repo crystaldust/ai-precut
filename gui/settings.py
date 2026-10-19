@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from pipeline import consent, readiness, secrets
+from pipeline import applog, consent, encode, readiness, secrets
 
 KEY_RE = re.compile(r"[\x21-\x7e]{8,512}")  # 可打印 ASCII、无空白
 
@@ -44,6 +44,8 @@ def check_prepare_ready(pdir: Path) -> None:
     if missing:
         names = "、".join(secrets.PROVIDER_LABELS[k]["label"] for k in missing)
         raise PrepareBlocked("keys", NEED_KEYS_MSG.format(names=names), missing)
+    if problem := encode.preflight():  # 剪辑台进程用的是同一份内置 ffmpeg
+        raise PrepareBlocked("encoder", problem)
 
 
 def _provider(body: dict) -> str | None:
@@ -59,6 +61,7 @@ def save_key(body: dict) -> tuple[int, dict]:
     value = value.strip() if isinstance(value, str) else ""
     if not KEY_RE.fullmatch(value):
         return 400, {"error": BAD_KEY_MSG}
+    applog.register_secret(value)  # 之后本进程任何日志里出现都打码
     try:
         secrets.set(provider, value)
     except Exception:  # noqa: BLE001 - 异常信息可能带着输入，绝不透传

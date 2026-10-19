@@ -31,8 +31,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
-from pipeline import media_io, notices, proc, review, schema, select, style  # noqa: E402
-from gui import jobs, settings  # noqa: E402
+from pipeline import applog, media_io, notices, proc, review, schema, select, style  # noqa: E402
+from gui import jobs, settings, support  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
     JOB_COMMANDS, JOBS, JOBS_LOCK, JobConflict, run_aicut, start_job,
 )
@@ -64,7 +64,8 @@ PAGE_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
 MAX_BODY_BYTES = 2 * 1024 * 1024  # 请求体上限：分镜表再大也到不了 2 MB
 REQUEST_TIMEOUT_S = 60            # 单次 socket 读写超时，慢速/半开连接不会永久占住线程
 NO_EXPORT_MSG = "这一版还没有导出 Windows 剪映包"
-INTERNAL_ERROR_MSG = "服务内部错误，请重试；如果反复出现请把终端里的报错发给开发"
+INTERNAL_ERROR_MSG = "服务内部错误，请重试；如果反复出现请点左下角「导出诊断包」发给开发"
+LOG = applog.get("gui")
 
 
 def set_picker(fn) -> None:
@@ -242,8 +243,8 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "aicut-gui/1.0"
     timeout = REQUEST_TIMEOUT_S
 
-    def log_message(self, fmt, *args):  # 静音访问日志
-        pass
+    def log_message(self, fmt, *args):  # 访问日志只到 debug（默认不落盘），不刷屏
+        LOG.debug("%s %s", self.address_string(), fmt % args)
 
     # ---------- 基础响应
     def _send(self, code: int, body: bytes, ctype: str = "application/json",
@@ -284,6 +285,7 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
         except Exception:  # noqa: BLE001 - 未预期的错误：记到终端，给前端 500
             traceback.print_exc(file=sys.stderr)
+            LOG.exception("请求处理异常：%s %s", self.command, urlparse(self.path).path)
             if self._started:  # 响应已经开始写，只能断开
                 self.close_connection = True
                 return
@@ -456,7 +458,7 @@ class Handler(BaseHTTPRequestHandler):
                 "ffprobe": _shutil.which("ffprobe"),
             })
 
-        if (hit := settings.handle_get(p)) is not None:
+        if (hit := settings.handle_get(p) or support.handle_get(p)) is not None:
             return self._json(hit[1], hit[0])
 
         if p == "/api/projects":
@@ -560,6 +562,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, exc.code)
 
         if (hit := settings.handle_post(p, body)) is not None:
+            return self._json(hit[1], hit[0])
+        if (hit := support.handle_post(p, body, existing_project)) is not None:
             return self._json(hit[1], hit[0])
 
         if p == "/api/new":
@@ -747,6 +751,7 @@ def serve_in_background(start_port: int = 8765) -> tuple[ThreadingHTTPServer, st
 
 
 def main() -> None:
+    applog.setup("app")
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--open", action="store_true")

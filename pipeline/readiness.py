@@ -11,6 +11,9 @@ from pathlib import Path
 from pipeline import secrets
 
 TRANSCRIPT_RAW = "transcript_raw.json"  # 与 aicut.cmd_transcribe 的跳过条件一致
+# 「处理素材」依次跑的步骤（aicut.cmd_<名>），每段计时进 work/timings.json
+PREPARE_STEPS = ("ingest", "transcribe", "analyze", "text", "junk", "scenes", "quality",
+                 "score", "summary", "questions", "select", "brief")
 
 
 def needed_keys(work: Path) -> list[str]:

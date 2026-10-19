@@ -7,6 +7,7 @@
 <script src="/static/common.js"></script>
 <script src="/static/jobs.js"></script>
 <script src="/static/settings.js"></script>
+<script src="/static/support.js"></script>
 <style>
   :root{
     --bg:#16181d; --panel:#1e2128; --panel2:#252932; --line:#2f3440;
@@ -116,6 +117,8 @@
   .consent-flows{line-height:2;padding-left:18px}
   .ver-export{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   #btnSettings{margin-top:10px}
+  .side-support{margin-top:6px;font-size:12px}
+  pre.notices{white-space:pre-wrap;font-size:12px;line-height:1.5;max-height:60vh;overflow:auto}
 </style>
 </head>
 <body>
@@ -125,6 +128,8 @@
     <button class="primary" onclick="openNew()">＋ 新建项目</button>
     <ul id="projects"></ul>
     <button class="ghost" id="btnSettings" onclick="openSettings()"></button>
+    <button class="ghost side-support" onclick="exportDiag()">导出诊断包</button>
+    <button class="ghost side-support" onclick="openAbout()">关于 / 第三方许可</button>
   </aside>
 
   <main>

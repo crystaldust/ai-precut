@@ -90,7 +90,6 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 |---|---|
 | Python 3.10+ | `brew install python` 或官网安装包 |
 | ffmpeg | `brew install ffmpeg` |
-| mediakit-cli | `npx @volcengine/mediakit-cli install -y` |
 | API Key | 首次打开剪辑台后，在左下角「⚙ 设置 · API Key」里填（存本机钥匙串） |
 | pyJianYingDraft | 不用管，第一次点"生成成片"时自动装到 `~/.aicut/venv` |
 | 剪映专业版 | Mac 版即可；生成草稿前要先退出剪映 |

@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from pipeline import schema
-from pipeline.llm import DeepSeekClient, LLMError
+from pipeline.llm import DeepSeekClient, LLMError, describe
 
 ANNOTATE_RETRIES = 2  # 每批在客户端 HTTP 重试之外，再整批/补漏重试的次数（覆盖 JSON 解析失败、漏 id）
 ANNOTATION_RETRY_HINT = "结果已保存；检查网络/额度后重新运行「处理素材」，只会重跑这 {n} 句"
@@ -183,7 +183,8 @@ def _normalize(item: dict) -> dict:
     """模型给的形状不对（如 entities 是数字）→ LLMError，让这一批重试，而不是让整个任务崩掉。"""
     entities = item.get("entities") or []
     if not isinstance(entities, list):
-        raise LLMError(ANNOTATION_SHAPE_ERROR.format(detail=f"entities={entities!r}"[:80]))
+        raise LLMError(ANNOTATION_SHAPE_ERROR.format(
+            detail=f"entities 是 {type(entities).__name__}"))
     return {"info_type": str(item.get("info_type") or "事实陈述")[:12],
             "key_info": bool(item.get("key_info")),
             "entities": [str(e)[:30] for e in entities][:8],
@@ -197,7 +198,7 @@ def _annotate_once(client, chunk: list[dict], style: str) -> dict[str, dict]:
     data = client.chat_json(ANNOTATE_SYSTEM, prompt, temperature=0.1, max_tokens=4000)
     items = data.get("segments") if isinstance(data, dict) else None
     if not isinstance(items, list) or not all(isinstance(x, dict) for x in items):
-        raise LLMError(ANNOTATION_SHAPE_ERROR.format(detail=str(data)[:80]))
+        raise LLMError(ANNOTATION_SHAPE_ERROR.format(detail=describe(str(data))))
     wanted = {s["id"] for s in chunk}
     return {item["id"]: _normalize(item) for item in items
             if isinstance(item.get("id"), str) and item["id"] in wanted}

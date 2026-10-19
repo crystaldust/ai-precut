@@ -151,6 +151,8 @@ def dispatch(argv: list[str]) -> int | None:
     if len(argv) < 2 or argv[1] not in (CLI_FLAG, MODULE_FLAG):
         return None
     _line_buffered_stdio()
+    from pipeline import applog  # 打包版的任务子进程：窗口化 App 没有终端，只能靠 cli.log（GL-19）
+    applog.setup("cli")
     ensure_bundled_path()
     start_parent_watchdog()
     if argv[1] == CLI_FLAG:

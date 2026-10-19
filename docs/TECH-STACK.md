@@ -14,10 +14,10 @@
 | HTTP 服务 | 标准库 `http.server` | — | 无依赖、可打包；单机单用户，不需要并发框架 |
 | 前端 | 原生 HTML/CSS/JS | — | 无构建步骤，改完刷新即生效；打包体积最小 |
 | 桌面壳 | `pywebview` | ≥5 | 用系统 WebView（macOS WKWebView / Win WebView2），不背 Chromium |
-| 媒体处理 | **ffmpeg / ffprobe 静态二进制** | ≥6.1 | 静态包不依赖用户机器；通过 subprocess 调用 |
+| 媒体处理 | **ffmpeg / ffprobe 静态二进制** | 8.1.3（LGPL 自建，`packaging/build_ffmpeg.sh`） | 静态包不依赖用户机器；通过 subprocess 调用；H.264 一律 `h264_videotoolbox`（`pipeline/encode.py`） |
 | 剪映草稿 | `pyJianYingDraft`（锁定版本） | 0.3.x | 生成 5.9 格式时间线，再适配各平台 |
-| 语音转写 | `mediakit-cli`（火山引擎 MediaKit） | 0.2.x | 云端 ASR，带时间戳与说话人；**唯一允许上传素材的地方（仅音轨）** |
-| 视频理解 / OCR | `mediakit-cli`（可选） | 同上 | 按需启用，默认关闭以控成本 |
+| 语音转写 | 火山引擎 MediaKit HTTPS API（`pipeline/cloud.py`，标准库 urllib 直连） | 协议同 mediakit-cli 0.2.1 | 云端 ASR，带时间戳与说话人；**唯一允许上传素材的地方（仅音轨）**；不依赖 Node |
+| 视频理解 / OCR | MediaKit（可选，未接入） | — | 按需启用，默认关闭以控成本 |
 | LLM | DeepSeek API（OpenAI 兼容） | — | 话题分段、信息类型、提问生成 |
 | 存储 | JSON 文件 | — | 单机、单用户、可 diff、可手改 |
 | 打包 | PyInstaller `onedir` | — | 目录式，启动快、不易被杀软误报 |
@@ -90,7 +90,7 @@ uv run pyinstaller packaging/ai-cut.spec --noconfirm --clean
 
 | 服务 | 调用方式 | 凭证 | 失败时的降级 |
 |---|---|---|---|
-| MediaKit ASR | `mediakit-cli video asr-subtitles` → `query-task` | `MEDIAKIT_API_KEY`（Keychain） | 提示"未配置 Key"，转写用手改文稿 |
+| MediaKit ASR | HTTPS：申请上传地址 → PUT 音轨 → `POST /api/v1/tools/asr-subtitles` → 轮询 `GET /api/v1/tasks/{id}` | `MEDIAKIT_API_KEY`（Keychain，Bearer） | 提示"未配置 Key"，转写用手改文稿 |
 | MediaKit 视频理解 / OCR | 同上 | 同上 | 默认关闭，不影响主链 |
 | DeepSeek API | HTTPS `POST /chat/completions` | `DEEPSEEK_API_KEY`（Keychain） | 退回规则模板（分类名、提问可为空） |
 
@@ -143,7 +143,8 @@ default-workspace/          ← 代码根目录（git 仓库）
 
 | 组件 | 许可 | 分发义务 |
 |---|---|---|
-| ffmpeg / ffprobe | LGPL 2.1+（建议选 LGPL 构建） | 附许可文本，提供源码获取方式；**不用 GPL 构建**除非确认接受传染性 |
+| ffmpeg / ffprobe | LGPL 2.1+（**已采用 LGPL 自建**，见 `packaging/build_ffmpeg.sh`） | 随包附许可全文、configure 行与源码（`dist/sources/`）；声明见 `packaging/THIRD-PARTY-NOTICES.txt` |
+| FreeType 2.14.3 / HarfBuzz 14.6.0（静态编入 ffmpeg，drawtext 用） | FTL / Old MIT | FTL 须在文档署名；两者许可全文与源码随包 |
 | PyInstaller | GPL + 启动器例外 | 打包产物不受 GPL 约束（有例外条款），附声明即可 |
 | pywebview | BSD-3 | 附声明 |
 | pyJianYingDraft | 见其仓库许可 | 附声明 |

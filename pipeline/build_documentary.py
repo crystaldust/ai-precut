@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # 脚本方式运行时可导入 pipeline.media_io；append 防遮蔽三方包
 
-from pipeline import media_io  # noqa: E402
+from pipeline import encode, media_io  # noqa: E402
 
 MAX_CHARS = 14          # 单行最多 14 字（1080 宽下 63px 字号刚好不溢出）
 W, H, FPS = 1080, 1920, 30
@@ -61,7 +61,7 @@ def cut_shot(src: Path, dst: Path, start: float, dur: float) -> None:
           f"pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={FPS}")
     media_io.ffmpeg_to(dst, ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(src),
                              "-vf", vf,
-                             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                             *encode.h264_args("clip"),
                              "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
                              "-movflags", "+faststart"])
 

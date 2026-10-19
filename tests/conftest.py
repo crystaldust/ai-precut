@@ -27,6 +27,22 @@ def _isolate_secrets(tmp_path, monkeypatch):
     monkeypatch.setattr(secrets, "LEGACY_FILES", {}, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_logs(tmp_path, monkeypatch):
+    """任何测试都不许写真实的 ~/Library/Logs/剪辑台；测完卸掉本测试装上的日志 handler 与异常钩子。"""
+    monkeypatch.setenv("AI_CUT_LOG_DIR", str(tmp_path / "logs_guard"))
+    yield
+    from pipeline import applog
+    applog.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _encoder_ok(monkeypatch):
+    """默认当作本机能用 VideoToolbox（预检本身在 test_m5_review2 里用假 runner 测）。"""
+    from pipeline import encode
+    monkeypatch.setattr(encode, "_PREFLIGHT", {"result": None})
+
+
 @pytest.fixture
 def no_keys():
     """显式声明「本测试不带任何 Key」；隔离本身已由 _isolate_secrets 统一完成。"""

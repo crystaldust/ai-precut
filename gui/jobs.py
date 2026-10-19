@@ -24,7 +24,7 @@ import time
 import uuid
 from pathlib import Path
 
-from pipeline import proc, schema, secrets
+from pipeline import applog, proc, schema, secrets
 
 JOB_COMMANDS = {"prepare": ["prepare"], "build": ["build"], "select": ["select"],
                 "export": ["export"]}
@@ -51,6 +51,9 @@ SHORT_CMD_TIMEOUT_MSG = "[错误] 命令超时（{s} 秒没有完成），请重
 SHORT_CMD_START_FAILED = "[错误] 无法执行命令：{exc}"
 NO_TIMELINE_MSG = "这一版还没有时间线，先生成成片"
 
+LOG = applog.get("job")  # app.log 只记任务要点（起止、退出码、行数、错误行），不记普通输出（GL-19）
+LOGGED_PREFIXES = ("[错误]", "[x]", "[!]", "Traceback")  # 只有这些行进 app.log；正文可能含文稿 / 片名
+LOGGED_LINE_MAX = 300
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 
@@ -140,7 +143,14 @@ def job_view(job_id: str) -> dict | None:
         return view
 
 
+def _log_line(job_id: str, line: str) -> None:
+    text = line.strip()
+    if text.startswith(LOGGED_PREFIXES):
+        LOG.info("[%s] %s", job_id, applog.strip_paths(text)[:LOGGED_LINE_MAX])
+
+
 def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
+    applog.register_known_secrets()  # 子进程输出里若出现 Key 也要打码；不弹钥匙串
     if not isinstance(task, str) or task not in JOB_COMMANDS:  # 先校验再登记，不留幽灵 running
         raise ValueError(UNKNOWN_TASK_MSG)
     cmd = job_command(task, name, list(extra or []))
@@ -156,13 +166,14 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
                                   name=f"aicut-job-{job_id}")
         JOBS[job_id] = {"status": "running", "log": [], "exit": None, "started": time.time(),
                         "task": task, "project": name, "popen": None, "cancel": False,
-                        "thread": thread}
+                        "thread": thread, "out_lines": 0}
     try:
         thread.start()
     except BaseException:
         with JOBS_LOCK:  # 线程没起来：撤销登记，释放互斥
             JOBS.pop(job_id, None)
         raise
+    LOG.info("任务开始 %s %s %s", job_id, task, name)
     return job_id
 
 
@@ -187,6 +198,8 @@ def _run_job(job_id: str, cmd: list[str]) -> None:
         for line in child.stdout:
             with JOBS_LOCK:
                 JOBS[job_id]["log"].append(line.rstrip())
+                JOBS[job_id]["out_lines"] += 1
+            _log_line(job_id, line)
         code = child.wait()
     except Exception as exc:  # noqa: BLE001 - 任务线程不能静默死掉，留下永远 running
         with contextlib.suppress(Exception):
@@ -213,6 +226,9 @@ def _finish_job(job_id: str, code: int, note: str | None = None) -> None:
         job["popen"] = None
         job["log"].append(JOB_EXIT_NOTE.format(code=code))
         _clear_marker()
+    (LOG.info if code == 0 else LOG.warning)(
+        "任务结束 %s %s 退出码 %s，输出共 %d 行 %s", job_id, job["status"], code,
+        job.get("out_lines", 0), applog.strip_paths(note or "")[:LOGGED_LINE_MAX])
 
 
 def _killpg(pid: int, sig: int) -> None:
