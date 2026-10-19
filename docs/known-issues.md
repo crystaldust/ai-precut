@@ -69,8 +69,8 @@
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-38 | 覆盖率 51%（aicut.py 未纳入统计，实际约 40%），要求 80%；`gui/server.py`、`to_jianying.py`、`junk_detect.py`、`format_transcript.py`、`build_documentary.py`、`render_preview.py` 为 0% | `tests/` | open |
-| KI-39 | 无端到端测试（素材 → 剪映草稿）；`test_proc.py` 断言近乎恒真 | `tests/test_proc.py:19-28`；`tests/test_export_draft.py` | open |
+| KI-38 | 覆盖率 51%（aicut.py 未纳入统计，实际约 40%），要求 80%；`gui/server.py`、`to_jianying.py`、`junk_detect.py`、`format_transcript.py`、`build_documentary.py`、`render_preview.py` 为 0% | `tests/` | fixed `25c76fc` |
+| KI-39 | 无端到端测试（素材 → 剪映草稿）；`test_proc.py` 断言近乎恒真 | `tests/test_proc.py:19-28`；`tests/test_export_draft.py` | fixed `25c76fc` |
 
 ## 文档
 

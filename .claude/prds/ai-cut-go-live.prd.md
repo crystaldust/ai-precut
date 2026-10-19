@@ -57,7 +57,7 @@
 | 7 | 渲染与导出健壮 | 特殊字幕、无音轨、模板缺失等情况不崩且如实报错 | KI-13..KI-18 KI-59 KI-64 KI-76 KI-78 | complete | [plan](../PRPs/plans/m7-render-export-robust.plan.md) · [report](../PRPs/reports/m7-render-export-robust-report.md) · `71e44e7` |
 | 8 | 失败可见 | ffmpeg/LLM/JSON 失败不再伪装成成功 | KI-19..KI-27 KI-48 KI-49 KI-56 KI-66 KI-77 | complete | [plan](../PRPs/plans/m8-visible-failures.plan.md) · [report](../PRPs/reports/m8-visible-failures-report.md) · `ef3c020` |
 | 9 | 密钥与运维 | 密钥文件权限与脱敏正确；HTTP 边界校验；费用、进程、启动脚本、版本号可控 | KI-28..KI-37 KI-50..KI-55 KI-57 KI-61..KI-63 KI-65 KI-67..KI-72 KI-74 KI-75 KI-83 KI-84 KI-86 KI-87 | complete | [plan](../PRPs/plans/m9-secrets-ops.plan.md) · [report](../PRPs/reports/m9-secrets-ops-report.md) · `9017287` |
-| 10 | 测试达标 | 覆盖率 ≥ 80%；有素材 → 剪映草稿的端到端测试 | KI-38 KI-39 | in-progress | [plan](../PRPs/plans/m10-test-coverage.plan.md) |
+| 10 | 测试达标 | 覆盖率 ≥ 80%；有素材 → 剪映草稿的端到端测试 | KI-38 KI-39 | complete | [plan](../PRPs/plans/m10-test-coverage.plan.md) · [report](../PRPs/reports/m10-test-coverage-report.md) · `25c76fc` |
 | 11 | 文档一致 | 指标可检验、PLAN 与 PRD 对齐、术语统一 | KI-40..KI-44 | complete | [plan](../PRPs/plans/m11-docs-consistency.plan.md) · [report](../PRPs/reports/m11-docs-consistency-report.md) · `83d2a1a` |
 
 ## Open Questions
