@@ -30,7 +30,15 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))  # 独立运行时可导入 pipeline；append 防遮蔽三方包
+
+from pipeline import jy_version  # noqa: E402
+
 PH_DRAFT = "__DRAFT_DIR__"
+# INSTALL.bat 在延迟扩展下运行：草稿名里有这些字符会被 cmd 改写，回滚时的 rd 可能删到别的目录
+BAT_UNSAFE_CHARS = frozenset('!%^&|<>"')
+BAD_DRAFT_NAME = "草稿名 {name!r} 含 Windows 安装脚本无法安全处理的字符（{chars}），请换一个名字"
 PH_ROOT = "__DRAFT_ROOT__"
 
 
@@ -100,8 +108,18 @@ def rewrite_for_windows(draft_dir: Path) -> None:
     meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
 
+def check_draft_name(name: str) -> None:
+    """拒绝 cmd 会改写的草稿名（ValueError）；导出链路的 _api_name 产物天然满足。"""
+    bad = sorted(set(name) & BAT_UNSAFE_CHARS)
+    if bad:
+        raise ValueError(BAD_DRAFT_NAME.format(name=name, chars=" ".join(bad)))
+
+
 def make_minimal_draft(dst: Path, clips: list[tuple[str, str]]) -> None:
     """用 3 个真实镜头造一个最小草稿（用来先验证能不能导入）。"""
+    tpl = jy_version.TEMPLATE   # 缺模板 = 结构不对的草稿，不交付（D1 / KI-81）
+    if not tpl.exists():
+        sys.exit(jy_version.TEMPLATE_MISSING.format(series=jy_version.VERIFIED_SERIES, path=tpl))
     sys.path.insert(0, str(Path("/tmp/jyvenv/lib/python3.14/site-packages")))
     import pyJianYingDraft as draft
 
@@ -139,18 +157,15 @@ def make_minimal_draft(dst: Path, clips: list[tuple[str, str]]) -> None:
             shutil.copy2(src, res / src.name)
     content_path.write_text(json.dumps(content, ensure_ascii=False), encoding="utf-8")
 
-    # 套用剪映 11.0 空草稿骨架，字段级同构
-    tpl = ROOT / "research/base_template_11.0.json"
-    if tpl.exists():
-        base = json.loads(tpl.read_text(encoding="utf-8"))
-        for k, v in content.items():
-            if k != "materials":
-                base[k] = v
-        for k, v in content["materials"].items():
-            if v:
-                base["materials"][k] = v
-        (dst / "draft_content.json").write_text(
-            json.dumps(base, ensure_ascii=False), encoding="utf-8")
+    # 套用已验证版本的剪映空草稿骨架，字段级同构
+    base = json.loads(tpl.read_text(encoding="utf-8"))
+    for k, v in content.items():
+        if k != "materials":
+            base[k] = v
+    for k, v in content["materials"].items():
+        if v:
+            base["materials"][k] = v
+    (dst / "draft_content.json").write_text(json.dumps(base, ensure_ascii=False), encoding="utf-8")
 
 
 # ------------------------------------------------------------------ 安装器
@@ -165,31 +180,65 @@ echo.
 set "ROOT=%LOCALAPPDATA%\JianyingPro\User Data\Projects\com.lveditor.draft"
 if not exist "%ROOT%" (
   echo [X] JianYing draft folder not found:
-  echo     %ROOT%
+  echo     !ROOT!
   echo     Open JianYing once, close it, then run this again.
   pause & exit /b 1
 )
 
 tasklist /FI "IMAGENAME eq JianyingPro.exe" 2>nul | find /i "JianyingPro.exe" >nul
 if not errorlevel 1 (
-  echo [!] JianYing is running. Please quit it completely ^(tray icon too^), then run again.
+  echo [X] JianYing is running. Please quit it completely ^(tray icon too^), then run again.
   pause & exit /b 1
 )
 
 set "PKG=%~dp0"
+set "COUNT=0"
+set "CONFLICT=0"
+for /d %%D in ("%PKG%drafts\*") do (
+  set /a COUNT+=1
+  if exist "%ROOT%\%%~nxD" (
+    echo [X] A draft with the same name already exists in JianYing:
+    echo     !ROOT!\%%~nxD
+    set "CONFLICT=1"
+  )
+)
+if "%COUNT%"=="0" (
+  echo [X] No draft found in this package. Unzip the whole package first.
+  pause & exit /b 1
+)
+if "%CONFLICT%"=="1" (
+  echo     Nothing was installed and your existing drafts were not touched.
+  echo     Delete or rename that draft in JianYing first, then run this again.
+  pause & exit /b 1
+)
+
+set "FAILED=0"
 for /d %%D in ("%PKG%drafts\*") do (
   set "NAME=%%~nxD"
   echo [*] Installing !NAME! ...
-  if exist "%ROOT%\!NAME!" rd /s /q "%ROOT%\!NAME!"
   xcopy "%%D" "%ROOT%\!NAME!\" /E /I /Y /Q >nul
   if errorlevel 1 (
-    echo [X] Copy failed. Try running as administrator.
+    echo [X] Copy failed for !NAME!. Try running as administrator.
+    set "FAILED=1"
+    if exist "%ROOT%\!NAME!" rd /s /q "%ROOT%\!NAME!"
   ) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%PKG%fix_paths.ps1" -DraftDir "%ROOT%\!NAME!" >nul 2>&1
-    echo     installed to: %ROOT%\!NAME!
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%PKG%fix_paths.ps1" -DraftDir "%ROOT%\!NAME!"
+    if errorlevel 1 (
+      echo [X] Path fix failed for !NAME! - JianYing would show missing media.
+      set "FAILED=1"
+      rd /s /q "%ROOT%\!NAME!"
+    ) else (
+      echo     installed to: !ROOT!\!NAME!
+    )
   )
 )
 
+if "%FAILED%"=="1" (
+  echo.
+  echo [X] Some drafts were NOT installed correctly. See the messages above.
+  echo     The incomplete copies were removed. Send a screenshot of this window to the developer.
+  pause & exit /b 1
+)
 echo.
 echo [OK] Done.
 echo      1. Start JianYing
@@ -215,6 +264,7 @@ try {
     }
   }
 } catch {
+  Write-Host "[X] fix_paths failed: $($_.Exception.Message)"
   exit 1
 }
 exit 0
@@ -235,7 +285,10 @@ NOTES = """剪映草稿导入说明（Windows）
 三、装了什么
   - 草稿本体复制到：%LOCALAPPDATA%\\JianyingPro\\User Data\\Projects\\com.lveditor.draft\\<草稿名>
   - 素材在该草稿的 Resources 文件夹里，程序已经自动改成本机路径。
-  - 不会动你已有的任何草稿。
+  - 不会动你已有的任何草稿：剪映里已有同名草稿时，安装会直接停下并提示（[X] ... already exists），
+    什么都不装；请先在剪映里删除或改名那个草稿，再双击 INSTALL.bat。
+  - 安装中途失败会显示 [X] 并自动删掉这次装了一半的副本（不会出现 [OK] Done），
+    请把窗口截图发给开发者。
 
 四、看什么（这是验证重点）
   1. 草稿列表里有没有出现？
@@ -256,12 +309,16 @@ NOTES = """剪映草稿导入说明（Windows）
 
 
 def write_installer(pkg: Path) -> None:
+    """写 INSTALL.bat / fix_paths.ps1 / README.txt；草稿名不安全就什么都不写（ValueError）。"""
+    for d in sorted((pkg / "drafts").glob("*")):
+        check_draft_name(d.name)
     (pkg / "INSTALL.bat").write_text(BAT.replace("\n", "\r\n"), encoding="ascii", errors="replace")
     (pkg / "fix_paths.ps1").write_text(PS1.replace("\n", "\r\n"), encoding="utf-8-sig")
     (pkg / "README.txt").write_text(NOTES.replace("\n", "\r\n"), encoding="utf-8-sig")
 
 
-def zip_pkg(pkg: Path, out_zip: Path) -> None:
+def zip_pkg(pkg: Path, out_zip: Path) -> int:
+    """打 zip，返回字节数；不打印（调用方可能传的是临时路径，KI-64）。"""
     out_zip.parent.mkdir(parents=True, exist_ok=True)
     if out_zip.exists():
         out_zip.unlink()
@@ -269,7 +326,7 @@ def zip_pkg(pkg: Path, out_zip: Path) -> None:
         for f in sorted(pkg.rglob("*")):
             if f.is_file():
                 z.write(f, f.relative_to(pkg))
-    print(f"打包完成：{out_zip}  ({out_zip.stat().st_size / 1e6:.1f} MB)")
+    return out_zip.stat().st_size
 
 
 def main() -> None:
@@ -279,6 +336,10 @@ def main() -> None:
     ap.add_argument("--minimal", action="store_true", help="生成 3 镜头最小测试草稿")
     ap.add_argument("-o", "--out", default="dist")
     args = ap.parse_args()
+    try:
+        check_draft_name(args.name)
+    except ValueError as exc:
+        sys.exit(str(exc))
 
     pkg = ROOT / args.out / f"_pkg_{args.name}"
     if pkg.exists():
@@ -320,7 +381,9 @@ def main() -> None:
         print(f"完整草稿：{size:.0f} MB")
 
     write_installer(pkg)
-    zip_pkg(pkg, ROOT / args.out / f"{args.name}.zip")
+    out_zip = ROOT / args.out / f"{args.name}.zip"
+    size = zip_pkg(pkg, out_zip)
+    print(f"打包完成：{out_zip}  ({size / 1e6:.1f} MB)")
     shutil.rmtree(pkg)
 
 

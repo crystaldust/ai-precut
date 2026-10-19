@@ -118,3 +118,21 @@ def test_notices_cover_harfbuzz_mit():
     sh = _read("packaging/build_ffmpeg.sh")
     sha = re.search(r"HARFBUZZ_SHA256=([0-9a-f]{64})", sh).group(1)
     assert sha in text
+
+
+# ---------------------------------------------------------------- M7：预览补静音轨用到的滤镜（KI-14）
+def test_ffmpeg_build_checks_preview_audio_filters():
+    sh = _read("packaging/build_ffmpeg.sh")
+    filters = re.search(r'REQUIRED_FILTERS="([^"]+)"', sh).group(1).split()
+    assert {"anullsrc", "aformat"} <= set(filters)
+
+
+def test_spec_includes_jy_version():
+    spec = _read("packaging/ai-cut.spec")
+    for mod in ("pipeline.jy_version", "pipeline.jy_env", "pipeline.pyver"):
+        assert f'"{mod}"' in spec, mod
+
+
+def test_spec_ships_the_template_jy_version_expects():
+    from pipeline import jy_version
+    assert f'"{jy_version.TEMPLATE.name}"' in _read("packaging/ai-cut.spec")   # 版本常量漂移守卫（KI-17）

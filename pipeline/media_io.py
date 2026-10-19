@@ -67,11 +67,15 @@ def _write_marker(dst: Path) -> None:
 
 
 @contextlib.contextmanager
-def atomic_output(dst: Path) -> Iterator[Path]:
-    """yield 一个临时路径；块正常结束才改名到 dst 并写完成标记，任何异常（含中断）都不留半成品。"""
+def atomic_output(dst: Path, *, mark: bool = True) -> Iterator[Path]:
+    """yield 一个临时路径；块正常结束才改名到 dst 并写完成标记，任何异常（含中断）都不留半成品。
+
+    mark=False：只做原子改名、不写标记（例如 dst 本身就是调用方 atomic_output 给的临时路径）。
+    """
     dst = Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    done_marker(dst).unlink(missing_ok=True)  # 决定重做就先作废旧结果
+    if mark:
+        done_marker(dst).unlink(missing_ok=True)  # 决定重做就先作废旧结果
     _clear_stale_partials(dst)
     tmp = _partial_path(dst)
     try:
@@ -79,7 +83,8 @@ def atomic_output(dst: Path) -> Iterator[Path]:
         if not tmp.is_file() or tmp.stat().st_size == 0:
             raise MediaError(f"没有产出有效文件：{dst.name}")
         os.replace(tmp, dst)
-        _write_marker(dst)
+        if mark:
+            _write_marker(dst)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -135,3 +140,20 @@ def complete_or_adopt(dst: Path, *, runner=subprocess.run) -> bool:
         return False
     _write_marker(dst)
     return True
+
+
+FFPROBE_AUDIO = ["ffprobe", "-v", "error", "-select_streams", "a",
+                 "-show_entries", "stream=index", "-of", "csv=p=0"]
+
+
+def has_audio(path: Path, *, runner=subprocess.run) -> bool:
+    """素材有没有音轨（KI-14）；ffprobe 读不了 → MediaError（不当作「没音轨」糊过去）。"""
+    try:
+        r = runner([*FFPROBE_AUDIO, str(path)], capture_output=True, text=True,
+                   encoding="utf-8", errors="replace")
+    except OSError as exc:  # 没装 ffprobe / 不可执行
+        raise MediaError(f"无法运行 ffprobe：{exc}") from exc
+    if r.returncode != 0:
+        tail = (r.stderr or "").strip()[-STDERR_TAIL:]
+        raise MediaError(f"读不了素材 {Path(path).name}：{tail}")
+    return bool((r.stdout or "").strip())

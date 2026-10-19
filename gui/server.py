@@ -31,6 +31,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
+from pipeline.pyver import require_supported_python  # noqa: E402
+require_supported_python()  # 旧解释器在这里就给出中文说明
 from pipeline import applog, media_io, notices, proc, review, schema, select, style  # noqa: E402
 from gui import jobs, settings, support  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用

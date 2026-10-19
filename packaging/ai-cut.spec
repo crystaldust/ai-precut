@@ -19,6 +19,7 @@ hidden = [
     "pipeline.encode", "pipeline.readiness", "pipeline.safe_http",
     "pipeline.build_documentary", "pipeline.classify", "pipeline.cloud",
     "pipeline.export_draft", "pipeline.format_transcript", "pipeline.junk_detect",
+    "pipeline.jy_env", "pipeline.jy_version", "pipeline.pyver",
     "pipeline.llm", "pipeline.media_io",
     "pipeline.proc", "pipeline.questions", "pipeline.render_preview",
     "pipeline.review", "pipeline.schema", "pipeline.secrets", "pipeline.select",

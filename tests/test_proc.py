@@ -1,3 +1,4 @@
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -97,12 +98,94 @@ def test_cli_cmd_frozen_relaunches_self(monkeypatch):
     assert proc.cli_cmd(["prepare", "p1"]) == [sys.executable, "--aicut-cli", "prepare", "p1"]
 
 
-def test_module_cmd_dev_runs_script(monkeypatch):
+def test_module_cmd_dev_uses_bootstrap(monkeypatch):
+    # KI-15：开发态不再以脚本路径运行（pipeline/ 会成为 sys.path[0]，select.py 遮蔽标准库）
     monkeypatch.setattr(proc, "FROZEN", False)
     cmd = proc.module_cmd("pipeline.to_jianying", ["a"])
-    assert cmd[0] == sys.executable
-    assert Path(cmd[1]) == proc.app_root() / "pipeline" / "to_jianying.py"
-    assert cmd[2:] == ["a"]
+    assert cmd[:2] == [sys.executable, "-P"] and cmd[-2:] == ["pipeline.to_jianying", "a"]
+    assert not any(str(c).endswith(".py") for c in cmd)
+
+
+def _shadow_tree(tmp_path):
+    """包目录和 cwd 里都放一个遮蔽标准库 json 的 json.py（模拟 pipeline/select.py）。"""
+    pkg = tmp_path / "root" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    shadow = "raise ImportError('shadowed stdlib')\n"
+    (pkg / "json.py").write_text(shadow)
+    (tmp_path / "json.py").write_text(shadow)
+    (pkg / "tool.py").write_text("import json, sys\nprint(json.__file__)\n"
+                                 "print(sys.argv[1:])\nsys.exit(3)\n")
+    return tmp_path / "root"
+
+
+def _run_shadowed(python, tmp_path):
+    cmd = proc.dev_module_cmd(python, "pkg.tool", ["x", "y"], root=_shadow_tree(tmp_path))
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=tmp_path)
+    assert r.returncode == 3, r.stderr                 # 退出码原样透传
+    out = r.stdout.splitlines()
+    assert "pkg" not in out[0] and str(tmp_path) not in out[0]   # 拿到的是标准库 json
+    assert out[1] == "['x', 'y']"                      # 参数原样传给模块
+    return cmd
+
+
+def test_dev_module_cmd_does_not_put_package_dir_or_cwd_first(tmp_path):
+    # 用机制复现，不依赖本机 select 是不是内建模块（uv 的 3.12 里是内建，复现不了）
+    cmd = _run_shadowed(sys.executable, tmp_path)
+    assert cmd[1] == "-P"
+
+
+def test_dev_module_cmd_without_safe_path_flag_still_isolates(tmp_path, monkeypatch):
+    # 审查修复 1：<3.11 的解释器不认 -P，退回由引导代码自己剔除 sys.path 里的 cwd
+    monkeypatch.setattr(proc.pyver, "supports_safe_path", lambda py: False)
+    cmd = _run_shadowed(sys.executable, tmp_path)
+    assert "-P" not in cmd
+
+
+def _old_python() -> str | None:
+    py = "/usr/bin/python3"
+    if not Path(py).exists():
+        return None
+    r = subprocess.run([py, "-c", "import sys; print(sys.version_info < (3, 11))"],
+                       capture_output=True, text=True)
+    return py if r.returncode == 0 and r.stdout.strip() == "True" else None
+
+
+@pytest.mark.skipif(_old_python() is None, reason="需要一个 <3.11 的 Python（如 macOS 自带 3.9）")
+def test_dev_module_cmd_runs_under_old_python(tmp_path):
+    cmd = _run_shadowed(_old_python(), tmp_path)
+    assert "-P" not in cmd
+
+
+def test_dev_module_cmd_defaults_to_app_root(monkeypatch):
+    monkeypatch.setattr(proc.pyver, "supports_safe_path", lambda py: True)
+    cmd = proc.dev_module_cmd("py", "pipeline.render_preview", ["a"])
+    assert cmd[0] == "py" and cmd[1] == "-P"
+    assert cmd[-3:] == [str(proc.app_root()), "pipeline.render_preview", "a"]
+
+
+def _python_with_dynamic_select() -> str | None:
+    """找一个 select 不是内建模块、版本 ≥3.11 的 Python（如 Homebrew）；KI-15 只在这种 Python 上暴露。"""
+    for py in ("/opt/homebrew/bin/python3", "/usr/local/bin/python3"):
+        if not Path(py).exists():
+            continue
+        r = subprocess.run([py, "-c", "import sys; print('select' in sys.builtin_module_names, "
+                                      "sys.version_info >= (3, 11))"],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.split() == ["False", "True"]:
+            return py
+    return None
+
+
+@pytest.mark.skipif(_python_with_dynamic_select() is None,
+                    reason="需要 select 不是内建模块的 Python（如 Homebrew）")
+@pytest.mark.parametrize("module", ["pipeline.render_preview", "pipeline.junk_detect",
+                                    "pipeline.format_transcript"])
+def test_pipeline_help_runs_under_homebrew_python(module):
+    py = _python_with_dynamic_select()
+    r = subprocess.run(proc.dev_module_cmd(py, module, ["--help"]),
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
 
 
 def test_module_cmd_frozen_relaunches_self(monkeypatch):

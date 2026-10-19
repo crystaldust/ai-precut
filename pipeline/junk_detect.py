@@ -8,8 +8,8 @@
   * 输出两份：junk_report.json（给程序）+ junk_report.csv（给人看）。
 
 用法：
-    python3 junk_detect.py <视频> -o <输出目录> [--scene]
-    python3 junk_detect.py proxy.mp4 -o analysis/ --scene
+    python -m pipeline.junk_detect <视频> -o <输出目录> [--scene]   # 在仓库根运行
+    python -m pipeline.junk_detect proxy.mp4 -o analysis/ --scene
 
 依赖：ffmpeg（脚本只用标准库）
 """

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """timeline.json → 剪映专业版草稿（Mac）。
 
-已验证环境：macOS + 剪映专业版 11.0.0（bundle com.lemon.lvpro）
+已验证环境：macOS + 剪映专业版（版本与骨架模板见 pipeline/jy_version.py，bundle com.lemon.lvpro）
 依赖：pyJianYingDraft（负责生成 5.9 格式的 draft_content.json）、ffmpeg
 
 做四件事：
@@ -14,9 +14,9 @@
 
 草稿根：AI_CUT_DRAFT_ROOT > 剪映「全局设置 → 草稿位置」> 默认 ~/Movies/JianyingPro/...。
 
-用法：
-    python3 to_jianying.py ../demo/timeline.json --name 我的粗剪_v1 --dry-run
-    python3 to_jianying.py ../demo/timeline.json --name 我的粗剪_v1
+用法（在仓库根运行）：
+    python -m pipeline.to_jianying demo/timeline.json --name 我的粗剪_v1 --dry-run
+    python -m pipeline.to_jianying demo/timeline.json --name 我的粗剪_v1
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ if str(ROOT) not in sys.path:
     # 免得仓库根的 packaging/ 遮蔽 PyPI 的 packaging
     sys.path.append(str(ROOT))
 
-from pipeline import schema  # noqa: E402
+from pipeline import jy_version, schema  # noqa: E402
 
 DEFAULT_DRAFT_ROOT = Path("Movies/JianyingPro/User Data/Projects/com.lveditor.draft")  # 相对 home
 JY_SETTING = Path("Movies/JianyingPro/User Data/Config/globalSetting")                  # 相对 home
@@ -50,9 +50,11 @@ VALIDATION_WARN_LINES = 3               # 校验 WARN 汇总时列出几条
 BACKUP_KEEP = 5                         # 注册表备份只留最新几份
 BACKUP_GLOB = "root_meta_info.json.*.bak"
 COVER_ERR_TAIL = 200
-TEMPLATE = ROOT / "research/base_template_11.0.json"
+TEMPLATE = jy_version.TEMPLATE   # 保留这个名字：测试会替换它
 
 JY_RUNNING = "剪映正在运行，请先完全退出（Cmd+Q）再安装"
+TEMPLATE_MISSING = jy_version.TEMPLATE_MISSING
+DRAFT_EXISTS = "草稿已存在：{target}（换名字，或先在剪映里删除）"
 JY_MISSING = ("找不到剪映草稿库：{meta}\n"
               "请确认已安装剪映专业版并至少打开过一次；如果在剪映「全局设置 → 草稿位置」"
               "改过目录，请确认该目录（含外接盘）当前可以访问。")
@@ -294,15 +296,14 @@ def normalize(draft_dir: Path) -> str:
 
 
 def align_with_template(draft_dir: Path, template: Path) -> None:
-    """把生成结果套进剪映 11.0 自己写出的空草稿骨架。
+    """把生成结果套进剪映（jy_version.VERIFIED_SERIES）自己写出的空草稿骨架。
 
-    pyJianYingDraft 产出的是 5.9 结构（materials 只有 46 个分类、缺 11.0 新增的
-    顶层字段）。以 11.0 的 template 为骨、生成的 tracks/materials 为肉，
+    pyJianYingDraft 产出的是 5.9 结构（materials 只有 46 个分类、缺新版新增的
+    顶层字段）。以已验证版本的 template 为骨、生成的 tracks/materials 为肉，
     可以保证结构与剪映自己写出的完全同构，降低"打开后异常"的概率。
+    缺模板 = 安装包不完整，直接失败（KI-18，产品决策 D1），不交付 5.9 结构的草稿。
     """
-    if not template.exists():
-        warn(f"找不到 11.0 模板 {template}，跳过骨架对齐")
-        return
+    _require_template(template)
     base = json.loads(template.read_text(encoding="utf-8"))
     gen = json.loads((draft_dir / "draft_content.json").read_text(encoding="utf-8"))
     for k, v in gen.items():
@@ -321,8 +322,8 @@ def macify(draft_dir: Path, name: str, materials_size: int, draft_id: str,
     content = json.loads(content_path.read_text(encoding="utf-8"))
     now = int(time.time() * 1_000_000)
 
-    # 11.0 自己写出的空草稿里 platform 指纹就是空串，实测可加载
-    platform = {"app_id": 0, "app_source": "", "app_version": "11.0.0",
+    # 剪映 11.0 自己写出的空草稿里 platform 指纹就是空串，实测可加载；版本号写已验证版本（D3）
+    platform = {"app_id": 0, "app_source": "", "app_version": jy_version.VERIFIED_VERSION,
                 "device_id": "", "hard_disk_id": "", "mac_address": "",
                 "os": "mac", "os_version": os.uname().release}
     for k in ("platform", "last_modified_platform"):
@@ -509,9 +510,21 @@ def _is_registered(registry: dict, target: Path) -> bool:
     return any(e.get("draft_fold_path") == str(target) for e in registry["all_draft_store"])
 
 
+def _is_own_orphan(target: Path, registry: dict) -> bool:
+    """上次安装被强杀留下的目录：带安装中标记且未注册。"""
+    return (target / INSTALL_MARKER).exists() and not _is_registered(registry, target)
+
+
+def _ensure_name_free(root: Path, name: str, registry: dict) -> None:
+    """同名草稿要在拷媒体之前就报（KI-59）；自家孤儿不算，install() 会清掉。"""
+    target = root / name
+    if target.exists() and not _is_own_orphan(target, registry):
+        raise InstallError(DRAFT_EXISTS.format(target=target))
+
+
 def _clear_own_orphan(target: Path, registry: dict) -> None:
     """上次安装被强杀留下的目录（带安装中标记且未注册）可以安全清掉。"""
-    if (target / INSTALL_MARKER).exists() and not _is_registered(registry, target):
+    if _is_own_orphan(target, registry):
         print(f"[warn] 清理上次未完成的安装：{target}")
         shutil.rmtree(target)
 
@@ -620,8 +633,7 @@ def install(draft_dir: Path, root: Path, name: str, info: dict, size: int,
     target, tmp = root / name, root / f".{name}{TMP_SUFFIX}"
     _clear_own_orphan(target, registry)
     _clear_own_orphan(tmp, registry)
-    if target.exists():
-        raise InstallError(f"草稿已存在：{target}（换名字，或先在剪映里删除）")
+    _ensure_name_free(root, name, registry)
     _ensure_not_running()
     meta = root / ROOT_META_NAME
     bak = _backup_registry(meta)
@@ -653,12 +665,22 @@ def install(draft_dir: Path, root: Path, name: str, info: dict, size: int,
 
 
 # ------------------------------------------------------------------ 入口
-def _prepare_root(dry_run: bool) -> Path:
-    """解析草稿根；要安装时先确认剪映没在跑、草稿库可用，再花几分钟拷媒体。"""
+def _require_template(template: Path) -> None:
+    if not template.exists():
+        raise InstallError(TEMPLATE_MISSING.format(series=jy_version.VERIFIED_SERIES,
+                                                   path=template))
+
+
+def _prepare_root(dry_run: bool, name: str) -> Path:
+    """花几分钟拷媒体之前先把能提前发现的问题都报出来：模板缺失（dry-run 也查）、
+    剪映在跑、草稿库不可用、同名草稿（KI-59）；本机剪映跨大版本只进警告汇总（KI-17）。"""
     root = resolve_draft_root()  # 每次现算：冻结版同进程多次调用、测试隔离都依赖这一点
+    _require_template(TEMPLATE)
     if not dry_run:
         _ensure_not_running()
-        load_registry(root)
+        _ensure_name_free(root, name, load_registry(root))
+        if note := jy_version.compat_warning(jy_version.installed_version()):
+            warn(note)
     return root
 
 
@@ -674,7 +696,7 @@ def main() -> None:
     reset_warnings()
     name = safe_name(args.name)
     try:
-        root = _prepare_root(args.dry_run)
+        root = _prepare_root(args.dry_run, name)
         tl = json.loads(Path(args.timeline).read_text(encoding="utf-8"))
         texts = layout_texts(tl.get("text", []))
         expect = expected(tl, texts)

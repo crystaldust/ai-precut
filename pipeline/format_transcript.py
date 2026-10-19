@@ -10,7 +10,7 @@
   * 换人 / 停顿 > 2.5s / 段长 > 35s → 断段
 
 用法：
-    python3 format_transcript.py transcript_raw.json -o <输出目录>
+    python -m pipeline.format_transcript transcript_raw.json -o <输出目录>   # 在仓库根运行
 """
 from __future__ import annotations
 

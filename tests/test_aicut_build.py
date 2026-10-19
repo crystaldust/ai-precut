@@ -240,3 +240,84 @@ def test_install_draft_dev_mode_merges_stderr(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         aicut.install_draft(tmp_path, "T")
     assert "剪映正在运行" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- KI-15：开发态不以脚本路径跑 pipeline
+def _capture_dev_run(monkeypatch, code=0, out=""):
+    monkeypatch.setattr(aicut.proc, "FROZEN", False)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return aicut.subprocess.CompletedProcess(cmd, code, out, "")
+    monkeypatch.setattr(aicut.subprocess, "run", fake_run)
+    return seen
+
+
+def test_run_pipeline_dev_uses_bootstrap_not_script_path(monkeypatch):
+    seen = _capture_dev_run(monkeypatch)
+    aicut._run_pipeline("pipeline.render_preview", ["t.json", "-o", "o.mp4"])
+    assert seen["cmd"][0] == aicut.sys.executable and seen["cmd"][1] == "-P"
+    assert seen["cmd"][-4:] == ["pipeline.render_preview", "t.json", "-o", "o.mp4"]
+    assert not any(str(c).endswith("render_preview.py") for c in seen["cmd"])
+
+
+def test_install_draft_dev_uses_bootstrap_with_jy_python(tmp_path, monkeypatch):
+    seen = _capture_dev_run(monkeypatch, out=SUCCESS_OUT)
+    monkeypatch.setattr(aicut, "ensure_jy_python", lambda: "py")
+    monkeypatch.setattr(aicut.proc.pyver, "supports_safe_path", lambda py: True)
+    aicut.install_draft(tmp_path, "T")
+    assert seen["cmd"][:2] == ["py", "-P"] and "pipeline.to_jianying" in seen["cmd"]
+    assert not any(str(c).endswith("to_jianying.py") for c in seen["cmd"])
+
+
+# ---------------------------------------------------------------- KI-16：run 带上 build 的参数
+def test_run_with_shots_reaches_build_with_build_options(project, monkeypatch):
+    (project / "shots.json").write_text('{"shots": []}', encoding="utf-8")
+    for step in ("cmd_ingest", "cmd_transcribe", "cmd_junk", "cmd_brief"):
+        monkeypatch.setattr(aicut, step, lambda a: None)
+    seen = []
+    monkeypatch.setattr(aicut, "cmd_build", lambda a: seen.append((a.version, a.no_draft)))
+    aicut.main(["run", "p"])
+    aicut.main(["run", "p", "--version", "v2", "--no-draft"])
+    assert seen == [(None, False), ("v2", True)]
+
+
+def test_build_still_accepts_its_options(project, monkeypatch):
+    seen = []
+    monkeypatch.setattr(aicut, "cmd_build", lambda a: seen.append((a.version, a.no_draft)))
+    aicut.main(["build", "p", "--version", "v3", "--no-draft"])
+    assert seen == [("v3", True)]
+
+
+# ---------------------------------------------------------------- KI-18：Windows 导出的警告要看得见
+def test_cmd_export_shows_to_jianying_warnings(project, tmp_path, monkeypatch, capsys):
+    tl = tmp_path / "timeline.json"
+    tl.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(aicut.export_draft, "build_windows_package",
+                        lambda t, n, out: {"zip": str(out), "size": 1, "warnings": ["字幕顺延"]})
+    aicut.cmd_export(argparse.Namespace(name="p", timeline=str(tl), package_name=None,
+                                        out=str(tmp_path)))
+    out = capsys.readouterr().out
+    assert "[!] 字幕顺延" in out and "[✓] 已导出" in out
+
+
+# ---------------------------------------------------------------- KI-82：剪映 venv 由 jy_env 负责（含旧版重建）
+def test_ensure_jy_python_frozen_uses_app_itself(monkeypatch):
+    monkeypatch.setattr(aicut.proc, "FROZEN", True)
+    monkeypatch.setattr(aicut.jy_env, "ensure", lambda v: pytest.fail("打包版不建 venv"))
+    assert aicut.ensure_jy_python() == aicut.sys.executable
+
+
+def test_ensure_jy_python_dev_delegates_and_dies_on_error(monkeypatch, capsys):
+    monkeypatch.setattr(aicut.proc, "FROZEN", False)
+    seen = []
+    monkeypatch.setattr(aicut.jy_env, "ensure", lambda v: seen.append(v) or "py")
+    assert aicut.ensure_jy_python() == "py" and seen == [aicut.JY_VENV]
+
+    def boom(v):
+        raise aicut.jy_env.JyEnvError("安装 pyJianYingDraft 失败：x")
+    monkeypatch.setattr(aicut.jy_env, "ensure", boom)
+    with pytest.raises(SystemExit):
+        aicut.ensure_jy_python()
+    assert "[x] 安装 pyJianYingDraft 失败" in capsys.readouterr().out

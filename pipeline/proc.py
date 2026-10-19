@@ -21,6 +21,8 @@ import time
 import traceback
 from pathlib import Path
 
+from pipeline import pyver
+
 FROZEN = bool(getattr(sys, "frozen", False))
 MEIPASS = getattr(sys, "_MEIPASS", None)
 CLI_FLAG = "--aicut-cli"        # 冻结 App 自启：跑一条 aicut 子命令
@@ -113,14 +115,29 @@ def cli_cmd(args: list[str]) -> list[str]:
     return [sys.executable, str(app_root() / "aicut.py"), *args]
 
 
+# 开发态跑 pipeline 模块（KI-15）：不能以脚本路径运行，否则 pipeline/ 成为 sys.path[0]，
+# pipeline/select.py、secrets.py 会遮蔽标准库（Homebrew Python 下 subprocess → import select 直接崩）。
+# `-c` 时 sys.path[0] 是 ''（cwd）：3.11+ 用 -P 不加它；更旧的解释器不认 -P，由引导代码先把它剔掉
+# （import sys 是内建模块，不会被遮蔽），再导入 runpy。仓库根 append 到末尾，免得 packaging/ 遮蔽 PyPI 的 packaging。
+DEV_BOOTSTRAP = ("import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]; "
+                 "import runpy; sys.path.append(sys.argv.pop(1)); "
+                 "runpy.run_module(sys.argv.pop(1), run_name='__main__', alter_sys=True)")
+
+
+def dev_module_cmd(python: str, module_name: str, args: list[str],
+                   root: Path | None = None) -> list[str]:
+    """开发态以 __main__ 跑 module_name 的子进程 argv（任意 cwd 可用，相对路径参数含义不变）。"""
+    safe_path = ["-P"] if pyver.supports_safe_path(python) else []
+    return [python, *safe_path, "-c", DEV_BOOTSTRAP, str(root or app_root()), module_name, *args]
+
+
 def module_cmd(module_name: str, args: list[str]) -> list[str]:
-    """以脚本方式跑一个 pipeline 模块的子进程 argv（打包后不能用 sys.executable 跑 .py）。"""
+    """跑一个 pipeline 模块的子进程 argv：打包后 App 自启（不能用 sys.executable 跑 .py），开发态走引导。"""
     if module_name not in ALLOWED_MODULES:
         raise ValueError(f"不允许以子进程运行的模块：{module_name}")
     if FROZEN:
         return [sys.executable, MODULE_FLAG, module_name, *args]
-    script = app_root().joinpath(*module_name.split(".")).with_suffix(".py")
-    return [sys.executable, str(script), *args]
+    return dev_module_cmd(sys.executable, module_name, args)
 
 
 def _line_buffered_stdio() -> None:

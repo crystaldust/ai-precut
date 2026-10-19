@@ -502,3 +502,51 @@ def test_dry_run_validation_fail_exits_nonzero(tmp_path, clip, monkeypatch):
 def test_parse_report_without_summary():
     assert tj.parse_report("随便什么输出\n") == {"warnings": [], "draft_path": None,
                                                  "backup": None}
+
+
+# ---------------------------------------------------------------- M7：KI-18 模板缺失 / KI-59 同名 / KI-17 版本
+def test_missing_template_fails_before_generating(tmp_path, clip, monkeypatch):
+    monkeypatch.setattr(tj, "TEMPLATE", tmp_path / "nope.json")
+    code, out = _run_main(tmp_path, _timeline_file(tmp_path, full_timeline(clip)), "--dry-run")
+    assert code == 1 and "骨架模板" in out and "nope.json" in out
+    assert not (tmp_path / "stg" / "T").exists()
+
+
+def test_align_with_template_missing_is_install_error(tmp_path):
+    with pytest.raises(tj.InstallError, match="骨架模板"):
+        tj.align_with_template(tmp_path, tmp_path / "nope.json")
+
+
+def test_same_name_draft_rejected_before_copying_media(tmp_path, jy_root, clip, monkeypatch):
+    (jy_root / "T").mkdir()
+    (jy_root / "T" / "keep.txt").write_text("x")
+    monkeypatch.setattr(tj, "bundle_media", lambda *a: pytest.fail("不该先拷媒体"))
+    code, out = _run_main(tmp_path, _timeline_file(tmp_path, full_timeline(clip)))
+    assert code == 1 and "草稿已存在" in out
+    assert not (tmp_path / "stg" / "T").exists() and (jy_root / "T" / "keep.txt").exists()
+
+
+def test_own_orphan_does_not_block_precheck(tmp_path, jy_root, clip):
+    (jy_root / "T").mkdir()
+    (jy_root / "T" / tj.INSTALL_MARKER).write_text("T")
+    code, out = _run_main(tmp_path, _timeline_file(tmp_path, full_timeline(clip)))
+    assert code == 0, out
+
+
+def test_major_version_mismatch_is_reported_as_warning(tmp_path, jy_root, clip, monkeypatch):
+    monkeypatch.setattr(tj.jy_version, "installed_version", lambda *a: "12.0.0")
+    code, out = _run_main(tmp_path, _timeline_file(tmp_path, full_timeline(clip)))
+    assert code == 0, out
+    assert any("12.0.0" in w for w in tj.parse_report(out)["warnings"])
+
+
+def test_same_major_version_is_silent(tmp_path, jy_root, clip, monkeypatch):
+    monkeypatch.setattr(tj.jy_version, "installed_version", lambda *a: "11.6.0")
+    code, out = _run_main(tmp_path, _timeline_file(tmp_path, full_timeline(clip)))
+    assert code == 0, out
+    assert not any("11.6.0" in w for w in tj.parse_report(out)["warnings"])
+
+
+def test_platform_app_version_comes_from_jy_version(tmp_path, jy_root, clip):
+    d, _, _, _ = staged(tmp_path, jy_root, clip)
+    assert _content(d)["platform"]["app_version"] == tj.jy_version.VERIFIED_VERSION

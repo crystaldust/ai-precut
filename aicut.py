@@ -10,7 +10,7 @@
 
 命令：
   new <项目名> --material <原片> [--title 片名] [--preset 纪实3min] [--target 秒]
-  run <项目名>                 全流程（已完成的自动跳过）
+  run <项目名> [--version v2] [--no-draft]   全流程（已完成的自动跳过）
   ingest <项目名>              素材台账
   transcribe <项目名>          抽音轨 + 云端转写 + 分段文稿
   junk <项目名>                代理片 + 规则层废片检测
@@ -31,15 +31,15 @@ import sys
 import time
 from pathlib import Path
 
-from pipeline import (applog, build_documentary, classify, cloud, consent, encode, export_draft,
-                      media_io, proc, questions, readiness, review, schema, secrets, select, style,
+from pipeline.pyver import require_supported_python; require_supported_python()  # noqa: E702 先于新语法
+from pipeline import (applog, build_documentary, classify, cloud, consent, encode, export_draft,  # noqa: E402
+                      jy_env, media_io, proc, questions, readiness, review, schema, secrets, select, style,
                       summarize, to_jianying, understand_audio, understand_text, understand_visual)
 from pipeline.llm import LLMError
 
 ROOT = proc.app_root()
 PROJECTS = proc.user_data_root()
 PRESETS = proc.resource_path("presets")
-PIPELINE = proc.resource_path("pipeline")
 proc.ensure_bundled_path()
 JY_VENV = Path.home() / ".aicut/venv"
 LOG = applog.get("cli")
@@ -125,20 +125,13 @@ def probe_duration(path: Path) -> float:
 
 
 def ensure_jy_python() -> str:
-    """剪映草稿生成依赖 pyJianYingDraft；用专用 venv，不污染系统 Python。"""
+    """剪映草稿依赖 pyJianYingDraft：打包版已打进 App；开发态用专用 venv（旧版 Python 建的会重建，KI-82）。"""
     if proc.FROZEN:
-        return sys.executable  # 依赖已打进 App，同进程执行
-    py = JY_VENV / "bin/python"
-    if py.exists():
-        return str(py)
-    info("首次使用：创建 ~/.aicut/venv 并安装 pyJianYingDraft（约 20 秒）…")
-    JY_VENV.parent.mkdir(parents=True, exist_ok=True)
-    run([sys.executable, "-m", "venv", str(JY_VENV)], check=True)
-    r = run([str(py), "-m", "pip", "install", "-q", "pyJianYingDraft"])
-    if r.returncode != 0:
-        die(f"安装 pyJianYingDraft 失败：{r.stderr[-300:]}")
-    ok("依赖就绪")
-    return str(py)
+        return sys.executable
+    try:
+        return jy_env.ensure(JY_VENV)
+    except jy_env.JyEnvError as exc:
+        die(str(exc))
 
 
 def _run_pipeline(module: str, argv: list[str]) -> None:
@@ -149,8 +142,7 @@ def _run_pipeline(module: str, argv: list[str]) -> None:
             print(out[-600:])
             die(f"{module} 执行失败")
         return
-    script = str(PIPELINE / (module.split(".")[-1] + ".py"))
-    r = subprocess.run([sys.executable, script, *argv], capture_output=True,
+    r = subprocess.run(proc.dev_module_cmd(sys.executable, module, argv), capture_output=True,
                        text=True, encoding="utf-8", errors="replace")
     if r.returncode != 0:
         print((r.stdout or "")[-600:], (r.stderr or "")[-600:])
@@ -458,6 +450,8 @@ def cmd_export(args) -> None:
         res = export_draft.build_windows_package(timeline, name, out)
     except (RuntimeError, FileNotFoundError) as exc:
         die(str(exc))
+    for w in res.get("warnings", []):  # KI-18：子进程成功时的警告不能吞掉
+        warn(w)
     ok(f"已导出：{out}（{res['size'] / 1e6:.0f} MB）")
 
 
@@ -657,7 +651,7 @@ def install_draft(vdir: Path, draft_name: str) -> None:
     if proc.FROZEN:
         code, out = proc.run_inprocess("pipeline.to_jianying", argv)
     else:
-        r = subprocess.run([ensure_jy_python(), str(PIPELINE / "to_jianying.py"), *argv],
+        r = subprocess.run(proc.dev_module_cmd(ensure_jy_python(), "pipeline.to_jianying", argv),
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
         code, out = r.returncode, (r.stdout or "") + (r.stderr or "")
     if code != 0:
@@ -864,7 +858,10 @@ def main(argv: list[str] | None = None) -> None:
                    help="不在终端提问（GUI 调用时使用）")
     p.set_defaults(fn=cmd_new)
 
-    for name, fn in [("run", cmd_run), ("prepare", cmd_prepare),
+    for name, fn in [("run", cmd_run), ("build", cmd_build)]:  # KI-16：run 有 shots.json 时直接调 cmd_build
+        p = sub.add_parser(name); p.add_argument("name"); p.set_defaults(fn=fn)
+        p.add_argument("--version"); p.add_argument("--no-draft", action="store_true")
+    for name, fn in [("prepare", cmd_prepare),
                      ("ingest", cmd_ingest), ("analyze", cmd_analyze),
                      ("transcribe", cmd_transcribe), ("junk", cmd_junk),
                      ("brief", cmd_brief), ("status", cmd_status)]:
@@ -901,10 +898,6 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("scenes"); p.add_argument("name")
     p.add_argument("--threshold", type=float, default=8.0)
     p.set_defaults(fn=cmd_scenes)
-
-    p = sub.add_parser("build"); p.add_argument("name")
-    p.add_argument("--version"); p.add_argument("--no-draft", action="store_true")
-    p.set_defaults(fn=cmd_build)
 
     p = sub.add_parser("calibrate"); p.add_argument("name")
     p.add_argument("--tone", choices=list(style.TONES))

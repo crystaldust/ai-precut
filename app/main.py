@@ -12,6 +12,8 @@ from pathlib import Path
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from pipeline.pyver import require_supported_python  # noqa: E402
+require_supported_python()  # 旧解释器在这里就给出中文说明
 from pipeline import applog, proc  # noqa: E402
 
 # 打包版的任务子进程是 App 带标记重启自己（GL-17）：必须在 import webview 之前分发，

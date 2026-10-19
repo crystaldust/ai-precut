@@ -130,3 +130,12 @@ def make_project(root, name="p1", shots=None, **files):
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_bytes(content if isinstance(content, bytes) else content.encode())
     return pdir
+
+
+@pytest.fixture(autouse=True)
+def _no_real_jianying_version(request, monkeypatch):
+    """开发机装的剪映版本不能影响测试（KI-17）；test_jy_version 自己显式传入候选路径，不打桩。"""
+    if request.node.module.__name__.endswith("test_jy_version"):
+        return
+    from pipeline import jy_version
+    monkeypatch.setattr(jy_version, "installed_version", lambda *a: None)

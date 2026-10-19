@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 from packaging.build_package import (  # noqa: E402
     rewrite_for_windows, write_installer, zip_pkg,
 )
-from pipeline import proc  # noqa: E402
+from pipeline import proc, to_jianying  # noqa: E402
 
 
 def _api_name(name: str) -> str:
@@ -80,7 +80,7 @@ def package_draft(draft_dir: Path, name: str, out_zip: Path) -> Path:
 
 
 def build_windows_package(timeline: Path, name: str, out_zip: Path) -> dict:
-    """跑一遍草稿生成（不安装进剪映），再打包。"""
+    """跑一遍草稿生成（不安装进剪映），再打包。返回 zip、大小与 to_jianying 的警告汇总（KI-18）。"""
     timeline = Path(timeline)
     if not timeline.exists():
         raise FileNotFoundError(f"时间线不存在：{timeline}")
@@ -101,7 +101,8 @@ def build_windows_package(timeline: Path, name: str, out_zip: Path) -> dict:
             raise RuntimeError(f"没找到草稿目录：{draft_dir}")
         package_draft(draft_dir, name, out_zip)
 
-    return {"zip": str(out_zip), "size": Path(out_zip).stat().st_size}
+    warnings = to_jianying.parse_report(result.stdout)["warnings"]
+    return {"zip": str(out_zip), "size": Path(out_zip).stat().st_size, "warnings": warnings}
 
 
 def inspect_package(zip_path: Path) -> dict:

@@ -182,3 +182,41 @@ def test_complete_or_adopt_ignores_stale_marker_of_other_size(tmp_path):
         tmp.write_bytes(b"1234")
     dst.write_bytes(b"12")
     assert not mio.complete_or_adopt(dst, runner=_probe(3.0))
+
+
+# ---------------------------------------------------------------- KI-14：素材有没有音轨
+def _streams(stdout, code=0):
+    def runner(args, **kw):
+        assert "-select_streams" in args and "a" in args
+        p = FakeProc(code, "boom" if code else "")
+        p.stdout = stdout
+        return p
+    return runner
+
+
+def test_has_audio_true_when_ffprobe_lists_stream(tmp_path):
+    assert mio.has_audio(tmp_path / "a.mp4", runner=_streams("1\n"))
+
+
+def test_has_audio_false_when_no_audio_stream(tmp_path):
+    assert not mio.has_audio(tmp_path / "a.mp4", runner=_streams(""))
+
+
+def test_has_audio_unreadable_is_media_error(tmp_path):
+    with pytest.raises(mio.MediaError, match="读不了素材"):
+        mio.has_audio(tmp_path / "a.mp4", runner=_streams("", code=1))
+
+
+def test_has_audio_without_ffprobe_is_media_error(tmp_path):
+    def runner(args, **kw):
+        raise FileNotFoundError("ffprobe")
+    with pytest.raises(mio.MediaError, match="ffprobe"):
+        mio.has_audio(tmp_path / "a.mp4", runner=runner)
+
+
+def test_atomic_output_without_marker(tmp_path):
+    dst = tmp_path / "o.mp4"
+    with mio.atomic_output(dst, mark=False) as tmp:
+        tmp.write_bytes(b"data")
+    assert dst.read_bytes() == b"data" and not mio.done_marker(dst).exists()
+    assert [p.name for p in tmp_path.iterdir()] == ["o.mp4"]

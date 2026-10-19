@@ -27,7 +27,7 @@ case "$*" in
         echo "    --enable-libfreetype"; echo "    --enable-libharfbuzz";
         [[ "$FAKE_GPL" == 1 ]] && echo "    --enable-gpl"; true;;
   *-encoders*) for e in h264_videotoolbox aac pcm_s16le rawvideo; do echo " V....D $e   x"; done;;
-  *-filters*) for f in drawtext scdet blackdetect freezedetect silencedetect concat scale pad setsar fps trim setpts atrim asetpts aresample format; do
+  *-filters*) for f in drawtext scdet blackdetect freezedetect silencedetect concat scale pad setsar fps trim setpts atrim asetpts aresample format anullsrc aformat; do
         [[ "$f" == drawtext && "$FAKE_NO_DRAWTEXT" == 1 ]] && continue; echo " .. $f   V->V   x"; done;;
 esac
 """

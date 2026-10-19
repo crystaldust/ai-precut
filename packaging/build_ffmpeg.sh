@@ -23,7 +23,7 @@ HARFBUZZ_URL="https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_V
 # 代码里用到的能力（aicut.py / pipeline/*.py）；少一个就不让打包
 REQUIRED_ENCODERS="h264_videotoolbox aac pcm_s16le rawvideo"
 REQUIRED_LIBS="libfreetype libharfbuzz"        # buildconf 里必须出现的 --enable-<lib>
-REQUIRED_FILTERS="drawtext scdet blackdetect freezedetect silencedetect concat scale pad setsar fps trim setpts atrim asetpts aresample format"
+REQUIRED_FILTERS="drawtext scdet blackdetect freezedetect silencedetect concat scale pad setsar fps trim setpts atrim asetpts aresample format anullsrc aformat"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${AICUT_FFMPEG_OUT:-$ROOT/vendor}"
