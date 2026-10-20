@@ -35,7 +35,7 @@ from pipeline import (applog, build_documentary, classify, cloud, consent, disks
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
                       select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
                       usage)
-from pipeline import brief, cli_args, clips, config_cli, fingerprints, project_cli, project_lock, transcript_stamp  # noqa: E402
+from pipeline import brief, cli_args, clips, config_cli, fingerprints, outputs, project_cli, project_lock, transcript_stamp  # noqa: E402
 from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
 from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
 from pipeline.prompts import ask_calibration, ask_target  # noqa: E402,F401 - 测试按 aicut.<名> 打桩
@@ -504,13 +504,10 @@ def cmd_export(args) -> None:
         die(str(exc))
     name = args.package_name or f'{pdir.name.split("_")[0]}_{timeline.parent.name}'
     out = Path(args.out) / f"{name}.zip"
-    info("生成草稿并打包（媒体要拷一遍，几分钟）…")
     try:
-        res = export_draft.build_windows_package(timeline, name, out)
-    except (RuntimeError, FileNotFoundError) as exc:
+        res = outputs.package_windows(timeline, name, out, info=info, warn=warn)
+    except outputs.PackageFailed as exc:
         die(str(exc))
-    for w in res.get("warnings", []):  # KI-18：子进程成功时的警告不能吞掉
-        warn(w)
     ok(f"已导出：{out}（{res['size'] / 1e6:.0f} MB）")
 
 
@@ -678,29 +675,7 @@ def cmd_run(args) -> None:
 def cmd_calibrate(args) -> None:
     """运行时校准剪辑偏好；不传参数则交互式问答。"""
     pdir = project_dir(args.name)
-    c = cfg(pdir)
-    current = c.get("calibration") or {}
-    if args.show:
-        cur = style.normalize(current)
-        print(f"tone      : {cur['tone']}（{style.TONES[cur['tone']]}）")
-        print(f"audience  : {cur['audience'] or '（未填）'}")
-        print(f"must_lines: {cur['must_lines'] or '（未填）'}")
-        print(f"提示词效果: {style.directive(cur) or '（无，使用默认）'}")
-        return
-    if args.reset:
-        schema.update_project(pdir / "project.json", lambda cur: {**cur, "calibration": {}})
-        ok("已清除剪辑偏好")
-        return
-    updated = dict(current)
-    for key in ("tone", "audience", "must_lines"):
-        value = getattr(args, key, None)
-        if value is not None:
-            updated[key] = value
-    if not any(getattr(args, k, None) is not None for k in ("tone", "audience", "must_lines")):
-        updated = ask_calibration(current)
-    calibration = style.normalize(updated)
-    schema.update_project(pdir / "project.json", lambda cur: {**cur, "calibration": calibration})
-    ok("剪辑偏好已保存：" + (style.directive(calibration) or "（空）"))
+    project_cli.calibrate(pdir, cfg(pdir), args, ok=ok, ask=ask_calibration)
 
 
 def cmd_config(args) -> None:

@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from pipeline import cache, media_io, project_lock, readiness, schema, understand_text, usage
+from pipeline import cache, media_io, project_lock, readiness, schema, style, understand_text, usage
 
 TEXT_INCOMPLETE_STATUS = "未完成"
 MEDIA_SUFFIXES = (".wav", ".mp4")  # 这些产物以完成标记判定（GL-15；旧项目可被认领），其余看存在
@@ -20,6 +20,7 @@ CLEAN_NOTHING = "没有可清理的缓存"
 CLEAN_DONE = "已释放 {mb:.1f} MB"
 CLEAN_BUSY = "这个项目正在运行任务（剪辑台或另一个终端），等它结束再清理缓存"
 MB = 1e6
+CALIBRATION_KEYS = ("tone", "audience", "must_lines")
 
 
 def status(pdir: Path, c: dict) -> None:
@@ -64,3 +65,30 @@ def clean(pdir: Path, dry_run: bool, *, ok: Callable[[str], None], info: Callabl
                 ok(CLEAN_DONE.format(mb=cache.clean(pdir) / MB))
     except project_lock.Busy:
         die(CLEAN_BUSY)
+
+
+def calibrate(pdir: Path, c: dict, args, *, ok: Callable[[str], None],
+              ask: Callable[[dict], dict]) -> None:
+    """运行时校准剪辑偏好；不传参数则交互式问答（ask 由调用方注入）。"""
+    current = c.get("calibration") or {}
+    if args.show:
+        cur = style.normalize(current)
+        print(f"tone      : {cur['tone']}（{style.TONES[cur['tone']]}）")
+        print(f"audience  : {cur['audience'] or '（未填）'}")
+        print(f"must_lines: {cur['must_lines'] or '（未填）'}")
+        print(f"提示词效果: {style.directive(cur) or '（无，使用默认）'}")
+        return
+    if args.reset:
+        schema.update_project(pdir / "project.json", lambda cur: {**cur, "calibration": {}})
+        ok("已清除剪辑偏好")
+        return
+    updated = dict(current)
+    for key in CALIBRATION_KEYS:
+        value = getattr(args, key, None)
+        if value is not None:
+            updated[key] = value
+    if not any(getattr(args, k, None) is not None for k in CALIBRATION_KEYS):
+        updated = ask(current)
+    calibration = style.normalize(updated)
+    schema.update_project(pdir / "project.json", lambda cur: {**cur, "calibration": calibration})
+    ok("剪辑偏好已保存：" + (style.directive(calibration) or "（空）"))
