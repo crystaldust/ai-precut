@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 STATIC = Path(__file__).resolve().parent.parent / "gui" / "static"
-PAGES = ["index.html", "browse.html", "confirm.html"]
-XSS_PAGES = ["index.html", "browse.html", "confirm.html"]
+PAGES = ["index.html", "confirm.html"]
+XSS_PAGES = ["index.html", "confirm.html"]
 COMMON_JS = '<script src="/static/common.js"></script>'
 
 
@@ -34,7 +34,7 @@ JS_FILES = sorted(p.name for p in STATIC.glob("*.js"))
 MAX_JS_LINES = 400          # M13：每个前端脚本聚焦一件事
 INDEX_ENTRY = "main.js"     # 主页最后加载的启动脚本（所有 ACTIONS 注册都在它之前）
 INDEX_SCRIPT_ORDER = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js",
-                      "wizard.js", "project-form.js", "step-analyze.js", "step-browse.js",
+                      "wizard.js", "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js",
                       "step-criteria.js", "step-result.js", "step-export.js", "app.js", INDEX_ENTRY]
 
 
@@ -90,11 +90,12 @@ def test_no_local_escape_helpers(page):
 @pytest.mark.parametrize("raw", ["${p.text}", "${p.why", "${c.name}", "${c.desc}",
                                  "${s.topic||", "${name}"])
 def test_llm_fields_escaped_in_browse(raw):
-    assert raw not in _read("browse.html")
+    assert raw not in _read("index.html")  # ③ 已并入主页：step-browse.js / cliplist.js 随 index.html 一起读
 
 
 def test_summary_escaped_in_browse():
-    assert re.findall(r"(?<!esc)\(s\.summary \|\|", _read("browse.html")) == []
+    assert re.findall(r"(?<!esc)\(s\.summary \|\|", _read("index.html")) == []
+    assert "esc(sum.summary" in _read("step-browse.js")
 
 
 @pytest.mark.parametrize("raw", ["${p.text}", "${fmt(p.at)}"])
@@ -215,25 +216,27 @@ def test_confirm_error_toast_stays_longer():
 
 
 # ---------------------------------------------------------------- M8 审查：浏览 / 确认页警告条，浏览页写失败回滚
-@pytest.mark.parametrize("page", ["browse.html", "confirm.html"])
-def test_page_shows_warning_strip_escaped(page):
-    src = _read(page)
+def test_confirm_page_shows_warning_strip_escaped():
+    src = _read("confirm.html")
     assert 'id="warnstrip"' in src
     body = src[src.index("function renderWarnings"):]
     body = body[:body.index("\n}\n")]
     assert "esc(" in body and "DATA.warnings" in src
 
 
-def test_browse_writes_check_ok_and_roll_back():
-    src = _read("browse.html")
-    helper = src[src.index("async function postOrRollback"):]
-    helper = helper[:helper.index("\n}\n")]
-    assert "r.ok" in helper and "toastError(" in helper and "rollback()" in helper
-    for fn in ("async function setLevel", "async function toggleMust"):
-        body = src[src.index(fn):]
-        body = body[:body.index("\n}\n")]
-        assert "postOrRollback(" in body and "prev" in body  # 失败时回滚乐观更新
-    assert "TOAST_ERROR_MIN_MS" in src
+def test_browse_step_shows_warnings_escaped():
+    src = _read("step-browse.js")
+    assert "esc(w)" in src and "b.data.warnings" in src
+
+
+def test_browse_writes_roll_back_and_say_why():
+    src = _read("cliplist.js")
+    body = src[src.index("async function applyMark"):]
+    body = body[:body.index("\n}\n")]
+    assert "failMark(" in body and "err.message" in body
+    fail = src[src.index("function failMark"):]
+    fail = fail[:fail.index("\n}\n")]
+    assert "b.confirmed.get(seg.id)" in fail and "toast(" in fail
 
 
 # ---------------------------------------------------------------- KI-71 / KI-57 / KI-36
@@ -315,7 +318,7 @@ def test_index_loads_scripts_in_order_with_entry_last():
 
 
 def test_every_index_script_is_loaded_by_some_page():
-    loaded = set(_scripts("index.html")) | set(_scripts("browse.html")) | set(_scripts("confirm.html"))
+    loaded = set(_scripts("index.html")) | set(_scripts("confirm.html"))
     assert set(JS_FILES) == loaded
 
 

@@ -12,9 +12,6 @@ const COPY_NEXT = '下一步：{label} →';
 const COPY_GO_LABELS = {browse: '去看素材', criteria: '去定标准', result: '去看结果', export: '去导出'};
 const COPY_BANNER_ACTIONS = {reanalyze: '重新分析', reselect: '重新选段'};
 const COPY_MANUAL_SHOTS_NOTE = '你手动改过分镜表，重新选段只更新建议，不会覆盖它（后续版本会让你选择覆盖或保留）';
-const COPY_SHORTCUTS_TITLE = '快捷键';
-const COPY_SHORTCUTS_SOON = '「③ 看素材」改版后会用键盘挑片段（空格播放、↑↓ 换段、S 放入剪辑列表……），并可以在这里自定义键位。现在还不能设置。';
-const COPY_KNOWN = '知道了';
 const STEP_STATUSES = ['locked', 'done', 'stale', 'available'];  // class 名只认这几个
 const STATUS_MARK = {done: ' ✓', stale: ' ⚠'};
 const VIEW_ORDER = ['analyze', 'browse', 'criteria', 'result', 'export'];  // ① 新建是弹窗，不在页面序列里
@@ -141,10 +138,6 @@ function initMore(){  // 点菜单外面 / 按 Esc 收起
   });
   document.addEventListener('keydown', ev=>{ if(ev.key === 'Escape') closeMore(); });
 }
-function openShortcuts(){  // 占位：快捷键编辑器随 ③ 看素材一起上线
-  showModal(COPY_SHORTCUTS_TITLE, `<p>${esc(COPY_SHORTCUTS_SOON)}</p>
-    <div class="job-actions"><button class="primary" data-act="closeModal">${esc(COPY_KNOWN)}</button></div>`);
-}
 
 /* ---------------- 外壳整体重绘（步骤状态变了就调用） ---------------- */
 function renderChrome(){
@@ -154,6 +147,5 @@ function renderChrome(){
 
 Object.assign(ACTIONS, {
   go: el=>go(el.dataset.step), toggleMore: ()=>toggleMore(), moreItem: el=>moreItem(el.dataset.item),
-  openShortcuts: ()=>openShortcuts(),
   reanalyze: ()=>startAnalysis(), reselect: ()=>startJob('select', {}),
 });

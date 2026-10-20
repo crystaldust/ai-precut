@@ -17,14 +17,14 @@ const STEP_VIEWS = {
   analyze: ()=>viewAnalyze(), browse: ()=>viewBrowse(), criteria: ()=>viewCriteria(),
   result: ()=>viewShots(), export: ()=>viewExport(),
 };
-const ENTER_HOOKS = {analyze: ()=>enterAnalyze()};
+const ENTER_HOOKS = {analyze: ()=>enterAnalyze(), browse: ()=>enterBrowse()};
 
 /* ---------------- 项目 ---------------- */
 async function selectProject(name){
   await flushPendingSave();  // 上一个项目还没落盘的分镜表改动先存回它自己
   resetShotBar();
   state.sel = null; state.view = null;  // 进入项目 = 去它的「当前步骤」（refresh 里按 wizard.next 定）
-  resetAnalysis();
+  resetAnalysis(); resetBrowse();
   await refreshOrWarn(name);
 }
 
@@ -36,7 +36,7 @@ async function refreshOrWarn(name=state.project){
 // 打不开的项目：清掉上一个项目的数据、步骤条和导航，state.project 置空 → 任何写操作都发不出去
 function showProjectError(name, e){
   clearTimeout(saveTimer); saveTimer = null;
-  stopAnalysisPoll(); resetShotBar();
+  stopAnalysisPoll(); resetShotBar(); resetBrowse();
   state.project = null; state.data = null; state.shots = []; state.sel = null; state.view = null;
   $('#title').textContent = name || ''; $('#meta').textContent = '';
   $('#steps').innerHTML = ''; $('#banner').innerHTML = ''; $('#nav').innerHTML = '';
@@ -152,9 +152,9 @@ async function postShots(project, shots, silent){
   }catch(e){ toast(COPY_SAVE_FAILED+e.message); return false; }
 }
 
-/* ---------------- 子窗口（③④ 暂住期仍用） ---------------- */
+/* ---------------- 子窗口（④ 暂住期仍用） ---------------- */
 // KI-36：App（pywebview）里 window.open 无效，先请桌面壳开新窗口；浏览器模式（opened=false）才自己开标签
-const SUBPAGES = ['browse', 'confirm'];  // 只认这两个子窗口（calibrate 已并入项目设置）
+const SUBPAGES = ['confirm'];  // ③ 已并入主页，calibrate 已并入项目设置；只剩 ④ 的确认窗口
 async function openSubpage(page){
   if(!SUBPAGES.includes(page)) return;
   if(!state.project) return toast('先选项目');
@@ -169,7 +169,7 @@ async function openSubpage(page){
 // 从子窗口回到主页：步骤状态可能变了（标了必留、确认了答案……），刷新一下；连着触发只刷一次
 let lastFocusRefresh = 0;
 function onWindowFocus(){
-  if(!state.project || !['browse', 'criteria'].includes(state.view)) return;
+  if(!state.project || state.view !== 'criteria') return;
   const now = Date.now();
   if(now - lastFocusRefresh < FOCUS_REFRESH_MIN_MS) return;
   lastFocusRefresh = now;

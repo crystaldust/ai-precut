@@ -72,6 +72,7 @@ async function loadPrefs(){
   try{
     const r = await api('/api/prefs');
     state.pinned = r.sidebar_pinned === true;
+    applyPrefs(r);  // 快捷键（shortcuts.js）
     if(r.warning) toast(r.warning, COPY_PREFS_WARNING_MS);
   }catch(e){ toast(COPY_PREFS_LOAD_FAILED.replace('{reason}', e.message), COPY_PREFS_WARNING_MS); }  // 用默认值，不挡住使用
   setRail();

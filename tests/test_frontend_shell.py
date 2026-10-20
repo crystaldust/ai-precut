@@ -152,8 +152,8 @@ def test_more_menu_toggle_and_item_closes_menu_then_runs():
     assert out == [True, False, 1, True]
 
 
-def test_shortcuts_entry_is_a_placeholder_modal():
-    out = run_app("openShortcuts(); [el('#modalTitle').textContent, el('#modalBody').innerHTML.includes('看素材')]")
+def test_shortcuts_entry_opens_the_key_editor():
+    out = run_app("openShortcuts(); [el('#modalTitle').textContent, el('#modalBody').innerHTML.includes('recordKey')]")
     assert out[0] == "快捷键" and out[1] is True
 
 

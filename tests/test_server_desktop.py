@@ -15,7 +15,7 @@ def opener(gui_server, monkeypatch):
 
 
 def _open(gs, **body):
-    status, raw, _ = call(gs, "POST", "/api/window", {"project": "p1", "page": "browse", **body})
+    status, raw, _ = call(gs, "POST", "/api/window", {"project": "p1", "page": "confirm", **body})
     return status, json.loads(raw)
 
 
@@ -24,7 +24,7 @@ def test_without_opener_tells_page_to_fall_back(gui_server, opener):
     assert _open(gui_server) == (200, {"opened": False})
 
 
-@pytest.mark.parametrize("page", ["browse", "confirm"])  # 剪辑偏好已并入项目设置（M13）
+@pytest.mark.parametrize("page", ["confirm"])  # 剪辑偏好、看素材都已并入主页（M13）
 def test_opener_gets_local_url_and_title(gui_server, opener, page):
     desktop, seen = opener
     make_project(gui_server.root, name="九月 一号")
@@ -63,7 +63,7 @@ def test_missing_or_bad_project(gui_server, opener):
 
 def test_requires_token(gui_server, opener):
     make_project(gui_server.root)
-    status, _, _ = call(gui_server, "POST", "/api/window", {"project": "p1", "page": "browse"},
+    status, _, _ = call(gui_server, "POST", "/api/window", {"project": "p1", "page": "confirm"},
                         token=False)
     assert status == 403
 

@@ -13,7 +13,7 @@ DESIGN = "docs/产品设计-AI粗剪工作流.md"
 IMPROVE = "docs/选段与理解-改进方案.md"
 PROGRESS = "docs/PROGRESS.md"
 TECH_STACK = "docs/TECH-STACK.md"
-BROWSE = "gui/static/browse.html"
+BROWSE = "gui/static/step-browse.js"
 VISUAL = "pipeline/understand_visual.py"
 
 
@@ -177,12 +177,14 @@ def test_gate_definitions_follow_prd():
     assert "PRD §4" in gates and "渲染前" not in gates
 
 
-@pytest.mark.xfail(strict=True, reason="M13c：③ 快捷筛选落地后转绿（PRD v1.3 先于界面改了 FR-4）")
 def test_quick_filters_match_gui():
-    labels = re.findall(r'<button id="f(?:All|Un|\d)"[^>]*>([^<]+)</button>', _read(BROWSE))
+    """step-browse.js 里 FILTERS 常量的中文标签序列 == FR-4「快捷筛选：」行在「（」之前的部分。"""
+    block = re.search(r"const FILTERS = \[(.*?)\];", _read(BROWSE), re.S)
+    labels = re.findall(r"\['\w+',\s*'([^']+)'\]", block.group(1)) if block else []
     fr4 = _section(_read(PRD), "### FR-4")
     line = next((line for line in fr4.splitlines() if "快捷筛选" in line), "：")
-    assert labels and line.split("：", 1)[1].strip().split(" / ") == labels
+    expected = line.split("：", 1)[1].split("（")[0].strip().split(" / ")
+    assert labels and labels == expected
 
 
 # ---------------------------------------------------------------- KI-44 非功能 / DoD

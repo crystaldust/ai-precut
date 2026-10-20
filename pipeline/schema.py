@@ -382,18 +382,28 @@ def _shot_time(shot: dict, key: str) -> float:
     return round(value, 3)
 
 
+SHOTS_MAX = 1000       # 一张分镜表最多多少镜（粗剪远用不到；防止异常数据撑爆）
+SHOT_SUB_MAX = 500     # 单镜字幕最多多少字
+SHOT_NOTE_MAX = 1000   # 单镜备注（选段理由等）最多多少字
+_SHOT_TEXT_MAX = {"sub": SHOT_SUB_MAX, "note": SHOT_NOTE_MAX}
+
+
 def _shot_text(shot: dict, key: str) -> str:
     raw = shot.get(key)
     if raw is None:
         return ""
     if not isinstance(raw, str):
         raise ValueError(f"镜头 {shot['id']} 的 {key} 必须是文字，收到 {raw!r}")
+    if len(raw) > _SHOT_TEXT_MAX[key]:
+        raise ValueError(f"镜头 {shot['id']} 的 {key} 太长：最多 {_SHOT_TEXT_MAX[key]} 个字，现在有 {len(raw)} 个字")
     return raw
 
 
 def clean_shots(shots: Any) -> list[dict]:
     """校验并规整分镜表，返回新列表（不改输入）；任何一镜不合法都整体拒绝。"""
     check_shot_ids(shots)
+    if len(shots) > SHOTS_MAX:
+        raise ValueError(f"分镜表最多 {SHOTS_MAX} 镜，现在有 {len(shots)} 镜")
     out = []
     for s in shots:
         t_in, t_out = _shot_time(s, "in"), _shot_time(s, "out")

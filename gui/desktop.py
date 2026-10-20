@@ -15,7 +15,7 @@ from urllib.parse import quote
 from gui import session
 from pipeline import applog
 
-WINDOW_PAGES = {"browse": "看素材", "confirm": "定标准"}  # 剪辑偏好已并入新建 / 项目设置（M13）
+WINDOW_PAGES = {"confirm": "定标准"}  # 剪辑偏好已并入新建 / 项目设置、看素材已并入主页（M13）；整个机制随 ④ 一起删（Task 20）
 WINDOW_TITLE = "{label} · {project}"
 UNKNOWN_PAGE_MSG = "不认识的页面"
 PAGE_URL = "http://127.0.0.1:{port}/static/{page}.html?project={project}"

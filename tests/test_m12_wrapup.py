@@ -86,8 +86,8 @@ def test_session_entry_url_appends_nonce():
     u = session.entry_url("http://127.0.0.1:9/")
     assert u.startswith("http://127.0.0.1:9/?nonce=")
     assert session.redeem(u.split("nonce=", 1)[1]) is True
-    u2 = session.entry_url("http://127.0.0.1:9/static/browse.html?project=a")
-    assert u2.startswith("http://127.0.0.1:9/static/browse.html?project=a&nonce=")
+    u2 = session.entry_url("http://127.0.0.1:9/static/confirm.html?project=a")
+    assert u2.startswith("http://127.0.0.1:9/static/confirm.html?project=a&nonce=")
 
 
 # ---------------------------------------------------------------- KI-88：服务端接线
@@ -125,10 +125,10 @@ def test_nonce_exchanged_once_for_cookie(gui_server):
 def test_nonce_redirect_keeps_other_query(gui_server):
     from gui import session
     nonce = _nonce_of(session.entry_url("http://x/"))
-    status, _, headers = _get(gui_server, f"/static/browse.html?project=p1&nonce={nonce}",
+    status, _, headers = _get(gui_server, f"/static/confirm.html?project=p1&nonce={nonce}",
                               token=False)
     assert status == 302
-    assert headers["location"] == "/static/browse.html?project=p1"
+    assert headers["location"] == "/static/confirm.html?project=p1"
 
 
 def test_page_with_cookie_has_no_secret(gui_server):

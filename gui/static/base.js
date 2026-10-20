@@ -5,6 +5,7 @@ const state = {
   project: null, data: null, view: null,          // view：正在看的步骤 key（analyze / browse / criteria / result / export）
   sel: null, shots: [], projects: [], presets: [],
   pinned: false, railOpen: false, npTouched: false, modalKind: null,
+  browse: null,                                   // ③ 看素材的页面状态（step-browse.js）；切项目 / 重新进入即清空
   block: null,                                    // ② 页内联的前置条件：{need: 'consent'|'keys', message, missing, cfg}
 };
 
@@ -55,7 +56,7 @@ function showModal(title, html){
   $('#mask').classList.add('on');
   state.modalKind = null;  // 任务日志窗口由 jobs.js 的 jobModal 在 showModal 之后标成 'job'
 }
-function closeModal(){ $('#mask').classList.remove('on'); state.modalKind = null; }
+function closeModal(){ $('#mask').classList.remove('on'); state.modalKind = null; state.recording = null; }
 // Esc / 点遮罩空白处关闭（任务运行中除外，见 jobs.js 的 modalDismissable）
 document.addEventListener('keydown', e=>{
   if(e.key === 'Escape' && $('#mask').classList.contains('on') && modalDismissable()) closeModal();

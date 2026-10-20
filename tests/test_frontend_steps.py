@@ -91,29 +91,35 @@ def test_build_job_still_opens_log_modal_and_open_jianying_posts_open():
     assert out == [True, "正在生成新版本", [{"project": "新项目", "target": "jianying"}]]
 
 
-def test_browse_and_criteria_are_temporary_cards_that_open_the_old_windows():
+def test_browse_is_a_real_page_and_criteria_is_still_a_temporary_card_for_the_old_window():
     out = in_ready("""await go('browse'); const b = el('#stage').innerHTML;
       await go('criteria'); const c = el('#stage').innerHTML;
-      await act('openBrowse'); await act('openConfirm');
+      await act('openConfirm');
       return [b, c, calls.filter(c => c.path === '/api/window').map(c => c.body)];""",
                    {"POST /api/window": {"opened": True}})
-    assert "打开看素材窗口" in out[0] and 'data-act="openBrowse"' in out[0]
+    assert 'id="bList"' in out[0] and "打开看素材窗口" not in out[0]
     assert "打开定标准窗口" in out[1] and 'data-act="openConfirm"' in out[1]
-    assert out[2] == [{"project": "新项目", "page": "browse"}, {"project": "新项目", "page": "confirm"}]
+    assert out[2] == [{"project": "新项目", "page": "confirm"}]
 
 
 def test_subwindow_falls_back_to_window_open_in_browser_mode():
     out = in_ready("""const opened = []; window.open = (url, target) => opened.push([url, target]);
-      await openSubpage('browse'); return opened;""", {"POST /api/window": {"opened": False}})
-    assert out == [["/static/browse.html?project=%E6%96%B0%E9%A1%B9%E7%9B%AE", "_blank"]]
+      await openSubpage('confirm'); return opened;""", {"POST /api/window": {"opened": False}})
+    assert out == [["/static/confirm.html?project=%E6%96%B0%E9%A1%B9%E7%9B%AE", "_blank"]]
 
 
-def test_focus_refreshes_state_only_on_the_temporary_cards_and_not_too_often():
-    out = in_ready("""await go('browse');
+def test_browse_is_no_longer_an_openable_subwindow():
+    out = in_ready("""await openSubpage('browse'); return calls.filter(c => c.path === '/api/window').length;""")
+    assert out == 0
+
+
+def test_focus_refreshes_state_only_on_the_criteria_card_and_not_too_often():
+    out = in_ready("""await go('criteria');
       const base = calls.filter(c => c.path.startsWith('/api/state')).length;
       onWindowFocus(); await tick(); onWindowFocus(); await tick();
       const after = calls.filter(c => c.path.startsWith('/api/state')).length;
       await go('export'); lastFocusRefresh = 0; onWindowFocus(); await tick();
+      await go('browse'); lastFocusRefresh = 0; onWindowFocus(); await tick();
       return [after - base, calls.filter(c => c.path.startsWith('/api/state')).length - after];""")
     assert out == [1, 0]
 
