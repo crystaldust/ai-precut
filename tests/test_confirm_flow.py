@@ -111,18 +111,21 @@ def test_confirm_answers_missing_project_404(gui_server):
     assert status == 404
 
 
-def test_index_has_confirm_entry():  # KI-53 脚本外置；KI-36 子页面经 openSubpage 打开；M13b：④ 暂住卡片
+def test_criteria_page_is_in_main_page_and_confirm_window_is_gone():  # KI-53 脚本外置；M13d：④ 并入主页，子窗口删除
     js = (ROOT / "gui/static/step-criteria.js").read_text(encoding="utf-8")
-    app = (ROOT / "gui/static/app.js").read_text(encoding="utf-8")
-    assert 'data-act="openConfirm"' in js and "openSubpage('confirm')" in js and "COPY_CONFIRM_ENTRY" in js
-    assert "/static/${page}.html?project=" in app
+    assert 'data-act="gate"' in js and "confirmed: true" in js and "trackJob(" in js
+    assert not (ROOT / "gui/static/confirm.html").exists() and not (ROOT / "gui/static/confirm.js").exists()
+    assert not (ROOT / "gui/desktop.py").exists()
 
 
-def test_confirm_page_polls_job():
-    html = (ROOT / "gui/static/confirm.js").read_text(encoding="utf-8")  # KI-53：脚本外置
-    assert "/api/job/" in html and "job_id" in html and "job_error" in html
-    for name in ("COPY_RESELECT_RUNNING", "COPY_RESELECT_DONE", "COPY_RESELECT_FAILED", "COPY_RESELECT_BLOCKED"):
-        assert name in html
+def test_criteria_gate_copy_lives_in_named_constants():
+    js = (ROOT / "gui/static/step-criteria.js").read_text(encoding="utf-8")
+    for name in ("COPY_GATE", "COPY_GATE_ASK", "COPY_RESELECT_BLOCKED", "COPY_REGEN", "COPY_FALLBACK_Q",
+                 "ANSWER_SAVE_DEBOUNCE_MS"):
+        assert f"const {name} " in js
+    pending = (ROOT / "gui/static/criteria-pending.js").read_text(encoding="utf-8")
+    for name in ("COPY_AI_REST", "COPY_AI_REST_DONE"):
+        assert f"const {name} " in pending
 
 
 

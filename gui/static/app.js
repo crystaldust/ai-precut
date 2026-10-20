@@ -10,21 +10,22 @@ const COPY_WELCOME_TITLE = '欢迎使用剪辑台';
 const COPY_WELCOME_FIRST = '素材 → 分析 → 定标准 → 分镜表 → 剪映工程。先新建一个项目吧。';
 const COPY_WELCOME_PICK = '选择左边的项目继续，或者新建一个。';
 const COPY_WELCOME_NEW = '新建项目';
-const FOCUS_REFRESH_MIN_MS = 2000;  // 从子窗口回到主页时刷新步骤状态，但别连着刷
 
 /* 步骤 key → 页面（返回 HTML）；进入某步时的钩子 */
 const STEP_VIEWS = {
   analyze: ()=>viewAnalyze(), browse: ()=>viewBrowse(), criteria: ()=>viewCriteria(),
   result: ()=>viewShots(), export: ()=>viewExport(),
 };
-const ENTER_HOOKS = {analyze: ()=>enterAnalyze(), browse: ()=>enterBrowse()};
+const ENTER_HOOKS = {analyze: ()=>enterAnalyze(), browse: ()=>enterBrowse(), criteria: ()=>enterCriteria()};
 
 /* ---------------- 项目 ---------------- */
 async function selectProject(name){
   await flushPendingSave();  // 上一个项目还没落盘的分镜表改动先存回它自己
+  const draft = crit();
+  if(!await flushCriteriaDraft() && draft) criteriaDraftLost(draft);  // ④ 还没发出的答案草稿同理；存不上就长时间提示，不拦切换
   resetShotBar();
   state.sel = null; state.view = null;  // 进入项目 = 去它的「当前步骤」（refresh 里按 wizard.next 定）
-  resetAnalysis(); resetBrowse();
+  resetAnalysis(); resetBrowse(); resetCriteria();
   await refreshOrWarn(name);
 }
 
@@ -36,7 +37,7 @@ async function refreshOrWarn(name=state.project){
 // 打不开的项目：清掉上一个项目的数据、步骤条和导航，state.project 置空 → 任何写操作都发不出去
 function showProjectError(name, e){
   clearTimeout(saveTimer); saveTimer = null;
-  stopAnalysisPoll(); resetShotBar(); resetBrowse();
+  stopAnalysisPoll(); resetShotBar(); resetBrowse(); resetCriteria();
   state.project = null; state.data = null; state.shots = []; state.sel = null; state.view = null;
   $('#title').textContent = name || ''; $('#meta').textContent = '';
   $('#steps').innerHTML = ''; $('#banner').innerHTML = ''; $('#nav').innerHTML = '';
@@ -106,6 +107,7 @@ async function go(key){
   if(!step || !state.data) return;
   if(step.status === 'locked'){ toast(step.hint || ''); return; }
   if(state.view === 'result' && key !== 'result') await flushPendingSave();  // 离开 ⑤ 前分镜表改动先落盘
+  if(state.view === 'criteria' && key !== 'criteria' && !await flushCriteriaDraft()){ criteriaDraftBlocked(); return; }  // 离开 ④ 前答案草稿先落盘；存不上就留在这里
   if(state.view === 'analyze' && key !== 'analyze') stopAnalysisPoll();
   state.view = key;
   renderChrome();
@@ -150,30 +152,6 @@ async function postShots(project, shots, silent){
     });
     return true;  // 不重绘，避免输入框失焦
   }catch(e){ toast(COPY_SAVE_FAILED+e.message); return false; }
-}
-
-/* ---------------- 子窗口（④ 暂住期仍用） ---------------- */
-// KI-36：App（pywebview）里 window.open 无效，先请桌面壳开新窗口；浏览器模式（opened=false）才自己开标签
-const SUBPAGES = ['confirm'];  // ③ 已并入主页，calibrate 已并入项目设置；只剩 ④ 的确认窗口
-async function openSubpage(page){
-  if(!SUBPAGES.includes(page)) return;
-  if(!state.project) return toast('先选项目');
-  const project = state.project;
-  try{
-    const r = await api('/api/window', {method:'POST', headers:{'Content-Type':'application/json'},
-                                        body: JSON.stringify({project, page})});
-    if(r.opened) return;
-  }catch(e){ return toast(e.message); }
-  window.open(`/static/${page}.html?project=` + encodeURIComponent(project), '_blank');
-}
-// 从子窗口回到主页：步骤状态可能变了（标了必留、确认了答案……），刷新一下；连着触发只刷一次
-let lastFocusRefresh = 0;
-function onWindowFocus(){
-  if(!state.project || state.view !== 'criteria') return;
-  const now = Date.now();
-  if(now - lastFocusRefresh < FOCUS_REFRESH_MIN_MS) return;
-  lastFocusRefresh = now;
-  refreshOrWarn();
 }
 
 /* ---------------- 启动 ---------------- */

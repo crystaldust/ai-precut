@@ -47,8 +47,6 @@ def test_main_wires_window_and_always_cleans_up(entry, monkeypatch, start_exc):
     srv = types.SimpleNamespace(shutdown=lambda: seen.append("srv.shutdown"))
     monkeypatch.setattr(server, "serve_in_background", lambda: (srv, "http://127.0.0.1:9/"))
     monkeypatch.setattr(server, "set_picker", lambda fn: seen.append(("picker", fn())))
-    monkeypatch.setattr(server, "set_window_opener",
-                        lambda fn: seen.append(("opener", fn("浏览素材", "http://127.0.0.1:9/b"))))
     monkeypatch.setattr(server, "report_stale_job", lambda: seen.append("stale"))
     monkeypatch.setattr(jobs, "shutdown_all", lambda *a, **k: seen.append("jobs.shutdown"))
     monkeypatch.setattr(proc, "ensure_bundled_path", lambda: seen.append("path"))
@@ -63,8 +61,8 @@ def test_main_wires_window_and_always_cleans_up(entry, monkeypatch, start_exc):
     assert url.startswith("http://127.0.0.1:9/?nonce=")  # KI-88：主窗口用一次性入口换 cookie
     from gui import session
     assert session.redeem(url.split("nonce=", 1)[1]) is True
-    assert ("create", "浏览素材", "http://127.0.0.1:9/b") in wv.calls  # KI-36：子页面开新窗口
-    # KI-88：private_mode 下 pywebview 每开一个窗口都清空共享的 cookie 存储，会把主窗口登出
+    assert [c for c in wv.calls if c[0] == "create"] == [wv.calls[0]]  # M13：只有主窗口，没有子窗口了
+    assert not hasattr(server, "set_window_opener")
     assert ("start", {"private_mode": False}) in wv.calls
     assert "path" in seen and ("picker", ["/v/a.mov"]) in seen and "stale" in seen
     assert seen[-2:] == ["jobs.shutdown", "srv.shutdown"]  # 关窗口 = 停任务，不留孤儿进程
@@ -79,7 +77,6 @@ def test_picker_returns_empty_list_when_dialog_cancelled(entry, monkeypatch):
     monkeypatch.setattr(server, "serve_in_background",
                         lambda: (types.SimpleNamespace(shutdown=lambda: None), "http://x/"))
     monkeypatch.setattr(server, "set_picker", lambda fn: picked.append(fn()))
-    monkeypatch.setattr(server, "set_window_opener", lambda fn: None)
     monkeypatch.setattr(server, "report_stale_job", lambda: None)
     monkeypatch.setattr(jobs, "shutdown_all", lambda *a, **k: None)
     monkeypatch.setattr(proc, "ensure_bundled_path", lambda: None)

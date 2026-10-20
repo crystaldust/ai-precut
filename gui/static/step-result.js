@@ -3,8 +3,8 @@
 // 分镜表的保存队列在 app.js（saveShots / scheduleSave / flushPendingSave），这里只调用。
 
 /* 界面文案：产品可直接改这里 */
-const COPY_MUST_KEEP_OVER = '必留内容共 {must}，超过目标 {target}';
-const COPY_MUST_KEEP_OVER_TITLE = '必留内容超过目标时长';
+const COPY_MUST_KEEP_OVER = '剪辑列表里的片段共 {must}，超过目标 {target}';
+const COPY_MUST_KEEP_OVER_TITLE = '剪辑列表超过目标时长';
 const COPY_TARGET_TITLE = '目标时长';
 const COPY_TARGET_ASK = '想剪成多长？';
 const COPY_TARGET_BUTTON = '按这个时长重新选段';

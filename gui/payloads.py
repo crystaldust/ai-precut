@@ -86,6 +86,55 @@ def browse(pdir: Path, name: str) -> dict:
     }
 
 
+SEGMENT_TEXT_MAX_CHARS = 400   # ④ 页面里每段文字 / 依据最多带多少字（原文留在磁盘，不整段往界面灌）
+INCOMPLETE_MSG = "分析结果不完整：{detail}。请回到「② 分析」点「重新分析」"
+LEVELS = (1, 2, 3)
+
+
+class AnalysisIncomplete(schema.CorruptJSON):
+    """segments_scored.json 能读但内容不全 / 类型不对：和文件损坏同样处理（409），不当作「没有分段」。"""
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _check_segment(index: int, seg) -> None:
+    ok = (isinstance(seg, dict) and isinstance(seg.get("id"), str) and seg["id"]
+          and _is_number(seg.get("start")) and _is_number(seg.get("end")) and seg.get("level") in LEVELS)
+    if not ok:
+        raise AnalysisIncomplete(INCOMPLETE_MSG.format(detail=f"第 {index + 1} 段缺少或写错了 id / 起止时间 / 档位"))
+
+
+def _applied_segments(work: Path, scored) -> list[dict]:
+    """④ 用的分段：与 ③ 同一份裁决（review.apply）。没有分析结果 → 空；有但不完整 → AnalysisIncomplete（409）。"""
+    if not isinstance(scored, dict) or "segments" not in scored:
+        return []
+    listed = scored["segments"]
+    if not isinstance(listed, list):
+        raise AnalysisIncomplete(INCOMPLETE_MSG.format(detail="分段列表的格式不对"))
+    for i, seg in enumerate(listed):
+        _check_segment(i, seg)
+    return review.apply(listed, review.load(work))  # overrides 损坏 → OverridesCorrupt → 409
+
+
+def _clip(text) -> str:
+    return str(text if text is not None else "")[:SEGMENT_TEXT_MAX_CHARS]
+
+
+def _pending_items(segments: list[dict]) -> list[dict]:
+    """待定（level 2）且没标不可用的段，按时间排；只给 id 和起止，文字在 segments 里读（不重复一份）。"""
+    live = sorted((s for s in segments if s["level"] == 2 and not s.get("unusable")), key=lambda s: s["start"])
+    return [{"id": s["id"], "start": s["start"], "end": s["end"]} for s in live]
+
+
+def _compact_segment(s: dict) -> dict:
+    return {"id": s["id"], "start": s["start"], "end": s["end"], "dur": round(s["end"] - s["start"], 2),
+            "level": s["level"], "level_reason": _clip(s.get("level_reason")), "override": bool(s.get("override")),
+            "unusable": bool(s.get("unusable")), "topic": s.get("topic"), "topic_raw": s.get("topic_raw"),
+            "text": _clip(s.get("text"))}
+
+
 def confirm(pdir: Path) -> dict:
     work = pdir / "work"
     q = schema.read_json(work / "questions.json", default=None)  # 损坏 → CorruptJSON → 409（KI-21）
@@ -96,14 +145,25 @@ def confirm(pdir: Path) -> dict:
         stored, unreadable = schema.read_json(work / "brief_answers.json", default={}), False
     except schema.CorruptJSON:  # KI-49：答案读不出来 → 清空让剪辑师重答，页面照常打开
         stored, unreadable = {}, True
-    scored = _jload(work / "segments_scored.json", {})
+    scored = schema.read_json(work / "segments_scored.json", default={})  # 损坏 → CorruptJSON → 409，不当作没有分段
     names = topic_names.load(work)
-    topics = [{"topic": topic_names.display(t["name"], names), "topic_raw": t["name"]}
+    segments = _applied_segments(work, scored)
+    for s in segments:  # P3：显示名只用于界面，topic_raw 仍是匹配键
+        s["topic_raw"] = s.get("topic")
+        s["topic"] = topic_names.display(s.get("topic"), names)
+    counts: dict[str, int] = {}
+    for s in segments:
+        counts[s["topic_raw"]] = counts.get(s["topic_raw"], 0) + 1
+    topics = [{"topic": topic_names.display(t["name"], names), "topic_raw": t["name"],
+               "count": counts.get(t["name"], 0)}
               for t in (scored.get("topics") if isinstance(scored, dict) else None) or []
               if isinstance(t, dict) and isinstance(t.get("name"), str)]
+    answers = questions.normalize_answers(q, stored.get("answers"))
+    pending = _pending_items(segments)
     return {"questions": q.get("questions") or [], "fallback": q.get("fallback", False),
-            "topics": topics,
-            "summary": summary, "answers": questions.normalize_answers(q, stored.get("answers")),
+            "topics": topics, "segments": [_compact_segment(s) for s in sorted(segments, key=lambda s: s["start"])],
+            "pending": pending, "speakers": speakers(segments),
+            "summary": summary, "answers": answers,
             "confirmed": stored.get("confirmed", False), "answers_unreadable": unreadable,
             "stale_questions": questions.has_legacy_focus(q), "stale_hint": STALE_QUESTIONS_HINT,  # KI-86
             "warnings": notices.project_warnings(work)}

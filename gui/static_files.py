@@ -6,10 +6,10 @@ M13：主页拆成多个聚焦脚本（每个 ≤ 400 行，tests/test_static_pa
 calibrate 页面删除。
 """
 STATIC_FILES = frozenset({
-    "index.html", "confirm.html", "app.css",
+    "index.html", "app.css",
     "common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
     "shortcuts.js", "cliplist.js",
     "project-form.js", "step-analyze.js", "step-browse.js", "step-criteria.js",
+    "criteria-analysis.js", "criteria-pending.js",
     "step-result.js", "step-export.js", "app.js", "main.js",
-    "confirm.js",
 })

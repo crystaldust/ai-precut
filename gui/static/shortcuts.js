@@ -66,14 +66,15 @@ function runShortcut(action){
 }
 function onKey(ev){
   if(state.recording) return recordKey(ev);
-  if(state.view !== 'browse' || !state.browse || modalOpen()) return;
+  const inCriteria = state.view === 'criteria' && !!state.criteria;   // ④ 只用其中四个键（criteria-pending.js），其余键留给浏览器
+  if(!(inCriteria || (state.view === 'browse' && state.browse)) || modalOpen()) return;
   const action = keyAction(ev, state.shortcuts);
-  if(!action) return;
+  if(!action || (inCriteria && !(CRITERIA_ACTIONS.has(action) && criteriaHasCurrent()))) return;   // ④ 没有显示待定段时，空格 / ↓ 留给页面滚动
   const tag = ev.target && ev.target.tagName;
   if(action === 'play' && NATIVE_SPACE_TAGS.includes(tag)) return;
   ev.preventDefault();   // 空格不能滚动页面
-  if(ev.repeat && REPEAT_BLOCKED.has(action)) return;
-  const out = runShortcut(action);
+  if(ev.repeat && (REPEAT_BLOCKED.has(action) || (inCriteria && action === 'next'))) return;
+  const out = inCriteria ? runCriteriaShortcut(action) : runShortcut(action);
   if(out && typeof out.catch === 'function') out.catch(e => toast((e && e.message) || String(e), TOAST_ERROR_MS));
 }
 // 捕获阶段：录制时 Esc 只取消录制，不会同时关掉弹窗

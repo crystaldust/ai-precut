@@ -123,6 +123,13 @@ function attachJob(){
   jobUi.last = null;
   jobModal(null); setJobActions('running'); pollJob(jobUi.id, null);
 }
+function trackJob(id, task){   // 别处（④ 闸门）已经起好的任务：胶囊立刻出现，接着轮询
+  jobUi.last = null;
+  jobUi.id = id;
+  jobUi.view = {id, task, status: 'running'};
+  renderChip(); applyBusyGuard();
+  pollJob(id, task);
+}
 function attachRunningJob(job){
   // 切回正在跑任务的项目 / 刚打开剪辑台时接着盯它（只在胶囊里露面，不弹窗）
   if(!job || !job.id || jobUi.polling === job.id) return;
@@ -173,7 +180,8 @@ function pollJob(id, task){
   };
   setTimeout(tick, JOB_POLL_FIRST_MS);
 }
-function afterJobDone(task){  // 正在看 ② 时分析完成 → 去 ③；正在看 ④ 时重新选段完成 → 去 ⑤
+function afterJobDone(task){  // 正在看 ② 时分析完成 → 去 ③；正在看 ④ 时重新选段完成 → 去 ⑤；重新出题完成 → 重读 ④ 的题目
+  if(task === 'questions' && state.view === 'criteria') return enterCriteria();
   const rule = AFTER_DONE_GO[task];
   if(rule && state.view === rule[0]) return go(rule[1]);
 }

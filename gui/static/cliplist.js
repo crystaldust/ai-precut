@@ -45,6 +45,8 @@ function queueOf(id){
 }
 function pendingCount(){ let n = 0; markQueues.forEach(q => { n += q.n; }); return n; }
 function resetMarks(){ markQueues.clear(); }
+// 等所有段在途的标记请求落地（④ 重读数据前用）
+function settleMarks(){ return Promise.all([...markQueues.values()].map(q => q.chain)); }
 
 function announce(kind, r){
   const notes = [];

@@ -139,11 +139,11 @@
 
 | 编号 | 问题 | 位置 | 状态 |
 |---|---|---|---|
-| KI-93 | 「不可用」标记（FR-11）界面上没有入口 | `gui/static/browse.*` | open（随 GL-26） |
+| KI-93 | 「不可用」标记（FR-11）界面上没有入口 | `gui/static/step-browse.js`、`cliplist.js`；`pipeline/review.py` | fixed `f815ddc`（存储 / 选段 / 出片 / 导出）+ `d65c994`（③ 的 X 入口、手动分镜表即时移除、撤销） |
 | KI-94 | 版本只能逐个看，不能对比两版、不能回退（FR-10） | `gui/static/index.js`（版本 tab） | open（随 GL-26） |
 | KI-95 | 手动改过分镜表（哪怕一个字）后，确认答案、改时长都不再影响分镜表，且没有「恢复为 AI 选段」；应先询问覆盖 / 保留（PRD FR-7） | `gui/views.py:74`；`gui/static/index.js` | open（随 GL-26） |
-| KI-96 | 名词混乱：「预览」tab 放的是代理片、预览片在「版本」tab；「废片」tab（画面技术问题）与「废片」档位同名；待定 / 待判断混用；窗口「浏览素材」页标题「素材浏览」；阶段条用「素材台账」「策划分派单」等内部术语且只列 6 项（实际 12 步）。统一按 PRD §12 | `gui/static/*`；`gui/views.py:58-65` | open（随 GL-26） |
-| KI-97 | 任务前置检查返回 `need=encoder` 时前端没处理，只记一行「[错误]」日志 | `gui/static/jobs.js:76-80` | open |
+| KI-96 | 名词混乱：「预览」tab 放的是代理片、预览片在「版本」tab；「废片」tab（画面技术问题）与「废片」档位同名；待定 / 待判断混用；窗口「浏览素材」页标题「素材浏览」；阶段条用「素材台账」「策划分派单」等内部术语且只列 6 项（实际 12 步）。统一按 PRD §12 | `gui/static/*`；`gui/views.py:58-65` | fixed `<D1-HASH>`（M13：前端名词守卫 `tests/test_terms.py`，后端文案 `b2f4c69`） |
+| KI-97 | 任务前置检查返回 `need=encoder` 时前端没处理，只记一行「[错误]」日志 | `gui/static/jobs.js:76-80` | fixed `5d25267`（`need=encoder` 及未知前置条件：弹窗说明 + 导出诊断包） |
 | KI-98 | 「打开剪映」硬编码 `/Applications/VideoFusion-macOS.app`，任何时候都可点；剪映装在别处时无提示 | `gui/server.py:566` | open |
-| KI-99 | `/api/browse` 判断已用 / 未用只看手动 `shots.json`：没有手动分镜表时所有片段都显示「未用」 | `gui/payloads.py:35-39` | 已修复（M13c：没有手动分镜表时以 `work/shots-selected.json` 为准，手动的优先；提交号留待回填） |
+| KI-99 | `/api/browse` 判断已用 / 未用只看手动 `shots.json`：没有手动分镜表时所有片段都显示「未用」 | `gui/payloads.py:35-39` | fixed `d65c994`（没有手动分镜表时以 `work/shots-selected.json` 为准，手动的优先） |
 | KI-100 | 事后标「不可用」不会让已落盘的产物失效：旧版本的 Windows zip、预览片、已进剪映草稿库的 Mac 草稿仍可打开 / 定位，界面也不提示（FR-11「所有版本均不出现」） | `gui/static/`（版本卡片）；`gui/server.py`（`/api/open target=export`） | open（M14：⑥ 版本卡片提示这一版含不可用片段） |

@@ -37,6 +37,11 @@ def _has_versions(pdir: Path) -> bool:
     return any(d.is_dir() for d in (pdir / "output").glob("v*"))
 
 
+def is_legacy(pdir: Path, confirmed: bool) -> bool:
+    """⚑P2：改版前已出过片 / 有分镜表、但没经过定标准的旧项目。"""
+    return not confirmed and (_has_versions(Path(pdir)) or (Path(pdir) / "shots.json").exists())
+
+
 def collect(pdir: Path, cfg: dict, name: str, *, digests: bool = True) -> dict:
     """读盘得到 facts（只读；任何文件坏了都当没有）。digests=False 跳过三个指纹（项目列表用）。"""
     pdir = Path(pdir)
@@ -57,7 +62,7 @@ def collect(pdir: Path, cfg: dict, name: str, *, digests: bool = True) -> dict:
         "answers_confirmed": confirmed,
         "answers_questions_digest": answers.get("questions_digest") or None,
         "questions_digest": fingerprints.file_digest(work / "questions.json") if digests else None,
-        "legacy": not confirmed and (_has_versions(pdir) or (pdir / "shots.json").exists()),  # ⚑P2
+        "legacy": is_legacy(pdir, confirmed),
         "selection_inputs_saved": saved_inputs if isinstance(saved_inputs, dict) else None,
         "selection_inputs_now": fingerprints.selection_inputs(work, cfg) if digests else None,
     }

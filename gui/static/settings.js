@@ -22,7 +22,7 @@ const COPY_SETTINGS_DONE = '完成';
 const COPY_SETTINGS_CLOSE = '关闭';
 const COPY_KEYS_STILL_MISSING = '还缺 Key，暂不开始分析；填好后再点「开始分析」';
 const COPY_CONSENT_TITLE = '使用前请知悉：哪些数据会发到云端';
-const COPY_CONSENT_INTRO = '原片和画面不会离开这台电脑。为了完成粗剪，会有两类数据发到云端：';
+const COPY_CONSENT_INTRO = '原始视频和画面不会离开这台电脑。为了完成粗剪，会有两类数据发到云端：';
 const COPY_CONSENT_FLOWS = [
   '素材的音轨（16kHz 单声道）→ 火山引擎语音识别，用于转写成文字',
   '转写出的文字 → DeepSeek，用于理解内容、找出重要片段',

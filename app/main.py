@@ -41,13 +41,9 @@ def main() -> None:
         return list(result or [])
 
     server.set_picker(pick_video)
-    # KI-36：页面里的 window.open 在 pywebview 里无效，「浏览素材」等子页面由这里开新窗口
-    server.set_window_opener(lambda title, url: webview.create_window(
-        title, url, width=1280, height=860, min_size=(960, 600), text_select=True))
     server.report_stale_job()
     try:
-        # KI-88：private_mode=True 时 pywebview（cocoa）每建一个窗口都清空共享的 WebKit 数据，
-        # 开子窗口会把主窗口的会话 cookie 一起清掉；会话 cookie 不落盘、每次启动都换值
+        # KI-88：会话 cookie 不落盘、每次启动都换值；private_mode 保持 False（M13 起只有一个窗口，没有子窗口了）
         webview.start(private_mode=False)
     finally:
         jobs.shutdown_all()  # 关窗口 = 停掉后台任务，不留孤儿进程继续计费

@@ -32,7 +32,7 @@ from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
 from pipeline import applog, proc, schema, shots_store  # noqa: E402
 from gui import (  # noqa: E402
-    desktop, jobs, maintenance, media, prefs, project_routes, session, settings, support, views,
+    jobs, maintenance, media, prefs, project_routes, session, settings, support, views,
 )
 from gui.static_files import STATIC_FILES  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
@@ -72,9 +72,6 @@ REQUEST_TIMEOUT_S = 60            # 单次 socket 读写超时，慢速/半开�
 NO_EXPORT_MSG = "这一版还没有导出 Windows 剪映包"
 INTERNAL_ERROR_MSG = "服务内部错误，请重试；如果反复出现请点「更多 → 导出诊断包」发给开发"
 LOG = applog.get("gui")
-
-
-set_window_opener = desktop.set_window_opener  # 桌面壳注入（KI-36）
 
 
 def set_picker(fn) -> None:
@@ -387,8 +384,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(hit[1], hit[0])
         if (hit := support.handle_post(p, body, diagnostics_project)
                 or maintenance.handle_post(p, body, existing_project)
-                or project_routes.handle_post(p, body, existing_project, PRESETS)
-                or desktop.handle_post(p, body, existing_project, self.server.server_address[1])) is not None:
+                or project_routes.handle_post(p, body, existing_project, PRESETS)) is not None:
             return self._json(hit[1], hit[0])
 
         if p == "/api/new":

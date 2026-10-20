@@ -200,3 +200,50 @@ def test_plan_dod_is_quantified():
     dod = _section(_read(PLAN), "## 8.")
     for must in ("uv run pytest", "80%", "回归测试", "CRITICAL", "PROGRESS"):
         assert must in dod, must
+
+
+# ---------------------------------------------------------------- M13：GUI.md 与代码一致
+GUI_DOC = "docs/GUI.md"
+KNOWN_ISSUES = "docs/known-issues.md"
+BLOCKERS = "docs/go-live-blockers.md"
+
+
+def test_gui_doc_describes_the_six_step_wizard_and_no_removed_ui():
+    doc = _read(GUI_DOC)
+    for step in ("① 新建", "② 分析", "③ 看素材", "④ 定标准", "⑤ 看结果", "⑥ 导出"):
+        assert step in doc, step
+    for gone in ("/api/window", "browse.js", "confirm.js", "calibrate.js", "index.js", "② 生成成片", "① 处理素材",
+                 "旧界面", "左下角", "只出预览"):
+        assert not re.search(rf"(?<![-\w]){re.escape(gone)}", doc), gone  # step-browse.js 不算 browse.js
+
+
+def test_gui_doc_route_table_matches_the_routes_in_code():
+    doc = _read(GUI_DOC)
+    for path in ("/api/analysis", "/api/browse/unusable", "/api/browse/must", "/api/browse/level",
+                 "/api/project/settings", "/api/topics/rename", "/api/prefs", "/api/prefs/reset",
+                 "/api/confirm/answers", "/api/confirm"):
+        assert path in doc, path
+    src = "".join(p.read_text(encoding="utf-8") for p in (ROOT / "gui").glob("*.py"))
+    rows = [line for line in doc.splitlines() if re.match(r"\| (GET|POST) \| `/", line)]
+    assert len(rows) >= 25
+    for row in rows:
+        path = re.search(r"`(/api/[a-z/_]+)", row)
+        if path:  # /media/* 与带 <id> 的任务接口按前缀对
+            assert f'"{path.group(1)}' in src, f"文档里的 {path.group(1)} 在代码里找不到"
+
+
+def test_gui_doc_file_map_lists_every_static_script():
+    from gui.static_files import STATIC_FILES
+    doc = _read(GUI_DOC)
+    for name in sorted(STATIC_FILES):
+        if name.endswith(".js"):
+            assert name in doc, f"GUI.md 的文件地图缺 {name}"
+
+
+def test_known_issues_and_blockers_reflect_m13():
+    ki = _read(KNOWN_ISSUES)
+    for number in ("KI-93", "KI-96", "KI-97", "KI-99"):
+        row = next(line for line in ki.splitlines() if line.startswith(f"| {number} "))
+        assert "已修复" in row or "fixed" in row, row
+    gl = next(line for line in _read(BLOCKERS).splitlines() if line.startswith("| GL-26 "))
+    assert "①–④ 完成（M13），⑤⑥ 待 M14" in gl and "fixed" not in gl

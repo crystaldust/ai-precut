@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 STATIC = Path(__file__).resolve().parent.parent / "gui" / "static"
-PAGES = ["index.html", "confirm.html"]
-XSS_PAGES = ["index.html", "confirm.html"]
+PAGES = ["index.html"]
+XSS_PAGES = ["index.html"]
 COMMON_JS = '<script src="/static/common.js"></script>'
 
 
@@ -35,7 +35,7 @@ MAX_JS_LINES = 400          # M13：每个前端脚本聚焦一件事
 INDEX_ENTRY = "main.js"     # 主页最后加载的启动脚本（所有 ACTIONS 注册都在它之前）
 INDEX_SCRIPT_ORDER = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js",
                       "wizard.js", "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js",
-                      "step-criteria.js", "step-result.js", "step-export.js", "app.js", INDEX_ENTRY]
+                      "step-criteria.js", "criteria-analysis.js", "criteria-pending.js", "step-result.js", "step-export.js", "app.js", INDEX_ENTRY]
 
 
 # ---------------------------------------------------------------- GL-05 / KI-88
@@ -98,9 +98,10 @@ def test_summary_escaped_in_browse():
     assert "esc(sum.summary" in _read("step-browse.js")
 
 
-@pytest.mark.parametrize("raw", ["${p.text}", "${fmt(p.at)}"])
-def test_llm_fields_escaped_in_confirm(raw):
-    assert raw not in _read("confirm.html")
+@pytest.mark.parametrize("raw", ["${p.text}", "${fmt(p.at)}", "${q.text}", "${o.label}", "${o.effect", "${s.text}",
+                                 "${t.topic}", "${c.name}", "${s.name}", "${s.level_reason", "${r.job_error"])
+def test_llm_fields_escaped_in_criteria(raw):
+    assert raw not in _criteria_src()
 
 
 @pytest.mark.parametrize("raw", ["${j.start_tc}", "${j.suggest}", "${v.name}",
@@ -169,13 +170,18 @@ def test_job_modal_stays_open_when_job_warned():
 
 
 # ---------------------------------------------------------------- M8：KI-49 / KI-21
-def test_confirm_uses_as_list_and_immutable_pick():
-    src = _read("confirm.html")
+def _criteria_src():
+    """④ 定标准由三个脚本组成（M13d）：守卫一起看。"""
+    return "".join(_html(n) for n in ("step-criteria.js", "criteria-analysis.js", "criteria-pending.js"))
+
+
+def test_criteria_uses_as_list_and_immutable_pick():
+    src = _criteria_src()
     assert "asList(" in src and "(chosen||[]).includes" not in src
-    assert ".splice(" not in src and ".push(" not in src
+    assert ".splice(" not in src and ".push(" not in src   # KI-49：不原地改磁盘读来的数组
     assert "answers_unreadable" in src and "COPY_ANSWERS_UNREADABLE" in src
-    save = src[src.index("async function save"):]
-    assert "e.error" in save[:save.index("\n}\n")]  # 409 / 404 的原因要显示出来，不只是「保存失败」
+    submit = src[src.index("async function submitGate"):]
+    assert "setStatus(c, e.message" in submit[:submit.index("\n}\n")]  # 409 / 404 的原因要显示出来，不只是「保存失败」
 
 
 def test_index_shows_state_load_error():
@@ -207,23 +213,14 @@ def test_new_project_modal_shows_preset_warnings():
     assert "warnings" in body and "esc(" in body
 
 
-def test_confirm_error_toast_stays_longer():
-    src = _read("confirm.html")
-    assert "TOAST_ERROR_MIN_MS" in src
-    save = src[src.index("async function save"):]
-    save = save[:save.index("\n}\n")]
-    assert "toastError(" in save
+def test_criteria_error_toast_stays_longer():
+    src = _html("step-criteria.js")
+    status = src[src.index("function setStatus"):]
+    status = status[:status.index("\n}\n")]
+    assert "TOAST_ERROR_MS" in status and "TOAST_MS_PER_CHAR" in status and "toast(" in status
 
 
 # ---------------------------------------------------------------- M8 审查：浏览 / 确认页警告条，浏览页写失败回滚
-def test_confirm_page_shows_warning_strip_escaped():
-    src = _read("confirm.html")
-    assert 'id="warnstrip"' in src
-    body = src[src.index("function renderWarnings"):]
-    body = body[:body.index("\n}\n")]
-    assert "esc(" in body and "DATA.warnings" in src
-
-
 def test_browse_step_shows_warnings_escaped():
     src = _read("step-browse.js")
     assert "esc(w)" in src and "b.data.warnings" in src
@@ -255,18 +252,15 @@ def test_create_project_has_no_hash_navigation():
     assert "location.hash" not in body and "await selectProject(name)" in body
 
 
-def test_subpages_open_through_desktop_window_first():
+def test_no_sub_window_mechanism_in_main_page():
     src = _read("index.html")
-    body = src[src.index("async function openSubpage"):]
-    body = body[:body.index("\n}\n")]
-    assert "/api/window" in body and "window.open(" in body
-    assert body.index("/api/window") < body.index("window.open(")
+    assert "/api/window" not in src and "window.open(" not in src and "openSubpage" not in src
+    assert "onWindowFocus" not in src and "FOCUS_REFRESH" not in src
 
 
-def test_confirm_page_offers_regenerate_for_stale_questions():  # KI-86
-    src = _read("confirm.html")
-    assert 'id="staleCard"' in src and 'data-act="regenerate"' in src
-    assert "stale_questions" in src and "task: 'questions'" in src
+def test_criteria_page_offers_regenerate_for_stale_questions():  # KI-86
+    src = _criteria_src()
+    assert 'data-act="critRegen"' in src and "stale_questions" in src and "startJob('questions'" in src
 
 
 @pytest.mark.parametrize("name", [n for n in JS_FILES if n != "common.js"])  # common.js 里就是那个安全包装 playQuietly
@@ -318,8 +312,7 @@ def test_index_loads_scripts_in_order_with_entry_last():
 
 
 def test_every_index_script_is_loaded_by_some_page():
-    loaded = set(_scripts("index.html")) | set(_scripts("confirm.html"))
-    assert set(JS_FILES) == loaded
+    assert set(JS_FILES) == set(_scripts("index.html"))
 
 
 def test_no_script_uses_local_storage():
@@ -335,3 +328,11 @@ def test_app_css_served_and_removed_pages_gone(gui_server):
     assert status == 200 and headers["content-type"].startswith("text/css")
     assert call(gui_server, "GET", "/static/calibrate.html", token=False)[0] == 404
     assert call(gui_server, "GET", "/static/index.js", token=False)[0] == 404
+
+
+def test_criteria_gate_wrapper_does_not_reuse_the_first_run_gate_class():
+    """真浏览器里发现的：.gate 是首次打开告知卡片的样式（margin: 60px auto），借用会把底部导航撑高到 179px。"""
+    js, css = _html("step-criteria.js"), _html("app.css")
+    assert 'class="gate"' not in js and 'class="gate-wrap"' in js
+    assert re.search(r"^\.gate\{[^}]*margin:60px", css, re.M)          # 首次打开卡片确实占用着这个名字
+    assert ".nav .gate-wrap{" in css

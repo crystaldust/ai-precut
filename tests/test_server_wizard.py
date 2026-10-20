@@ -226,8 +226,8 @@ def test_confirm_lists_topics_with_display_and_raw(gui_server):
     _topic_project(gui_server)
     post(gui_server, "/api/topics/rename", {"project": "p1", "name": "讲合同", "display": "谈合同"})
     data = json.loads(call(gui_server, "GET", "/api/confirm?project=p1")[1])
-    assert {"topic": "谈合同", "topic_raw": "讲合同"} in data["topics"]
-    assert {"topic": "聊吃饭", "topic_raw": "聊吃饭"} in data["topics"]
+    assert {"topic": "谈合同", "topic_raw": "讲合同", "count": 1} in data["topics"]
+    assert {"topic": "聊吃饭", "topic_raw": "聊吃饭", "count": 1} in data["topics"]
 
 
 def test_selection_still_matches_raw_names(gui_server):

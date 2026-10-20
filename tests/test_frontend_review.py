@@ -227,10 +227,9 @@ def test_double_click_a_then_b_ends_on_b_with_b_view():
     assert out == ["B", "criteria", "B"]
 
 
-def test_open_subpage_only_accepts_known_pages():
-    out = run_app("(async () => { state.project = 'p'; await openSubpage('../evil'); await openSubpage('calibrate');"
-                  " return calls.length; })()")
-    assert out == 0
+def test_sub_window_mechanism_is_gone():
+    out = run_app("[typeof openSubpage, typeof onWindowFocus, typeof lastFocusRefresh, typeof SUBPAGES]")
+    assert out == ["undefined"] * 4
 
 
 def test_unused_copy_constants_removed():

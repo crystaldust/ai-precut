@@ -122,7 +122,8 @@ def test_corrupt_or_missing_questions_not_reusable(tmp_path):
 
 
 # ---------------------------------------------------------------- M8：KI-49 答案规整
-QS = {"questions": [{"id": "q1", "type": "single"}, {"id": "q2", "type": "multi"}]}
+OPTS = [{"label": "a"}, {"label": "b"}, {"label": "c"}]
+QS = {"questions": [{"id": "q1", "type": "single", "options": OPTS}, {"id": "q2", "type": "multi", "options": OPTS}]}
 
 
 @pytest.mark.parametrize("answers,expected", [
@@ -130,11 +131,26 @@ QS = {"questions": [{"id": "q1", "type": "single"}, {"id": "q2", "type": "multi"
     ({"q2": "a"}, {"q2": ["a"]}),
     ({"q2": ["a", 3, "", None, "b"]}, {"q2": ["a", "b"]}),
     ({"q2": {"x": 1}}, {"q2": []}),
+    ({"q1": "不在选项里"}, {}), ({"q2": ["a", "x", "a", "b", "b"]}, {"q2": ["a", "b"]}), ({"q2": "x"}, {"q2": []}),
     ({"q1": ["a"]}, {}), ({"q1": ""}, {}), ({"q1": "a"}, {"q1": "a"}),
     ({"q9": "a", "q1": "b"}, {"q1": "b"}),
 ])
 def test_normalize_answers(answers, expected):
     assert questions.normalize_answers(QS, answers) == expected
+
+
+def test_normalize_answers_caps_lengths():
+    long_label = "长" * (questions.MAX_ANSWER_CHARS + 1)
+    qs = {"questions": [{"id": "q1", "type": "single", "options": [{"label": long_label}]},
+                        {"id": "q2", "type": "multi", "options": [{"label": f"o{i}"} for i in range(60)]}]}
+    out = questions.normalize_answers(qs, {"q1": long_label, "q2": [f"o{i}" for i in range(60)]})
+    assert "q1" not in out and len(out["q2"]) == questions.MAX_MULTI_ANSWERS
+
+
+def test_normalize_answers_ignores_malformed_options():
+    qs = {"questions": [{"id": "q1", "type": "single", "options": [None, "x", {"label": 3}, {"label": "ok"}]},
+                        {"id": "q2", "type": "single"}]}
+    assert questions.normalize_answers(qs, {"q1": "ok", "q2": "任何"}) == {"q1": "ok"}
 
 
 def test_normalize_answers_without_questions():

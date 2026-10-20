@@ -73,6 +73,9 @@ async function enterBrowse(){
   const gen = ++browseGen;
   state.browse = null;
   $('#bList').innerHTML = `<div class="empty">${esc(COPY_BROWSE_LOADING)}</div>`;
+  const c = crit();   // ④ 里还在路上的档位改动先落地，再读
+  if(c && c.levelChain) await c.levelChain;
+  if(gen !== browseGen) return;
   let data;
   try{ data = await api('/api/browse?project=' + encodeURIComponent(project)); }
   catch(e){

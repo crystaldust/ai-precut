@@ -103,7 +103,7 @@ def test_pick_post_with_empty_json_ok(gui_server, monkeypatch):
     assert json.loads(body) == {"path": "/x.mp4"}
 
 
-@pytest.mark.parametrize("path", ["/", "/static/index.html", "/static/confirm.html"])
+@pytest.mark.parametrize("path", ["/", "/static/index.html"])
 def test_pages_need_cookie_and_hold_no_secret(gui_server, path):
     from gui import session
     assert call(gui_server, "GET", path, token=False)[0] == 403  # KI-88：「请从剪辑台 App 打开」

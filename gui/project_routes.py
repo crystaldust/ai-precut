@@ -79,7 +79,7 @@ def _get_confirm(q: dict, lookup: Lookup, existing: Lookup) -> tuple[int, dict]:
         return 200, payloads.confirm(lookup(name))
     except FileNotFoundError as exc:
         return 404, {"error": str(exc)}
-    except schema.CorruptJSON as exc:  # 必须在 ValueError 之前
+    except (review.OverridesCorrupt, schema.CorruptJSON) as exc:  # 必须在 ValueError 之前
         return 409, {"error": str(exc)}
     except ValueError as exc:
         return 400, {"error": str(exc)}
@@ -254,10 +254,20 @@ def _post_calibrate(path: str, body: dict, existing: Lookup) -> tuple[int, dict]
     return 200, {"ok": True, "directive": style.directive(calibration)}
 
 
+def _wizard_or_none(pdir: Path, name: str) -> dict | None:
+    """答案已落盘之后才拼步骤状态：拼不出来不能让保存看起来失败，前端拿不到就不动步骤条。"""
+    try:
+        return wizard.derive(wizard.collect(pdir, schema.read_json(pdir / "project.json", default={}), name))
+    except Exception:  # noqa: BLE001
+        LOG.exception("答案已保存，但拼步骤状态失败")
+        return None
+
+
 def _post_confirm_answers(path: str, body: dict, existing: Lookup) -> tuple[int, dict]:
     try:  # KI-05：「保存并确认」后服务端自动起重新选段任务
-        return 200, confirm.save_answers(existing(body.get("project", "")),
-                                         body.get("project", ""), body)
+        pdir, name = existing(body.get("project", "")), body.get("project", "")
+        result = confirm.save_answers(pdir, name, body)
+        return 200, {**result, "wizard": _wizard_or_none(pdir, name)}  # ④ 的步骤条跟着变
     except schema.CorruptJSON as exc:  # 必须在 ValueError 之前
         return 409, {"error": str(exc)}
     except FileNotFoundError as exc:

@@ -195,10 +195,21 @@ def reusable(out_path: Path) -> bool:
     return not data.get("fallback") or (Path(out_path).parent / ANSWERS_FILE).exists()
 
 
+MAX_ANSWER_CHARS = 200   # 一个答案（选项文字）最长多少字；超过的丢掉
+MAX_MULTI_ANSWERS = 20   # 多选最多留几项
+
+
+def _option_labels(question: dict) -> set[str]:
+    options = question.get("options")
+    return {o["label"] for o in (options if isinstance(options, list) else [])
+            if isinstance(o, dict) and isinstance(o.get("label"), str) and 0 < len(o["label"]) <= MAX_ANSWER_CHARS}
+
+
 def normalize_answers(qs: dict | None, answers) -> dict:
     """磁盘 / 请求里的答案 → {问题 id: str | list[str]}（KI-49）。
 
-    多选必为字符串列表、单选必为非空字符串；对不上当前问题 id 的丢掉。
+    只认这道题选项里的文字：单选恰好一个、多选取子集（去重、保持原顺序、最多 MAX_MULTI_ANSWERS 项）；
+    对不上当前问题 id / 选项的一律丢掉（答案会进选段规则，不能让任意文字进来）。
     """
     if not isinstance(answers, dict):
         return {}
@@ -207,10 +218,11 @@ def normalize_answers(qs: dict | None, answers) -> dict:
         qid = q.get("id")
         if qid not in answers:
             continue
-        value = answers[qid]
+        value, labels = answers[qid], _option_labels(q)
         if q.get("type") == "multi":
             values = value if isinstance(value, list) else [value] if isinstance(value, str) else []
-            out[qid] = [v for v in values if isinstance(v, str) and v]
-        elif isinstance(value, str) and value:
+            kept = list(dict.fromkeys(v for v in values if isinstance(v, str) and v in labels))
+            out[qid] = kept[:MAX_MULTI_ANSWERS]
+        elif isinstance(value, str) and value in labels:
             out[qid] = value
     return out

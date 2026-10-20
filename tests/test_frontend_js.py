@@ -81,7 +81,7 @@ def test_fetch_absolute_same_origin_api_gets_credentials():
     assert out == "same-origin"
 
 
-@pytest.mark.parametrize("url", ["/media/p/proxy", "/static/confirm.html",
+@pytest.mark.parametrize("url", ["/media/p/proxy", "/static/index.html",
                                  "http://evil.example/api/x"])
 def test_fetch_non_api_untouched(url):
     out = run_js(f"fetch({json.dumps(url)}); calls[0].init === undefined;")
@@ -141,6 +141,7 @@ ctx.toast = (m) => ctx.toasts.push(m);
 ctx.renderWarnbar = (l) => ctx.warnbars.push(l);
 ctx.renderChrome = () => {}; ctx.renderView = () => {}; ctx.setRail = () => {}; ctx.renderProjects = () => {};
 ctx.stopAnalysisPoll = () => {}; ctx.resetAnalysis = () => {}; ctx.resetShotBar = () => {}; ctx.resetBrowse = () => {};
+ctx.resetCriteria = () => {}; ctx.flushCriteriaDraft = async () => true; ctx.crit = () => null; ctx.criteriaDraftLost = () => {}; ctx.criteriaDraftBlocked = () => {};
 ctx.setStage = h => { el('#stage').innerHTML = h; };
 ctx.attachRunningJob = () => {}; ctx.renumber = () => {};
 ctx.fmtLong = String; ctx.num = Number; ctx.esc = String; ctx.TOAST_ERROR_MS = 6000;

@@ -6,6 +6,7 @@ const state = {
   sel: null, shots: [], projects: [], presets: [],
   pinned: false, railOpen: false, npTouched: false, modalKind: null,
   browse: null,                                   // ③ 看素材的页面状态（step-browse.js）；切项目 / 重新进入即清空
+  criteria: null,                                 // ④ 定标准的页面状态（step-criteria.js）；同上
   block: null,                                    // ② 页内联的前置条件：{need: 'consent'|'keys', message, missing, cfg}
 };
 

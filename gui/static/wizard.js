@@ -12,6 +12,7 @@ const COPY_NEXT = '下一步：{label} →';
 const COPY_GO_LABELS = {browse: '去看素材', criteria: '去定标准', result: '去看结果', export: '去导出'};
 const COPY_BANNER_ACTIONS = {reanalyze: '重新分析', reselect: '重新选段'};
 const COPY_MANUAL_SHOTS_NOTE = '你手动改过分镜表，重新选段只更新建议，不会覆盖它（后续版本会让你选择覆盖或保留）';
+const STEP_NAMES = ['新建', '分析', '看素材', '定标准', '看结果', '导出'];  // ①–⑥，与服务端 gui/wizard.py 的 STEPS 一致（tests/test_terms.py 比对）
 const STEP_STATUSES = ['locked', 'done', 'stale', 'available'];  // class 名只认这几个
 const STATUS_MARK = {done: ' ✓', stale: ' ⚠'};
 const VIEW_ORDER = ['analyze', 'browse', 'criteria', 'result', 'export'];  // ① 新建是弹窗，不在页面序列里
@@ -56,7 +57,7 @@ function stepButtonHtml(s, viewing){
   const disabled = status === 'locked' ? ' aria-disabled="true"' : '';
   const title = s.hint || s.banner || '';  // 悬停原因：未到 → 先完成哪步；需要更新 → 为什么
   return `<button class="${cls}" data-act="go" data-step="${esc(s.key)}"${disabled} title="${esc(title)}">`
-    + `${esc(CIRCLED[num(s.n) - 1] || '')}${esc(s.label)}${STATUS_MARK[status] || ''}</button>`;
+    + `${esc(CIRCLED[num(s.n) - 1] || '')}${esc(s.label || STEP_NAMES[num(s.n) - 1] || '')}${STATUS_MARK[status] || ''}</button>`;
 }
 function stepsHtml(wizard, viewing){
   return (wizard?.steps || []).map(s => stepButtonHtml(s, viewing)).join('<span class="step-sep">→</span>');
@@ -107,8 +108,9 @@ function navButtonHtml(item, cls, text){
 }
 function renderNav(wizard=state.data?.wizard, viewing=state.view){
   const m = navModel(wizard, viewing);
-  const html = wizard ? (m.prev ? navButtonHtml(m.prev, 'ghost', COPY_PREV) : '<span></span>')
-    + (m.next ? navButtonHtml(m.next, 'primary', COPY_NEXT.replace('{label}', m.next.label)) : '<span></span>') : '';
+  const next = viewing === 'criteria' ? gateNavHtml()   // 闸门步骤的「下一步」就是闸门按钮（step-criteria.js）
+    : (m.next ? navButtonHtml(m.next, 'primary', COPY_NEXT.replace('{label}', m.next.label)) : '<span></span>');
+  const html = wizard ? (m.prev ? navButtonHtml(m.prev, 'ghost', COPY_PREV) : '<span></span>') + next : '';
   $('#nav').innerHTML = html;
   return html;
 }
