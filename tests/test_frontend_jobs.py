@@ -75,9 +75,9 @@ def api_rejects(status, data):
 
 # ---------------------------------------------------------------- GL-22：字幕框可输入
 def _index_fn(name):
-    src = (STATIC / "step-result.js").read_text(encoding="utf-8")  # M13：分镜表视图在 step-result.js
+    src = (STATIC / "result-table.js").read_text(encoding="utf-8")  # M14：分镜表视图在 result-table.js
     m = re.search(r"^function %s\(.*?\n(?=function |let |const |/\*)" % name, src, re.S | re.M)
-    assert m, f"step-result.js 里找不到 {name}"
+    assert m, f"result-table.js 里找不到 {name}"
     return m.group(0)
 
 

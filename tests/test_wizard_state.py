@@ -79,7 +79,7 @@ def test_matching_stamp_is_done():
 
 
 def test_confirmed_answers_open_result_and_export():
-    d = wizard.derive(F(analysis_done=True, answers_confirmed=True))
+    d = wizard.derive(F(analysis_done=True, answers_confirmed=True, has_versions=True))
     assert statuses(d) == ["done"] * 4 + ["available"] * 2
     assert d["next"] == "result"
 
@@ -102,14 +102,14 @@ def test_criteria_not_stale_when_either_digest_missing(saved, now):
 
 
 def test_legacy_project_counts_as_criteria_done():
-    d = wizard.derive(F(analysis_done=True, legacy=True))
+    d = wizard.derive(F(analysis_done=True, legacy=True, has_versions=True))
     assert d["legacy"] is True
     assert statuses(d) == ["done"] * 4 + ["available"] * 2
     assert by_key(d, "criteria")["banner"] == wizard.LEGACY_NOTE
 
 
 def test_selection_inputs_changed_marks_result_stale():
-    d = wizard.derive(F(analysis_done=True, answers_confirmed=True,
+    d = wizard.derive(F(analysis_done=True, answers_confirmed=True, has_versions=True,
                         selection_inputs_saved=SAVED,
                         selection_inputs_now={**SAVED, "overrides": "changed"}))
     step = by_key(d, "result")
@@ -385,8 +385,57 @@ def test_collect_uses_caller_supplied_preview_inputs_without_recomputing(tmp_pat
     assert calls == [] and f["preview_fresh"] is True
 
 
-def test_derive_ignores_preview_facts_until_rules_are_enabled():
-    plain = wizard.derive(F(analysis_done=True, answers_confirmed=True))
-    with_facts = wizard.derive(F(analysis_done=True, answers_confirmed=True, preview_fresh=True,
-                                 has_versions=True, exported_current=True))
-    assert plain == with_facts
+READY = dict(analysis_done=True, answers_confirmed=True)
+
+
+def test_result_is_done_when_the_preview_is_fresh_and_next_moves_on_to_export():
+    d = wizard.derive(F(**READY, preview_fresh=True))
+    assert by_key(d, "result")["status"] == "done" and d["next"] == "export"
+    assert by_key(d, "export")["status"] == "available"
+
+
+def test_result_stays_available_when_the_preview_is_missing_or_outdated():
+    d = wizard.derive(F(**READY, preview_fresh=False))
+    assert by_key(d, "result")["status"] == "available" and d["next"] == "result"
+
+
+def test_stale_selection_wins_over_a_fresh_preview():
+    d = wizard.derive(F(**READY, preview_fresh=True, selection_inputs_saved=SAVED,
+                        selection_inputs_now={**SAVED, "overrides": "changed"}))
+    step = by_key(d, "result")
+    assert step["status"] == "stale" and step["action"] == "reselect" and d["next"] == "result"
+
+
+def test_result_is_locked_before_criteria_even_if_a_preview_exists():
+    d = wizard.derive(F(analysis_done=True, preview_fresh=True))
+    assert by_key(d, "result")["status"] == "locked"
+
+
+def test_empty_table_never_makes_result_done(tmp_path):
+    pdir = make_project(tmp_path)  # 没有分镜表 → collect 的 preview_fresh 为 False
+    f = wizard.collect(pdir, json.loads((pdir / "project.json").read_text()), "p1")
+    assert f["preview_fresh"] is False
+    assert by_key(wizard.derive({**f, "analysis_done": True, "answers_confirmed": True}), "result")["status"] != "done"
+
+
+# ---------------------------------------------------------------- ⑥ 的闸门（Q2）：没有版本且预览片不新鲜 → 未到
+def test_export_is_locked_without_versions_and_without_a_fresh_preview():
+    d = wizard.derive(F(**READY, preview_fresh=False, has_versions=False))
+    step = by_key(d, "export")
+    assert step["status"] == "locked" and step["hint"] == wizard.LOCKED_EXPORT_HINT
+    assert wizard.LOCKED_EXPORT_HINT == "先在「⑤ 看结果」生成当前分镜表的预览片"
+
+
+def test_export_stays_available_with_history_even_when_the_preview_is_missing():
+    d = wizard.derive(F(**READY, preview_fresh=False, has_versions=True))
+    assert by_key(d, "export")["status"] == "available"
+
+
+def test_export_is_available_with_a_fresh_preview_and_no_versions():
+    d = wizard.derive(F(**READY, preview_fresh=True, has_versions=False))
+    assert by_key(d, "export")["status"] == "available"
+
+
+def test_export_still_waits_for_criteria_first():
+    d = wizard.derive(F(analysis_done=True))
+    assert "④ 定标准" in by_key(d, "export")["hint"]

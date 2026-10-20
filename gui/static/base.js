@@ -7,6 +7,7 @@ const state = {
   pinned: false, railOpen: false, npTouched: false, modalKind: null,
   browse: null,                                   // ③ 看素材的页面状态（step-browse.js）；切项目 / 重新进入即清空
   criteria: null,                                 // ④ 定标准的页面状态（step-criteria.js）；同上
+  result: null,                                   // ⑤ 看结果的页面状态（step-result.js）；同上
   block: null,                                    // ② 页内联的前置条件：{need: 'consent'|'keys', message, missing, cfg}
 };
 
@@ -52,12 +53,16 @@ function stageIs(html){ return html === stageHtml; }
 /* ---------------- 弹窗 ---------------- */
 function logLine(t){ const el=$('#log'); if(el){ el.textContent += (el.textContent?'\n':'')+t; el.scrollTop=el.scrollHeight; } }
 function showModal(title, html){
+  if(state.modalKind === 'reselect') reselectDismissed();  // 被别的弹窗顶掉的询问等于取消（reselect.js）
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = html;
   $('#mask').classList.add('on');
   state.modalKind = null;  // 任务日志窗口由 jobs.js 的 jobModal 在 showModal 之后标成 'job'
 }
-function closeModal(){ $('#mask').classList.remove('on'); state.modalKind = null; state.recording = null; }
+function closeModal(){
+  if(state.modalKind === 'reselect') reselectDismissed();  // 重新选段询问被关掉 = 取消（reselect.js）
+  $('#mask').classList.remove('on'); state.modalKind = null; state.recording = null;
+}
 // Esc / 点遮罩空白处关闭（任务运行中除外，见 jobs.js 的 modalDismissable）
 document.addEventListener('keydown', e=>{
   if(e.key === 'Escape' && $('#mask').classList.contains('on') && modalDismissable()) closeModal();

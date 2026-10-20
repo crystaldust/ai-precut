@@ -90,9 +90,9 @@ def test_fetch_non_api_untouched(url):
 
 # ---------------------------------------------------------------- renumber / nextShotId
 def _shot_id_src() -> str:
-    src = (STATIC / "step-result.js").read_text(encoding="utf-8")  # M13：分镜表视图迁到 step-result.js
+    src = (STATIC / "result-table.js").read_text(encoding="utf-8")  # M14：分镜表视图在 result-table.js
     m = re.search(r"const SHOT_ID_RE[\s\S]*?\nfunction renumber\(\)\{[\s\S]*?\n\}\n", src)
-    assert m, "step-result.js 里找不到 SHOT_ID_RE / nextShotId / renumber"
+    assert m, "result-table.js 里找不到 SHOT_ID_RE / nextShotId / renumber"
     return "var state = {shots: []};\n" + m.group(0).replace("const SHOT_ID_RE", "var SHOT_ID_RE")
 
 
@@ -140,7 +140,7 @@ ctx.document = {querySelectorAll: () => []};
 ctx.toast = (m) => ctx.toasts.push(m);
 ctx.renderWarnbar = (l) => ctx.warnbars.push(l);
 ctx.renderChrome = () => {}; ctx.renderView = () => {}; ctx.setRail = () => {}; ctx.renderProjects = () => {};
-ctx.stopAnalysisPoll = () => {}; ctx.resetAnalysis = () => {}; ctx.resetShotBar = () => {}; ctx.resetBrowse = () => {};
+ctx.stopAnalysisPoll = () => {}; ctx.resetAnalysis = () => {}; ctx.resetResult = () => {}; ctx.onShotsSaved = () => {}; ctx.reloadResultNow = () => {}; ctx.resetBrowse = () => {};
 ctx.resetCriteria = () => {}; ctx.flushCriteriaDraft = async () => true; ctx.crit = () => null; ctx.criteriaDraftLost = () => {}; ctx.criteriaDraftBlocked = () => {};
 ctx.setStage = h => { el('#stage').innerHTML = h; };
 ctx.attachRunningJob = () => {}; ctx.renumber = () => {};
@@ -162,11 +162,12 @@ Promise.resolve(vm.runInContext(script, ctx)).then(out =>
 def _project_switch_src() -> str:
     src = (STATIC / "app.js").read_text(encoding="utf-8")  # M13：状态刷新 / 保存队列在 app.js
     parts = ["var state = { project:null, data:null, view:null, sel:null, shots:[], dirty:false };",
-             "var saveTimer = null; var stateSeq = 0; var usageText = () => '';",
+             "var saveTimer = null; var stateSeq = 0; var usageText = () => ''; var shotsEpoch = 0; var editSeq = 0; var saveInflight = 0; var unsavedFor = null; var unsavedReason = '';",
+             "var saveRetryTimer = null, saveRetries = 0, SAVE_RETRY_MS = 3000, SAVE_RETRY_MAX = 5; var renderSavebar = () => {}; var COPY_UNSAVED = ''; var COPY_UNSAVED_RETRY = '';",
              "var COPY_SAVE_FAILED = '保存失败：';",
              "var saveQ = {chain: Promise.resolve(true), queued: null};"]
     for name in ("selectProject", "flushPendingSave", "refreshOrWarn", "showProjectError", "resolveView", "refresh",
-                 "saveShots", "postShots", "scheduleSave"):
+                 "saveShots", "postShots", "scheduleSave", "adoptShots", "retrySaveLater"):
         m = re.search(r"(async )?function " + name + r"\([^)]*\)\{[\s\S]*?\n\}\n", src)
         assert m, name
         parts.append(m.group(0))

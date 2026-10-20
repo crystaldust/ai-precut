@@ -32,12 +32,6 @@ def test_nav_in_criteria_ends_with_the_gate_button_not_a_plain_next():
     assert "去看结果" not in out and "← 上一步" in out
 
 
-def test_nav_gate_shows_manual_shot_table_note_on_the_next_line():
-    out = in_criteria("""state.data = {...state.data, shots_from_selection: false}; state.shots = [{id: 'sh01'}];
-      renderNav(); return el('#nav').innerHTML;""")
-    assert "你手动改过分镜表" in out and out.index("确认，生成分镜表") < out.index("你手动改过分镜表")
-
-
 def test_other_steps_keep_the_plain_next_button():
     out = in_criteria("await go('browse'); return el('#nav').innerHTML;")
     assert "下一步：去定标准 →" in out and 'data-act="gate"' not in out
@@ -54,7 +48,7 @@ def test_gate_with_pending_asks_first_and_sends_nothing_yet():
 def test_gate_go_confirms_without_writing_any_verdict():
     out = run_gate("""await act('gate'); await act('gateGo');
       return [gatePosts(), levelPosts().length, el('#mask').classList.contains('on'), C().segs.filter(s => s.level === 2).length];""")
-    assert out[0] == [{"project": "新项目", "answers": {}, "confirmed": True}]
+    assert out[0] == [{"project": "新项目", "answers": {}, "confirmed": True, "manual": "replace"}]
     assert out[1] == 0 and out[2] is False and out[3] == 3
 
 

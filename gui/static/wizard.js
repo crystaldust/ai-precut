@@ -11,7 +11,6 @@ const COPY_PREV = '← 上一步';
 const COPY_NEXT = '下一步：{label} →';
 const COPY_GO_LABELS = {browse: '去看素材', criteria: '去定标准', result: '去看结果', export: '去导出'};
 const COPY_BANNER_ACTIONS = {reanalyze: '重新分析', reselect: '重新选段'};
-const COPY_MANUAL_SHOTS_NOTE = '你手动改过分镜表，重新选段只更新建议，不会覆盖它（后续版本会让你选择覆盖或保留）';
 const STEP_NAMES = ['新建', '分析', '看素材', '定标准', '看结果', '导出'];  // ①–⑥，与服务端 gui/wizard.py 的 STEPS 一致（tests/test_terms.py 比对）
 const STEP_STATUSES = ['locked', 'done', 'stale', 'available'];  // class 名只认这几个
 const STATUS_MARK = {done: ' ✓', stale: ' ⚠'};
@@ -82,10 +81,7 @@ function bannerHtml(step){
 }
 function renderBanner(){
   const step = stepOf(state.view);
-  const manual = state.data?.shots_from_selection === false && state.shots.length;
-  const extra = step && step.key === 'result' && step.status === 'stale' && manual
-    ? `<div class="banner note"><span>${esc(COPY_MANUAL_SHOTS_NOTE)}</span></div>` : '';
-  const html = bannerHtml(step) + extra;
+  const html = bannerHtml(step);
   $('#banner').innerHTML = html;
   return html;
 }
@@ -108,7 +104,8 @@ function navButtonHtml(item, cls, text){
 }
 function renderNav(wizard=state.data?.wizard, viewing=state.view){
   const m = navModel(wizard, viewing);
-  const next = viewing === 'criteria' ? gateNavHtml()   // 闸门步骤的「下一步」就是闸门按钮（step-criteria.js）
+  const next = viewing === 'criteria' ? gateNavHtml()   // 闸门步骤的「下一步」就是闸门按钮（step-criteria.js / step-result.js）
+    : viewing === 'result' ? resultGateHtml()
     : (m.next ? navButtonHtml(m.next, 'primary', COPY_NEXT.replace('{label}', m.next.label)) : '<span></span>');
   const html = wizard ? (m.prev ? navButtonHtml(m.prev, 'ghost', COPY_PREV) : '<span></span>') + next : '';
   $('#nav').innerHTML = html;
@@ -149,5 +146,5 @@ function renderChrome(){
 
 Object.assign(ACTIONS, {
   go: el=>go(el.dataset.step), toggleMore: ()=>toggleMore(), moreItem: el=>moreItem(el.dataset.item),
-  reanalyze: ()=>startAnalysis(), reselect: ()=>startJob('select', {}),
+  reanalyze: ()=>startAnalysis(), reselect: ()=>confirmReselect({}),  // KI-95：手动改过先问
 });

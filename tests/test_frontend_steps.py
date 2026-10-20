@@ -1,4 +1,4 @@
-"""M13b ⑤⑥ 暂住与 ③④ 暂住卡片（node vm）。"""
+"""M13b ⑥ 暂住、⑤ 的跨步骤行为与 ③④ 暂住卡片（node vm）。⑤ 正式版的测试在 test_frontend_result / unused / reselect。"""
 import json
 
 import pytest
@@ -9,28 +9,6 @@ from fe_harness import NODE, run_app, wizard
 pytestmark = pytest.mark.skipif(NODE is None, reason="需要 node")
 
 
-def test_result_step_renders_shot_table_escaped_with_target_button_and_player_bar():
-    out = in_ready("""await go('result');
-      return [el('#stage').innerHTML, el('#shotbar').innerHTML, el('#shotbar').hidden];""")
-    html, bar, hidden = out
-    assert "&lt;b&gt;字幕&lt;/b&gt;" in html and "<b>字幕</b>" not in html
-    assert 'data-act="openTarget" data-starts-job' in html and "改目标时长" in html
-    assert 'data-act="pick"' in html and "共 1 镜" in html
-    assert 'id="pv2"' in bar and 'data-act="mark" data-which="in"' in bar and hidden is False
-    assert "生成成片" not in html  # 出片入口只在 ⑥
-
-
-def test_result_step_empty_points_to_browse_and_hides_player_bar():
-    out = in_ready("""state.shots = []; await go('result'); return [el('#stage').innerHTML, el('#shotbar').hidden];""",
-                   {"GET /api/state": {**READY_STATE, "shots": []}})
-    assert 'data-act="go" data-step="browse"' in out[0] and "分镜表还是空的" in out[0] and out[1] is True
-
-
-def test_player_bar_only_in_result_step():
-    out = in_ready("""await go('result'); await go('export'); return [el('#shotbar').hidden, el('#shotbar').innerHTML];""")
-    assert out == [True, ""]
-
-
 def test_stale_result_banner_reselect_starts_select_job():
     stale = wizard(analyze="done", browse="done", criteria="done",
                    result=("stale", "素材标记改过了 · 重新选段", "reselect"), export="available")
@@ -39,16 +17,7 @@ def test_stale_result_banner_reselect_starts_select_job():
       return [banner, calls.filter(c => c.path === '/api/job').map(c => c.body), el('#mask').classList.contains('on')];""",
                    {"GET /api/state": {**READY_STATE, "wizard": stale}})
     assert "素材标记改过了" in out[0] and 'data-act="reselect"' in out[0]
-    assert out[1] == [{"project": "新项目", "task": "select"}] and out[2] is False  # 重新选段只在胶囊里
-
-
-def test_change_target_modal_posts_select_with_new_target():
-    out = in_ready("""openTarget(false); el('#tgtMin').value = '4'; el('#tgtSec').value = '30';
-      const modal = el('#modalBody').innerHTML;
-      saveTarget(); await tick();
-      return [modal, calls.filter(c => c.path === '/api/job').map(c => c.body)];""")
-    assert "想剪成多长？" in out[0] and "按这个时长重新选段" in out[0] and "data-starts-job" in out[0]
-    assert out[1] == [{"project": "新项目", "task": "select", "target": 270}]
+    assert out[1] == [{"project": "新项目", "task": "select", "manual": "replace"}] and out[2] is False  # 没手动改过：不询问；重新选段只在胶囊里
 
 
 def test_leaving_result_for_export_keeps_shots_saved_once():
@@ -69,7 +38,7 @@ def test_export_step_lists_versions_with_windows_package_and_escaped_draft_names
 
 def test_export_step_without_versions_says_so():
     out = in_ready("await go('export'); return el('#stage').innerHTML;",
-                   {"GET /api/state": {**READY_STATE, "versions": []}})
+                   {"GET /api/state": {**READY_STATE, "versions": [], "preview": {"status": "fresh"}}})
     assert "还没有导出过" in out and 'data-act="openBuild"' in out
 
 

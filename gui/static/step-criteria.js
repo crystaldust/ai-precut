@@ -240,9 +240,7 @@ async function sendLevel(c, seg, level, optimistic){
 
 /* ---------------- 闸门（底部导航里的主按钮，见 wizard.js） ---------------- */
 function gateNavHtml(){
-  const manual = state.data?.shots_from_selection === false && state.shots.length;
-  return `<span class="gate-wrap"><button class="primary" data-act="gate" data-starts-job>${esc(COPY_GATE)}</button>`
-    + (manual ? `<small class="gate-note">${esc(COPY_MANUAL_SHOTS_NOTE)}</small>` : '') + '</span>';
+  return `<span class="gate-wrap"><button class="primary" data-act="gate" data-starts-job>${esc(COPY_GATE)}</button></span>`;
 }
 function gate(){
   const c = crit();
@@ -274,7 +272,14 @@ async function submitGate(){
     await c.levelChain;   // 还在路上的档位改动先落地；其中有失败的就不确认（之前已经提示过的失败不算）
     if(c.levelFailures > failedBefore){ setStatus(c, COPY_GATE_LEVEL_FAILED, true); return; }
     if(!await flushCriteriaDraft(c)){ toast(COPY_GATE_SAVE_FIRST, TOAST_ERROR_MS); return; }   // 先把最后一次点选存下来
-    const r = await postJson('/api/confirm/answers', {project: c.project, answers: c.answers, confirmed: true});
+    let r = null;   // KI-95：手动改过分镜表先问「覆盖 / 保留 / 取消」；取消 = 不确认，答案已作为草稿保存
+    const {choice, reason} = await confirmReselectDetailed({}, {submit: async manual => {
+      r = await postJson('/api/confirm/answers', {project: c.project, answers: c.answers, confirmed: true, manual});
+    }});
+    if(choice === null){   // 真的取消才说「已取消」；没存上 / 没读到 / 没起来要说真实原因
+      if(state.criteria === c) setStatus(c, reason || COPY_GATE_CANCELLED, !!reason);
+      return;
+    }
     const here = state.criteria === c && state.project === c.project;
     if(here) applyWizard(r.wizard);
     if(r.job_id){

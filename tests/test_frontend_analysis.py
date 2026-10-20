@@ -188,10 +188,11 @@ def test_select_done_while_viewing_criteria_goes_to_result():
     assert view == "result" and toast_text == "已重新选段"
 
 
-def test_prepare_done_with_must_keep_over_target_opens_target_dialog():
+def test_prepare_done_with_must_keep_over_target_no_longer_pops_a_dialog():
+    """E16：超目标改为 ⑤ 顶栏的警告条，不再在分析 / 选段完成后自动弹窗打断跳转。"""
     view, _, modal = run_job_done("analyze", extra_state={"selection": {"over_target": True, "must_keep_total": 300,
                                                                         "suggested_target": 300}})
-    assert view == "browse" and modal is True
+    assert view == "browse" and modal is False
 
 
 def test_failed_prepare_refreshes_analysis_for_the_failure_card():

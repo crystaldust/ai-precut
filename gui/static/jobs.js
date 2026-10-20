@@ -5,12 +5,12 @@
 
 /* 界面文案：产品可直接改这里 */
 const JOB_TITLES = {prepare:'正在分析', build:'正在生成新版本', select:'正在重新选段',
-                    export:'正在生成 Windows 剪映包', questions:'正在重新出题'};
+                    export:'正在生成 Windows 剪映包', questions:'正在重新出题', preview:'正在生成预览片'};
 const JOB_LABELS = {prepare:'分析', build:'生成新版本', select:'重新选段',
-                    export:'生成 Windows 剪映包', questions:'重新出题'};
+                    export:'生成 Windows 剪映包', questions:'重新出题', preview:'生成预览片'};
 const JOB_DONE = {prepare:'分析完成', build:'新版本已生成', select:'已重新选段',
-                  export:'Windows 剪映包已生成', questions:'决策问题已重新生成'};
-const MODAL_TASKS = new Set(['build', 'export']);  // 这两个任务自动弹日志窗口，其余只在胶囊里
+                  export:'Windows 剪映包已生成', questions:'决策问题已重新生成', preview:'预览片已生成'};
+const MODAL_TASKS = new Set(['build', 'export']);  // 这两个任务自动弹日志窗口，其余（含预览片）只在胶囊里
 const AFTER_DONE_GO = {prepare: ['analyze', 'browse'], select: ['criteria', 'result']};  // [正在看的步骤, 完成后去]
 const COPY_JOB_TITLE_FALLBACK = '进行中的任务';
 const COPY_JOB_PREPARING = '准备中…';
@@ -73,10 +73,10 @@ function jobModal(task){
 /* ---------------- 启动 ---------------- */
 // opts.modal：是否弹日志窗口（默认只有 build / export）；opts.onBlocked(e, again)：缺告知 / 缺 Key 时由调用方在页内处理
 async function startJob(task, extra, opts = {}){
-  if(!state.project){ toast('先选项目'); return; }
-  if(task==='build' && !state.shots.length){ toast('分镜表是空的，先生成镜头'); return; }
-  // KI-35：防抖中 / 排队中的分镜表保存先落盘，否则新版本用的是改之前的字幕
-  if(task==='build' && await flushPendingSave() === false){ toast(COPY_JOB_SAVE_FIRST); return; }
+  if(!state.project){ toast('先选项目'); return false; }
+  if(task==='build' && !state.shots.length){ toast('分镜表是空的，先生成镜头'); return false; }
+  // KI-35：防抖中 / 排队中的分镜表保存先落盘，否则新版本 / 预览片用的是改之前的字幕
+  if((task==='build' || task==='preview') && await flushPendingSave() === false){ toast(COPY_JOB_SAVE_FIRST); return false; }
   jobUi.last = {task, extra, opts};
   jobUi.id = null;
   jobUi.view = null;
@@ -91,7 +91,8 @@ async function startJob(task, extra, opts = {}){
       renderChip(); applyBusyGuard();
       try{ pollJob(job_id, task); }  // 轮询出错不是「启动失败」
       catch(e){ jobUi.polling = null; logLine(COPY_JOB_LOST + e.message); setJobActions('ended'); }
-    }, e=>onJobStartError(e, task, extra, opts, modal));
+      return true;   // 任务已经起来了（调用方据此决定要不要关编辑框等）
+    }, e=>Promise.resolve(onJobStartError(e, task, extra, opts, modal)).then(()=>false));  // 先等调用方的页内处理做完，再告诉调用方「没起来」
 }
 function showNeedModal(message){  // KI-97：encoder 及不认识的前置条件 → 说清原因 + 导出诊断包
   showModal(COPY_NEED_TITLE, `<p>${esc(message)}</p><div class="job-actions">
@@ -182,6 +183,7 @@ function pollJob(id, task){
 }
 function afterJobDone(task){  // 正在看 ② 时分析完成 → 去 ③；正在看 ④ 时重新选段完成 → 去 ⑤；重新出题完成 → 重读 ④ 的题目
   if(task === 'questions' && state.view === 'criteria') return enterCriteria();
+  if((task === 'select' || task === 'preview') && state.view === 'result') return onResultJobDone(task);  // 在 ⑤ 本地重读
   const rule = AFTER_DONE_GO[task];
   if(rule && state.view === rule[0]) return go(rule[1]);
 }
@@ -200,8 +202,6 @@ function onJobDone(j, task){
     await refreshOrWarn();  // 刷新失败不影响任务结果，但要在警告栏说出原因
     await afterJobDone(task);
     afterJobEnd(task);
-    // 必留合计超过目标：分析 / 重新选段后自动问一次想剪成多长
-    if((task==='prepare' || task==='select') && state.data?.selection?.over_target){ openTarget(true); return; }
     // 有警告：日志留着让人看完，不自动关
     if(warned){
       if(jobModalOpen()) logLine(COPY_JOB_DONE_WITH_WARNINGS);
@@ -273,6 +273,7 @@ function applyBusyGuard(){
     if(busy) b.setAttribute('title', COPY_BUSY.replace('{label}', busy.label));
     else b.removeAttribute('title');
   });
+  if(typeof syncResultLock === 'function') syncResultLock();  // ⑤ 的分镜表在重新选段期间只读
   return busy;
 }
 

@@ -22,6 +22,7 @@ STALE_RESULT_REASONS = {"scored": "分析结果更新了", "overrides": "素材�
                         "answers": "答案改过了", "target": "目标时长改过了",
                         "lines": "剪辑偏好里的指定原话改过了"}
 STALE_RESULT_ACTION = " · 重新选段"
+LOCKED_EXPORT_HINT = "先在「⑤ 看结果」生成当前分镜表的预览片"  # Q2：有历史版本就能进 ⑥，否则要先有当前表的预览片
 LEGACY_NOTE = "这个项目在改版前已出过片，没经过定标准；需要时可以在这里确认一次"
 ACTION_REANALYZE = "reanalyze"
 ACTION_RESELECT = "reselect"
@@ -129,11 +130,17 @@ def _criteria_step(f: dict) -> dict:
 
 def _result_step(f: dict) -> dict:
     reasons = fingerprints.changed(f["selection_inputs_saved"], f["selection_inputs_now"] or {})
-    if not reasons:
-        return _step("result", AVAILABLE)
+    if not reasons:  # M14：当前分镜表的预览片已生成 = 这一步看完了（闸门 B）
+        return _step("result", DONE if f.get("preview_fresh") else AVAILABLE)
     text = "、".join(STALE_RESULT_REASONS.get(r, r) for r in reasons)
     return _step("result", STALE, banner=text + STALE_RESULT_ACTION, action=ACTION_RESELECT,
                  reasons=reasons)
+
+
+def _export_step(f: dict) -> dict:
+    if f.get("preview_fresh") or f.get("has_versions"):
+        return _step("export", AVAILABLE)
+    return _step("export", LOCKED, hint=LOCKED_EXPORT_HINT)
 
 
 def derive(f: dict) -> dict:
@@ -142,7 +149,7 @@ def derive(f: dict) -> dict:
     browse = _step("browse", DONE) if f["analysis_done"] else _locked("browse", "analyze")
     criteria = _criteria_step(f)
     if criteria["status"] in (DONE, STALE):
-        result, export = _result_step(f), _step("export", AVAILABLE)
+        result, export = _result_step(f), _export_step(f)
     else:
         result, export = _locked("result", "criteria"), _locked("export", "criteria")
     steps = [_step("new", DONE), analyze, browse, criteria, result, export]

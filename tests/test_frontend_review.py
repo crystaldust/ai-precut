@@ -122,21 +122,21 @@ def test_create_double_submit_posts_new_once():
 
 
 # ---------------------------------------------------------------- MEDIUM (a)(b)：播放器条与试听定时器
-def test_player_bar_is_not_rebuilt_on_every_render():
-    out = run_app("""(async () => { await selectProject('新项目'); await go('result');
-      el('#shotbar').innerHTML = 'SENTINEL'; renderView(); renderView();
-      return el('#shotbar').innerHTML; })()""", routes=READY_ROUTES)
+def test_player_is_not_rebuilt_on_every_render():
+    out = run_app("""(async () => { await selectProject('新项目'); await go('result'); await tick();
+      el('#rVideo').innerHTML = 'SENTINEL'; renderView(); renderView();
+      return el('#rVideo').innerHTML; })()""", routes=READY_ROUTES)
     assert out == "SENTINEL"
 
 
-def test_play_selection_clears_previous_timer_and_project_switch_stops_it():
-    out = run_app("""(async () => { await selectProject('新项目'); await go('result');
-      state.sel = 0; el('#pv2').currentTime = 0;
-      playSel(); playSel();
-      const two = intervals.map(i => i.cleared);
+def test_play_selection_uses_one_stop_point_and_project_switch_drops_it():
+    out = run_app("""(async () => { await selectProject('新项目'); await go('result'); await tick();
+      act('pick', {i: '0'}); playSel(); const first = R().stopAt; playSel();
+      const timers_ = intervals.length;
       await selectProject('新项目');
-      return [two, intervals.map(i => i.cleared)]; })()""", routes=READY_ROUTES)
-    assert out == [[True, False], [True, True]]
+      return [first, timers_, state.result]; })()""", routes=READY_ROUTES,
+                  setup="const R = () => state.result;")
+    assert out == [4.5, 0, None]
 
 
 # ---------------------------------------------------------------- MEDIUM (c)：项目设置遇到切项目

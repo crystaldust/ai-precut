@@ -47,7 +47,14 @@ NEW_STATE = {"project": {"name": "新项目", "title": "新项目", "preset": "�
              "busy": None}
 
 
-NEW_ROUTES = {"GET /api/presets": PRESETS, "POST /api/new": {"ok": True, "name": "新项目"},
+NEW_RESULT = {"topbar": {"target": 180, "total": 0, "shots": 0, "clip": {"count": 0, "covered": 0, "missing": []},
+                         "over_target": False, "must_total": 0, "suggested_target": None},
+              "notes": {}, "unused": [], "source": None, "wizard": None,
+              "preview": {"status": "none", "reasons": [], "at": None, "duration": None, "shots": None, "url": None},
+              "manual": {"edited": False, "count": 0, "changes": [], "more": 0}}  # ⑤ 的默认载荷（M14）
+
+
+NEW_ROUTES = {"GET /api/presets": PRESETS, "GET /api/result": NEW_RESULT, "POST /api/new": {"ok": True, "name": "新项目"},
               "GET /api/projects": {"projects": [], "stale_job": None}, "GET /api/state": NEW_STATE,
               "GET /api/analysis": {"steps": [], "done": 0, "total": 11, "complete": False, "running": None,
                                     "failed": None, "notice": "分析大约 10–15 分钟，可以关掉窗口，回来接着跑"},
@@ -113,7 +120,14 @@ READY_STATE = {**NEW_STATE, "wizard": READY_WIZARD,
                              "preview": False}]}
 
 
-READY_ROUTES = {**NEW_ROUTES, "GET /api/state": READY_STATE}
+READY_RESULT = {"topbar": {"target": 180, "total": 3.5, "shots": 1, "clip": {"count": 0, "covered": 0, "missing": []},
+                           "over_target": False, "must_total": 0, "suggested_target": None},
+                "notes": {}, "unused": [], "source": "selection", "wizard": READY_WIZARD,
+                "preview": {"status": "none", "reasons": [], "at": None, "duration": None, "shots": None, "url": None},
+                "manual": {"edited": False, "count": 0, "changes": [], "more": 0}}  # ⑤ 的默认载荷（M14）
+
+
+READY_ROUTES = {**NEW_ROUTES, "GET /api/state": READY_STATE, "GET /api/result": READY_RESULT}
 
 
 def in_ready(script, routes=None):

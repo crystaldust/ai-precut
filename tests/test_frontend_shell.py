@@ -90,7 +90,7 @@ def test_banner_empty_when_nothing_to_say():
     assert run_app("bannerHtml({key:'browse', status:'done', banner:null, action:null})") == ""
 
 
-def test_banner_shows_only_for_viewed_step_and_manual_shots_line():
+def test_banner_shows_only_for_viewed_step():
     w = wizard(result=("stale", "素材标记改过了 · 重新选段", "reselect"), criteria="done")
     out = run_app(f"""(() => {{
       state.project = 'p1'; state.data = {{project: {{name:'p1'}}, wizard: {js(w)}, shots: [{{id:'sh01'}}],
@@ -101,7 +101,7 @@ def test_banner_shows_only_for_viewed_step_and_manual_shots_line():
       return [other, el('#banner').innerHTML];
     }})()""")
     assert out[0] == ""
-    assert "素材标记改过了" in out[1] and "你手动改过分镜表" in out[1]
+    assert "素材标记改过了" in out[1] and "你手动改过分镜表" not in out[1]  # M14：改为重新选段前的询问（reselect.js）
 
 
 def test_nav_browse_to_criteria_enabled():

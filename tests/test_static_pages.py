@@ -35,7 +35,8 @@ MAX_JS_LINES = 400          # M13：每个前端脚本聚焦一件事
 INDEX_ENTRY = "main.js"     # 主页最后加载的启动脚本（所有 ACTIONS 注册都在它之前）
 INDEX_SCRIPT_ORDER = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js",
                       "wizard.js", "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js",
-                      "step-criteria.js", "criteria-analysis.js", "criteria-pending.js", "step-result.js", "step-export.js", "app.js", INDEX_ENTRY]
+                      "step-criteria.js", "criteria-analysis.js", "criteria-pending.js", "reselect.js", "result-table.js", "result-unused.js",
+                      "step-result.js", "step-export.js", "app.js", INDEX_ENTRY]
 
 
 # ---------------------------------------------------------------- GL-05 / KI-88
@@ -126,18 +127,19 @@ def test_new_project_asks_target():
 
 
 def test_target_copy_in_named_constants():
+    """M14：目标时长改为 ⑤ 顶栏就地修改，文案是命名常量，重新选段走 KI-95 询问。"""
     src = _read("index.html")
-    for const in ("COPY_MUST_KEEP_OVER", "COPY_TARGET_ASK", "COPY_TARGET_BUTTON",
-                  "COPY_TARGET_LATER", "COPY_TARGET_MANUAL_NOTE"):
+    for const in ("COPY_TOP_TARGET", "COPY_TOP_CHANGE", "COPY_TARGET_OK", "COPY_TARGET_CANCEL",
+                  "COPY_RESULT_OVER", "COPY_OVER_APPLY", "COPY_RESELECT_REPLACE", "COPY_RESELECT_KEEP"):
         assert f"const {const}" in src
-    assert "startJob('select'" in src
-    assert 'data-act="openTarget"' in src and "openTarget: ()=>openTarget(false)" in src
+    assert "startJob('select'" in src and "confirmReselect({target: t})" in src
+    assert 'data-act="editTarget"' in src and "openTarget" not in src and "COPY_TARGET_MANUAL_NOTE" not in src
 
 
-def test_target_modal_uses_num_for_numbers():
-    src = _read("index.html")
-    body = src[src.index("function openTarget"):src.index("function saveTarget")]
-    assert "num(" in body and "${sel." not in body
+def test_target_inline_editor_uses_num_for_numbers():
+    src = _read("step-result.js")
+    body = src[src.index("function targetHtml"):src.index("function overHtml")]
+    assert "num(" in body and "${tb." not in body
 
 
 def _job_poll_src():
@@ -146,9 +148,11 @@ def _job_poll_src():
     return src[src.index("function pollJob"):src.index("/* ---------------- 任务胶囊")]
 
 
-def test_over_target_modal_opened_after_job():
+def test_over_target_no_longer_opens_a_modal_after_job():
+    """E16：超目标是 ⑤ 顶栏的警告条（applySuggested），任务完成后不再自动弹窗。"""
     poll = _job_poll_src()
-    assert "over_target" in poll and "openTarget(true)" in poll
+    assert "openTarget" not in poll
+    assert "applySuggested" in _read("step-result.js")
 
 
 # ---------------------------------------------------------------- M2 审查：警告条
@@ -278,11 +282,11 @@ def test_new_project_duration_is_free_input_above_preset():
     assert "readDuration('np')" in create[:create.index("\n}")]
 
 
-def test_retarget_modal_uses_minutes_and_seconds():
-    src = _read("index.html")
-    body = src[src.index("function openTarget"):src.index("function saveTarget")]
+def test_retarget_inline_editor_uses_minutes_and_seconds():
+    src = _read("step-result.js")
+    body = src[src.index("function targetHtml"):src.index("function clipHtml")]
     assert "durationFields('tgt'" in body and 'id="tgtInput"' not in body
-    save = src[src.index("function saveTarget"):]
+    save = src[src.index("async function applyTarget"):]
     assert "readDuration('tgt')" in save[:save.index("\n}")]
 
 

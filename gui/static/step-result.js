@@ -1,166 +1,211 @@
-// 剪辑台主页 · ⑤ 看结果（M13b 暂住）：现有分镜表（表格、选中行设入出点、试听、↑↓ ✕ ⧉ 空镜、按时间排序）
-// 加「改目标时长」。正式版（顶栏摘要、预览片、未采用清单）在后续里程碑替换这个文件。
-// 分镜表的保存队列在 app.js（saveShots / scheduleSave / flushPendingSave），这里只调用。
+// 剪辑台主页 · ⑤ 看结果（M14，闸门 B）：页面骨架、顶栏摘要、就地改目标时长、预览片、闸门「看过了，去导出」。
+// 分镜表与播放器在 result-table.js，未采用清单在 result-unused.js，重新选段询问与恢复为 AI 选段在 reselect.js。
+// 页面骨架是固定的（viewResult 恒返回同一段 HTML，刷新不会重画它）；各块由 paintResult 按需填入，内容没变就不写。
+// 服务端数字（覆盖率、未采用、预览片是否新鲜）来自 GET /api/result，进入 ⑤ / 每次保存成功 / 任务结束后重拉（序号防乱序）。
 
 /* 界面文案：产品可直接改这里 */
-const COPY_MUST_KEEP_OVER = '剪辑列表里的片段共 {must}，超过目标 {target}';
-const COPY_MUST_KEEP_OVER_TITLE = '剪辑列表超过目标时长';
-const COPY_TARGET_TITLE = '目标时长';
-const COPY_TARGET_ASK = '想剪成多长？';
-const COPY_TARGET_BUTTON = '按这个时长重新选段';
-const COPY_TARGET_LATER = '先不改';
-const COPY_TARGET_MANUAL_NOTE = '你已经手动编辑过分镜表，重新选段的结果不会覆盖它，只会更新「看素材」里的建议';
-const COPY_TARGET_CHANGE = '改目标时长';
-const COPY_SHOTS_EMPTY = '分镜表还是空的';
-const COPY_SHOTS_EMPTY_HINT = '先去「③ 看素材」挑片段，或在「④ 定标准」确认后自动生成分镜表。';
-const COPY_SHOTS_HELP = '选中一行 → 用下面的播放器定位 → 点「设为入点/出点」。改动会自动保存。';
+const COPY_TOP_TARGET = '目标';
+const COPY_TOP_CHANGE = '改';
+const COPY_TOP_CUR = '当前';
+const COPY_TOP_SHOTS = '镜头';
+const COPY_TOP_CLIP = '剪辑列表';
+const COPY_TOP_CLIP_COUNT = '{c}/{m} 进片';
+const COPY_TOP_OK = ' ✓';
+const COPY_TOP_SEP = ' · ';
+const COPY_TARGET_OK = '确定';
+const COPY_TARGET_CANCEL = '取消';
+const COPY_RESULT_OVER = '剪辑列表共 {must}，超过目标 {target} · 建议改为 {suggest}';
+const COPY_OVER_APPLY = '改为 {suggest}';
+const COPY_PREVIEW_NONE = '还没有预览片';
+const COPY_PREVIEW_MAKE = '生成预览片';
+const COPY_PREVIEW_OUTDATED = '分镜表改过了 · 重新生成预览片';
+const COPY_PREVIEW_UNUSABLE = '有片段标成了不可用 · 重新生成预览片';
+const COPY_PREVIEW_EMPTY_TABLE = '分镜表是空的，先生成镜头';
+const COPY_PREVIEW_SAVE_FIRST = '分镜表还没保存成功，先不生成预览片';
+const COPY_GATE_B = '看过了，去导出 →';
+const COPY_GATE_B_HINT = '先生成当前分镜表的预览片';
+const COPY_ANALYSIS_UPDATED_MANUAL = '分析结果更新了：分镜表仍是你手动改的那一版；需要时点「恢复为 AI 选段」';  // Q6
+const COPY_EXPORT_NEED_PREVIEW = '先在「⑤ 看结果」生成当前分镜表的预览片';  // 与 gui/wizard.py 的 LOCKED_EXPORT_HINT 一致
+const RESULT_RELOAD_MS = 400;   // 保存成功后重拉 ⑤ 数据的防抖：连续保存只拉一次
 
-/* ---------------- 播放器与入出点 ---------------- */
-// 播放器条只在换项目 / 重新进入时建一次：之后每次重画都保留 <video>，当前播放位置不丢
-let shotbarFor = null;
-function resetShotBar(){ shotbarFor = null; stopPlaySel(); }
-function renderShotBar(){
-  const bar = $('#shotbar');
-  if(state.view!=='result' || !state.shots.length){ resetShotBar(); bar.hidden = true; bar.innerHTML=''; return; }
-  bar.hidden = false;
-  if(shotbarFor === state.project) return;
-  shotbarFor = state.project;
-  const src = `/media/${encodeURIComponent(state.project)}/proxy`;
-  bar.innerHTML = `
-    <video id="pv2" src="${src}" preload="metadata" controls></video>
-    <div>
-      <div class="timebar" style="margin:0 0 8px">当前位置 <b id="cur2">00:00.0</b></div>
-      <div style="display:flex;gap:8px">
-        <button class="ghost" data-act="mark" data-which="in">设为入点</button>
-        <button class="ghost" data-act="mark" data-which="out">设为出点</button>
-        <button class="ghost" data-act="playSel">试听这一镜</button>
+let resultGen = 0;   // 每次进入 / 离开 / 重置 +1：过期的 /api/result 回包一律丢掉
+const RESULT_SKELETON = `<div class="res">
+  <div class="r-top" id="rTop"></div>
+  <div class="r-cols">
+    <section class="r-left" id="rTable"></section>
+    <aside class="r-right">
+      <div class="r-player" id="rPlayer">
+        <div class="r-mode" id="rMode"></div><div id="rVideo"></div><div class="r-note" id="rPvNote"></div><div class="r-tools" id="rTools"></div>
       </div>
-    </div>
-    <span class="hint" style="margin-left:auto">${esc(COPY_SHOTS_HELP)}</span>`;
-  const v = $('#pv2');
-  if(v) v.addEventListener('timeupdate', ()=>{ const c = $('#cur2'); if(c) c.textContent = fmt(v.currentTime); });
+      <section class="r-unused" id="rUnused"></section>
+    </aside>
+  </div></div>`;
+function viewResult(){ return RESULT_SKELETON; }
+function res(){ return state.result; }
+function newResult(){
+  return {project: state.project, data: null, mode: 'preview', open: new Set(), adding: new Set(), editing: false,
+          touched: false, reloadTimer: null, loadSeq: 0, stopAt: null, html: {}, playerKey: null, tableSig: null,
+          lockPainted: false};
 }
-function activeVideo(){ return $('#pv2') || null; }
-let playTimer = null;  // 「试听这一镜」的结束检查；重播 / 切项目 / 播放器条被拆掉时都要清
-function stopPlaySel(){ if(playTimer !== null){ clearInterval(playTimer); playTimer = null; } }
-function playSel(){
-  const v = activeVideo(); if(!v || state.sel==null) return;
-  const s = state.shots[state.sel];
-  stopPlaySel();
-  v.currentTime = s.in; playQuietly(v);
-  playTimer = setInterval(()=>{ if(v.currentTime >= s.out){ v.pause(); stopPlaySel(); } }, 120);
+function resetResult(){
+  resultGen += 1;
+  const r = res();
+  if(r && r.reloadTimer) clearTimeout(r.reloadTimer);
+  state.result = null;
 }
-function currentTime(){ const v=activeVideo(); return v ? v.currentTime : 0; }
-function mark(which){
-  if(state.sel==null){ toast('先在分镜表里选中一行'); return; }
-  const s = state.shots[state.sel];
-  if(which==='in'){ s.in = +currentTime().toFixed(2); if(s.out <= s.in) s.out = +(s.in+3).toFixed(2); }
-  else { s.out = +currentTime().toFixed(2); if(s.out <= s.in) s.in = Math.max(0, s.out-3); }
-  saveShots().then(()=>{ toast(which==='in'?'已设为入点':'已设为出点'); });
+function leaveResult(){   // 离开 ⑤：在途回包作废，页面上的块随骨架一起被换掉，缓存清空
+  resultGen += 1;
+  const r = res();
+  if(!r) return;
+  if(r.reloadTimer){ clearTimeout(r.reloadTimer); r.reloadTimer = null; }
+  r.html = {}; r.playerKey = null; r.tableSig = null; r.stopAt = null;
 }
-
-/* ---------------- 分镜表 ---------------- */
-function viewShots(){
-  if(!state.shots.length) return `<div class="empty">${esc(COPY_SHOTS_EMPTY)}<br><span class="hint">${esc(COPY_SHOTS_EMPTY_HINT)}</span><br><br>
-    <button class="primary" data-act="go" data-step="browse">去「③ 看素材」</button>
-    <button class="ghost" data-act="addBlank">加一个空镜（用当前位置）</button></div>`;
-  const rows = state.shots.map((s,i)=>`
-    <tr class="${state.sel===i?'sel':''}" data-act="pick" data-i="${num(i)}">
-      <td class="tc">${String(i+1).padStart(2,'0')}</td>
-      <td class="tc">${fmt(s.in)}</td>
-      <td class="tc">${fmt(s.out)}</td>
-      <td class="tc">${(s.out-s.in).toFixed(1)}s</td>
-      <td><textarea class="sub-edit" data-input="editSub" data-i="${num(i)}" placeholder="字幕（留空=无字幕空镜）">${esc(s.sub)}</textarea></td>
-      <td class="row-btns">
-        <button title="上移" data-act="move" data-i="${num(i)}" data-d="-1">↑</button>
-        <button title="下移" data-act="move" data-i="${num(i)}" data-d="1">↓</button>
-        <button title="复制" data-act="dup" data-i="${num(i)}">⧉</button>
-        <button class="danger" title="删除" data-act="del" data-i="${num(i)}">✕</button>
-      </td>
-    </tr>`).join('');
-  const total = state.shots.reduce((a,s)=>a+(s.out-s.in),0);
-  return `<div class="toolbar">
-      <button class="ghost" data-act="openTarget" data-starts-job>${esc(COPY_TARGET_CHANGE)}</button>
-      <button class="ghost" data-act="addBlank">＋ 空镜（当前位置）</button>
-      <button class="ghost" data-act="sortShots">按时间排序</button>
-      <span class="hint">共 ${state.shots.length} 镜 · 总时长 ${fmt(total)}</span>
-    </div>
-    <table><thead><tr><th>#</th><th>入点</th><th>出点</th><th>时长</th><th>字幕</th><th></th></tr></thead>
-    <tbody>${rows}</tbody></table>`;  // 操作说明在下方播放器条上（renderShotBar）
+function enterResult(){
+  resultGen += 1;
+  if(!res() || res().project !== state.project) state.result = newResult();
+  const r = res();
+  r.html = {}; r.playerKey = null; r.tableSig = null;
+  paintResult(true);
+  return loadResult();
 }
-// GL-22：选中行只切高亮，不重绘整表，字幕框才不会在点进去时失焦
-function pick(i){
-  state.sel = i;
-  document.querySelectorAll('#stage tbody tr').forEach((tr, j)=>tr.classList.toggle('sel', j===i));
-  if(state.shots[i]) seekNoSwitch(state.shots[i].in);
+function setIf(sel, html){   // 内容没变就不写：输入框和滚动位置不被刷新打断
+  const r = res();
+  if(r.html[sel] === html) return;
+  r.html[sel] = html;
+  $(sel).innerHTML = html;
 }
-function seekNoSwitch(t){ const v=$('#pv2'); if(v) v.currentTime = t; }
-function edit(i, key, val){ state.shots[i][key]=val; scheduleSave(); }
-const SHOT_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
-// 新 id = 现有 shNN 的最大编号 +1，删镜头后不会和留下的镜头撞号（GL-23）
-function nextShotId(){
-  const nums = state.shots.map(s=>/^sh(\d+)$/.exec(s.id||'')).filter(Boolean).map(m=>+m[1]);
-  return 'sh'+String((nums.length ? Math.max(...nums) : 0)+1).padStart(2,'0');
+async function loadResult(){
+  const r = res(), gen = resultGen, name = state.project;
+  if(!r || !name) return;
+  const seq = ++r.loadSeq, editsAtSend = editSeq;
+  let data;
+  try{ data = await api('/api/result?project=' + encodeURIComponent(name)); }
+  catch(e){ if(gen === resultGen && seq === r.loadSeq) toast(e.message, TOAST_ERROR_MS); return; }
+  if(gen !== resultGen || seq !== r.loadSeq || state.result !== r || state.project !== name) return;
+  r.data = data;
+  if(editSeq === editsAtSend) r.touched = false;   // 请求发出之后又改过表：服务端这份不是最新的，仍按「改过」算
+  if(state.data) state.data = {...state.data, manual: data.manual, preview: {status: data.preview.status}};  // ④ / 闸门读这份
+  applyWizard(data.wizard);
+  paintResult();
+  renderNav();
 }
-// 补齐缺失 id、修正重复/非法 id（也能修好历史上已经存进 shots.json 的重复 id）
-function renumber(){
-  const seen = new Set();
-  state.shots.forEach(s=>{
-    if(!s.id || seen.has(s.id) || !SHOT_ID_RE.test(s.id)) s.id = nextShotId();
-    seen.add(s.id);
-  });
+function reloadResultNow(project){ if(state.view === 'result' && state.project === project) return loadResult(); }
+// 保存成功（app.js postShots 调用）：防抖后重拉
+function onShotsSaved(project){
+  const r = res();
+  if(!r || state.view !== 'result' || state.project !== project) return;
+  clearTimeout(r.reloadTimer);
+  r.reloadTimer = setTimeout(()=>{ r.reloadTimer = null; if(state.result === r && state.view === 'result') loadResult(); }, RESULT_RELOAD_MS);
 }
-function move(i,d){
-  const j=i+d; if(j<0||j>=state.shots.length) return;
-  [state.shots[i],state.shots[j]]=[state.shots[j],state.shots[i]];
-  state.sel=j; saveShots(true); renderView();
+function onResultJobDone(task){   // 在 ⑤ 时重新选段 / 生成预览片结束：重拉，预览片完成后回到预览片模式
+  const r = res();
+  if(!r) return;
+  if(task === 'preview') r.mode = 'preview';
+  r.tableSig = null;
+  return loadResult();
 }
-function dup(i){
-  const s={...state.shots[i], id:''};
-  state.shots.splice(i+1,0,s); state.sel=i+1; saveShots(true); renderView();
-}
-function del(i){
-  state.shots.splice(i,1); state.sel=null; saveShots(true); renderView(); toast('已删除');
-}
-function addBlank(){
-  const t = +currentTime().toFixed(2);
-  state.shots.push({id:'', in:t, out:+(t+3).toFixed(2), sub:'', note:''});
-  state.sel = state.shots.length-1;
-  saveShots(true).then(()=>{ toast('已加一个 3 秒空镜'); renderView(); });
-}
-function sortShots(){
-  state.shots.sort((a,b)=>a.in-b.in); state.sel=null; saveShots(true); renderView(); toast('已按时间排序');
+function paintResult(force){
+  const r = res();
+  if(!r || state.view !== 'result') return;
+  paintTop(); paintTable(force); paintPlayer(); paintUnused();
+  applyBusyGuard();  // 刚画出来的「改」「生成预览片」等启动类按钮：有任务在跑就置灰
 }
 
-/* ---------------- 目标时长 ---------------- */
-function openTarget(fromOverrun){
-  if(!state.project) return toast('先选项目');
-  const sel = state.data?.selection || {};
-  const cur = num(state.data?.project?.target_duration);
-  const over = fromOverrun && sel.over_target;
-  const value = over ? num(sel.suggested_target) : cur;
-  const head = over ? COPY_MUST_KEEP_OVER.replace('{must}', fmtMinSec(sel.must_keep_total))
-                                         .replace('{target}', fmtMinSec(cur)) : '';
-  const manual = state.data?.shots_from_selection === false && state.shots.length;
-  showModal(over ? COPY_MUST_KEEP_OVER_TITLE : COPY_TARGET_TITLE, `
-    ${head ? `<p>${esc(head)}</p>` : ''}
-    <div class="field"><label>${esc(COPY_TARGET_ASK)}</label>${durationFields('tgt', value)}</div>
-    ${manual ? `<p class="hint">${esc(COPY_TARGET_MANUAL_NOTE)}</p>` : ''}
-    <button class="primary" data-act="saveTarget" data-starts-job>${esc(COPY_TARGET_BUTTON)}</button>
-    <button class="ghost" data-act="closeModal">${esc(COPY_TARGET_LATER)}</button>`);
+/* ---------------- 预览片状态 ---------------- */
+function previewData(){ const r = res(); return r && r.data ? r.data.preview : null; }
+function previewStatus(){   // 本地改过表还没重拉时，新鲜的预览片也按「过期」算
+  const r = res(), pv = previewData();
+  const status = pv ? pv.status : (state.data?.preview?.status || 'none');
+  return r && r.touched && status === 'fresh' ? 'outdated' : status;
 }
-function saveTarget(){
+function previewNoteHtml(pv){
+  const status = previewStatus();
+  if(status === 'fresh') return '';
+  const unusable = pv && Array.isArray(pv.reasons) && pv.reasons.includes('unusable') && !res().touched;
+  const text = status === 'none' ? COPY_PREVIEW_NONE : (unusable ? COPY_PREVIEW_UNUSABLE : COPY_PREVIEW_OUTDATED);
+  return `<span class="hint">${esc(text)}</span> <button class="primary" data-act="makePreview" data-starts-job>${esc(COPY_PREVIEW_MAKE)}</button>`;
+}
+async function makePreview(){
+  if(!state.project) return;
+  if(!state.shots.length){ toast(COPY_PREVIEW_EMPTY_TABLE); return; }
+  if(await flushPendingSave() === false){ toast(COPY_PREVIEW_SAVE_FIRST, TOAST_ERROR_MS); return; }
+  return startJob('preview');
+}
+// ⑥ 的门（Q2）：有历史版本就能进；否则要有当前分镜表的新鲜预览片。步骤条、闸门 B、键盘激活都走 go()，同一处拦
+function exportDoorOpen(){
+  if((state.data?.versions || []).length) return true;
+  const status = state.view === 'result' ? previewStatus() : (state.data?.preview?.status || 'none');
+  return status === 'fresh';
+}
+function resultGateHtml(){   // 闸门 B：当前分镜表的预览片已生成才可点
+  if(previewStatus() === 'fresh') return `<button class="primary" data-act="go" data-step="export">${esc(COPY_GATE_B)}</button>`;
+  return `<button class="primary" data-act="gateBHint" aria-disabled="true" title="${esc(COPY_GATE_B_HINT)}">${esc(COPY_GATE_B)}</button>`;
+}
+
+/* ---------------- 顶栏 ---------------- */
+function liveTotal(){ return state.shots.reduce((a, s) => a + num(s.out) - num(s.in), 0); }
+function paintLive(){
+  const cur = $('#rCur'), cnt = $('#rCnt');
+  if(cur) cur.textContent = fmtLong(Math.max(0, Math.round(liveTotal())));
+  if(cnt) cnt.textContent = String(state.shots.length);
+}
+function targetHtml(r, tb){
+  if(r.editing) return `${esc(COPY_TOP_TARGET)} ${durationFields('tgt', num(tb.target))}
+    <button class="primary" data-act="applyTarget" data-starts-job>${esc(COPY_TARGET_OK)}</button>
+    <button class="ghost" data-act="cancelTarget">${esc(COPY_TARGET_CANCEL)}</button>`;
+  return `${esc(COPY_TOP_TARGET)} <b>${fmtLong(num(tb.target))}</b> <button class="ghost" data-act="editTarget" data-starts-job>${esc(COPY_TOP_CHANGE)}</button>`;
+}
+function clipHtml(tb){
+  const count = num(tb.clip?.count), covered = num(tb.clip?.covered), missing = covered < count;
+  const text = COPY_TOP_CLIP_COUNT.replace('{c}', covered).replace('{m}', count) + (count && !missing ? COPY_TOP_OK : '');
+  return `${esc(COPY_TOP_CLIP)} <b${missing ? ' class="warn"' : ''}>${esc(text)}</b>`;
+}
+function overHtml(tb){
+  if(!tb.over_target) return '';
+  const suggest = num(tb.suggested_target);
+  const text = COPY_RESULT_OVER.replace('{must}', fmtMinSec(tb.must_total)).replace('{target}', fmtMinSec(tb.target))
+    .replace('{suggest}', fmtMinSec(suggest));
+  const apply = suggest ? ` <button class="primary" data-act="applySuggested" data-starts-job>${esc(COPY_OVER_APPLY.replace('{suggest}', fmtMinSec(suggest)))}</button>` : '';
+  return `<div class="r-over">⚠ ${esc(text)}${apply}</div>`;
+}
+function manualNoteHtml(r){   // Q6：重新分析后分镜表仍是手动那一版
+  const reasons = stepOf('result')?.reasons || [];
+  return r.data && r.data.source === 'manual' && reasons.includes('scored')
+    ? `<div class="r-over">${esc(COPY_ANALYSIS_UPDATED_MANUAL)}</div>` : '';
+}
+function topHtml(r, live){
+  const tb = r.data?.topbar;
+  if(!tb) return '';
+  const cur = live ? fmtLong(Math.max(0, Math.round(liveTotal()))) : '', cnt = live ? state.shots.length : '';
+  const edited = manualInfo()?.edited === true;
+  const restore = edited ? `<button class="ghost r-restore" data-act="openRestoreAi" data-starts-job>${esc(COPY_RESTORE_AI)}</button>` : '';
+  return `<div class="r-stats"><span>${targetHtml(r, tb)}</span>${esc(COPY_TOP_SEP)}<span>${esc(COPY_TOP_CUR)} <b id="rCur">${cur}</b></span>`
+    + `${esc(COPY_TOP_SEP)}<span>${esc(COPY_TOP_SHOTS)} <b id="rCnt">${cnt}</b></span>${esc(COPY_TOP_SEP)}<span>${clipHtml(tb)}</span>${restore}</div>`
+    + overHtml(tb) + manualNoteHtml(r);
+}
+function paintTop(){
+  const r = res();
+  if(r.html['#rTop'] !== topHtml(r, false)){
+    r.html['#rTop'] = topHtml(r, false);
+    $('#rTop').innerHTML = topHtml(r, true);
+  }
+  paintLive();
+}
+function editTarget(){ const r = res(); if(r){ r.editing = true; paintTop(); } }
+function cancelTarget(){ const r = res(); if(r){ r.editing = false; paintTop(); } }
+async function applyTarget(){
   const t = readDuration('tgt');
-  if(!t) return toast(COPY_TARGET_RANGE);
-  closeModal();
-  startJob('select', {target: t});
+  if(!t){ toast(COPY_TARGET_RANGE); return; }
+  if(await confirmReselect({target: t}) === null) return;   // 取消 / 没起来：编辑框和输入的时长都保留
+  cancelTarget();                                             // 任务确实起来了才关
+}
+async function applySuggested(){
+  const suggest = num(res()?.data?.topbar?.suggested_target);
+  if(suggest) await confirmReselect({target: suggest});
 }
 
 Object.assign(ACTIONS, {
-  openTarget: ()=>openTarget(false), saveTarget: ()=>saveTarget(),
-  mark: el=>mark(el.dataset.which), playSel: ()=>playSel(),
-  addBlank: ()=>addBlank(), sortShots: ()=>sortShots(),
-  pick: el=>pick(num(el.dataset.i)), move: el=>move(num(el.dataset.i), num(el.dataset.d)),
-  dup: el=>dup(num(el.dataset.i)), del: el=>del(num(el.dataset.i)),
-  editSub: el=>edit(num(el.dataset.i), 'sub', el.value),
+  editTarget: ()=>editTarget(), cancelTarget: ()=>cancelTarget(), applyTarget: ()=>applyTarget(),
+  applySuggested: ()=>applySuggested(), makePreview: ()=>makePreview(),
+  gateBHint: ()=>toast(COPY_GATE_B_HINT), retrySave: ()=>retrySave(),
 });
