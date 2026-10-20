@@ -29,7 +29,7 @@ JOB_COMMANDS = {"prepare": ["prepare"], "build": ["build"], "select": ["select"]
                 "export": ["export"], "questions": ["questions", "--force"],  # KI-86：确认页重新出题
                 "preview": ["preview"]}  # M14：只生成预览片，不产生版本
 # M13：任务名词统一到向导的步骤名（PRD §12）；JOB_CONFLICT_MSG / 遗留任务提示 / 任务胶囊都用它
-TASK_LABELS = {"prepare": "分析", "build": "生成新版本", "select": "重新选段",
+TASK_LABELS = {"prepare": "分析", "build": "导出", "select": "重新选段",
                "export": "生成 Windows 剪映包", "questions": "重新出题", "preview": "生成预览片"}
 MAX_ACTIVE_JOBS = 1          # 重任务全局串行：ffmpeg / ASR 吃满资源，也避免重复计费
 CANCEL_GRACE_S = 5.0         # SIGTERM 后等这么久仍未退出就 SIGKILL
@@ -55,7 +55,7 @@ JOB_CANCEL_NOTE = "[取消] 正在停止任务…"
 JOB_EXIT_NOTE = "[退出码] {code}"
 SHORT_CMD_TIMEOUT_MSG = "[错误] 命令超时（{s} 秒没有完成），请重试"
 SHORT_CMD_START_FAILED = "[错误] 无法执行命令：{exc}"
-NO_TIMELINE_MSG = "这一版还没有时间线，先在「⑥ 导出」生成新版本"
+NO_TIMELINE_MSG = "这一版还没有时间线，先在「⑥ 导出」导出一次"
 
 LOG = applog.get("job")  # app.log 只记任务要点（起止、退出码、行数、错误行），不记普通输出（GL-19）
 LOGGED_PREFIXES = ("[错误]", "[x]", "[!]", "Traceback")  # 只有这些行进 app.log；正文可能含文稿 / 片名

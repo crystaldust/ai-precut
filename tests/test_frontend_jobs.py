@@ -138,13 +138,6 @@ def test_bad_request_offers_retry_and_close():
     assert "重试" in out and "关闭" in out
 
 
-def test_version_export_html_uses_index_not_name():
-    html = run_js("versionExportHtml({name: \"v1');alert(1)//\", windows_zip: '<b>x.zip', windows_mb: 3}, 0)",
-                  files=["jobs.js", "step-export.js"])
-    assert 'data-act="exportVersion" data-i="0"' in html and 'data-act="revealExport" data-i="0"' in html
-    assert "alert" not in html and "<b>" not in html and "&lt;b&gt;x.zip" in html
-
-
 def test_export_version_posts_export_task():
     out = run_js("window.__api = () => new Promise(() => {}); exportVersion(0);"
                  "calls.filter(c => c[0]==='api').map(c => JSON.parse(c[2]));",

@@ -163,7 +163,7 @@ def recorder(gui_server, monkeypatch):
 def test_job_rejects_traversal_version(gui_server, recorder):
     make_project(gui_server.root)
     status, _, _ = call(gui_server, "POST", "/api/job",
-                        {"project": "p1", "task": "build", "version": "../../evil"})
+                        {"project": "p1", "task": "export", "version": "../../evil"})
     assert status == 400
     assert recorder["start_job"] == []
 
@@ -179,9 +179,9 @@ def test_job_rejects_bad_project(gui_server, recorder, name):
 def test_job_accepts_valid(gui_server, recorder):
     make_project(gui_server.root)
     status, _, _ = call(gui_server, "POST", "/api/job",
-                        {"project": "p1", "task": "build", "version": "v2"})
+                        {"project": "p1", "task": "select", "target": 120})
     assert status == 200
-    assert recorder["start_job"] == [("p1", "build", ["--version", "v2"])]
+    assert recorder["start_job"] == [("p1", "select", ["--target", "120"])]
 
 
 def test_shots_rejects_traversal_id(gui_server):

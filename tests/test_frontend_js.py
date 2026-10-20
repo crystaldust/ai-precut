@@ -140,7 +140,7 @@ ctx.document = {querySelectorAll: () => []};
 ctx.toast = (m) => ctx.toasts.push(m);
 ctx.renderWarnbar = (l) => ctx.warnbars.push(l);
 ctx.renderChrome = () => {}; ctx.renderView = () => {}; ctx.setRail = () => {}; ctx.renderProjects = () => {};
-ctx.stopAnalysisPoll = () => {}; ctx.resetAnalysis = () => {}; ctx.resetResult = () => {}; ctx.onShotsSaved = () => {}; ctx.reloadResultNow = () => {}; ctx.resetBrowse = () => {};
+ctx.stopAnalysisPoll = () => {}; ctx.resetAnalysis = () => {}; ctx.resetResult = () => {}; ctx.resetExport = () => {}; ctx.onShotsSaved = () => {}; ctx.reloadResultNow = () => {}; ctx.resetBrowse = () => {};
 ctx.resetCriteria = () => {}; ctx.flushCriteriaDraft = async () => true; ctx.crit = () => null; ctx.criteriaDraftLost = () => {}; ctx.criteriaDraftBlocked = () => {};
 ctx.setStage = h => { el('#stage').innerHTML = h; };
 ctx.attachRunningJob = () => {}; ctx.renumber = () => {};

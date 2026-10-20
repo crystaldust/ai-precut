@@ -16,7 +16,7 @@ const STEP_VIEWS = {
   analyze: ()=>viewAnalyze(), browse: ()=>viewBrowse(), criteria: ()=>viewCriteria(),
   result: ()=>viewResult(), export: ()=>viewExport(),
 };
-const ENTER_HOOKS = {analyze: ()=>enterAnalyze(), browse: ()=>enterBrowse(), criteria: ()=>enterCriteria(), result: ()=>enterResult()};
+const ENTER_HOOKS = {analyze: ()=>enterAnalyze(), browse: ()=>enterBrowse(), criteria: ()=>enterCriteria(), result: ()=>enterResult(), export: ()=>enterExport()};
 
 /* ---------------- 项目 ---------------- */
 async function selectProject(name){
@@ -24,7 +24,7 @@ async function selectProject(name){
   unsavedFor = null; saveRetries = 0; clearTimeout(saveRetryTimer); saveRetryTimer = null; renderSavebar();  // 存不上的话已经提示过；不带到别的项目
   const draft = crit();
   if(!await flushCriteriaDraft() && draft) criteriaDraftLost(draft);  // ④ 还没发出的答案草稿同理；存不上就长时间提示，不拦切换
-  resetResult();
+  resetResult(); resetExport();
   state.sel = null; state.view = null;  // 进入项目 = 去它的「当前步骤」（refresh 里按 wizard.next 定）
   resetAnalysis(); resetBrowse(); resetCriteria();
   await refreshOrWarn(name);
@@ -38,7 +38,7 @@ async function refreshOrWarn(name=state.project){
 // 打不开的项目：清掉上一个项目的数据、步骤条和导航，state.project 置空 → 任何写操作都发不出去
 function showProjectError(name, e){
   clearTimeout(saveTimer); saveTimer = null; unsavedFor = null; renderSavebar();
-  stopAnalysisPoll(); resetResult(); resetBrowse(); resetCriteria();
+  stopAnalysisPoll(); resetResult(); resetExport(); resetBrowse(); resetCriteria();
   state.project = null; state.data = null; state.shots = []; state.sel = null; state.view = null;
   $('#title').textContent = name || ''; $('#meta').textContent = '';
   $('#steps').innerHTML = ''; $('#banner').innerHTML = ''; $('#nav').innerHTML = '';
@@ -69,6 +69,7 @@ async function refresh(name=state.project){
   const wizard = data.wizard || {steps: [], next: 'analyze'};
   const before = state.view;
   state.view = resolveView(wizard, before);  // 当前页不可用了（或刚进项目）→ 去下一步
+  if(before === 'export' && state.view !== 'export') leaveExport();  // 被带离 ⑥：对比里的视频先停
   renderWarnbar(data.warnings);
   renderChrome();
   renderView();
@@ -100,6 +101,7 @@ function renderView(){
   const html = state.data ? (render ? render() : '') : welcomeHtml();
   if(!stageIs(html)) setStage(html);  // 内容没变就不重画：分析页的 Key 输入框、滚动位置都不会被轮询打断
   paintResult();  // ⑤ 的各块内容没变就不重画（result-table.js）
+  paintCompare();  // ⑥ 对比里的两个视频：重画后重新绑定同步播放
   applyBusyGuard();
 }
 async function go(key){
@@ -108,6 +110,7 @@ async function go(key){
   if(!step || !state.data) return;
   if(step.status === 'locked'){ toast(step.hint || ''); return; }
   if(key === 'export' && !exportDoorOpen()){ toast(COPY_EXPORT_NEED_PREVIEW); return; }  // 本地刚改过表时服务端的步骤状态还没更新
+  if(state.view === 'export' && key !== 'export') leaveExport();  // 对比里的视频先停
   if(state.view === 'result' && key !== 'result'){ await flushPendingSave(); leaveResult(); }  // 离开 ⑤ 前分镜表改动先落盘，在途的 ⑤ 回包作废
   if(state.view === 'criteria' && key !== 'criteria' && !await flushCriteriaDraft()){ criteriaDraftBlocked(); return; }  // 离开 ④ 前答案草稿先落盘；存不上就留在这里
   if(state.view === 'analyze' && key !== 'analyze') stopAnalysisPoll();

@@ -36,7 +36,7 @@ INDEX_ENTRY = "main.js"     # 主页最后加载的启动脚本（所有 ACTIONS
 INDEX_SCRIPT_ORDER = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js",
                       "wizard.js", "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js",
                       "step-criteria.js", "criteria-analysis.js", "criteria-pending.js", "reselect.js", "result-table.js", "result-unused.js",
-                      "step-result.js", "step-export.js", "app.js", INDEX_ENTRY]
+                      "step-result.js", "step-export.js", "export-compare.js", "app.js", INDEX_ENTRY]
 
 
 # ---------------------------------------------------------------- GL-05 / KI-88

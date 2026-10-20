@@ -30,6 +30,7 @@ MANUAL_REPLACED = "已用新的 AI 选段覆盖手动分镜表，原表备份在
 MANUAL_BUSY = "选段已更新，但分镜表正忙，没能覆盖手动分镜表（你的修改还在）；请稍后再选一次"
 MANUAL_BACKUP_FAILED = "手动分镜表备份失败（{exc}），没有覆盖它（你的修改还在）；选段本身已更新"
 BAD_TARGET = "导出目标只能是 mac 或 windows"
+NEED_TARGET = "缺少导出目标：mac 或 windows"
 BAD_EXPORT_KIND = "导出类型只能是 mac 或 windows：{kind}"
 ZIP_TITLE_MAX_CHARS = 60     # 片名在 zip 文件名里最多保留的字数（中文 3 字节/字，远低于 255 字节）
 # 路径字符、控制字符，以及能把文件名显示成别的样子的零宽 / 双向控制字符
@@ -253,13 +254,12 @@ def replace_manual(pdir: Path) -> Path | None:
 def build_args(pdir: Path, body: dict, cfg: dict) -> list[str]:
     """界面的「导出」请求 → `aicut build` 的参数（调用方已过白名单以外的校验）。
 
-    没有 target：旧参数（version / no_draft）。有 target（mac | windows）：只晋升当前分镜表的预览片
-    （--require-preview）；已有一版就是这张表（⚑Q1）就往这一版里补另一种导出物。
+    target（mac | windows）必填：只晋升当前分镜表的预览片（--require-preview）；
+    已有一版就是这张表（⚑Q1）就往这一版里补另一种导出物。命令行 `aicut build` 不走这里。
     """
     target = body.get("target")
     if target is None:
-        extra = ["--version", schema.check_version(body["version"])] if body.get("version") else []
-        return [*extra, *(["--no-draft"] if body.get("no_draft") else [])]
+        raise ValueError(NEED_TARGET)
     if target not in EXPORT_KINDS:
         raise ValueError(BAD_TARGET)
     status = preview_state(pdir, cfg)["status"]

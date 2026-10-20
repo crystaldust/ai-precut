@@ -136,7 +136,7 @@ def test_transcribed_project_needs_only_deepseek(gs, monkeypatch):
 def test_other_tasks_not_blocked_by_consent(gs, monkeypatch):
     make_project(gs.root)
     _fake_job(gs, monkeypatch)
-    status, _, _ = post(gs, "/api/job", {"project": "p1", "task": "build"})
+    status, _, _ = post(gs, "/api/job", {"project": "p1", "task": "preview"})
     assert status == 200
 
 

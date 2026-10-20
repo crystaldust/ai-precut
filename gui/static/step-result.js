@@ -84,7 +84,7 @@ async function loadResult(){
   if(gen !== resultGen || seq !== r.loadSeq || state.result !== r || state.project !== name) return;
   r.data = data;
   if(editSeq === editsAtSend) r.touched = false;   // 请求发出之后又改过表：服务端这份不是最新的，仍按「改过」算
-  if(state.data) state.data = {...state.data, manual: data.manual, preview: {status: data.preview.status}};  // ④ / 闸门读这份
+  if(state.data) state.data = {...state.data, manual: data.manual, preview: {status: data.preview.status, at: data.preview.at}};  // ④ / 闸门读这份
   applyWizard(data.wizard);
   paintResult();
   renderNav();

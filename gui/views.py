@@ -78,6 +78,7 @@ def project_state(pdir: Path, name: str) -> dict:
     manual = jload(pdir / "shots.json", {}).get("shots", [])
     selected = jload(work / "shots-selected.json", {}).get("shots", [])
     inputs = fingerprints.preview_inputs(pdir, cfg)  # 一次请求只算一遍：版本卡片、预览状态、步骤状态共用
+    preview = outputs.preview_state(pdir, cfg, inputs)
     return {
         "project": cfg,
         "versions": _versions(pdir, cfg, name, inputs),
@@ -96,7 +97,8 @@ def project_state(pdir: Path, name: str) -> dict:
         "wizard": wizard.derive(wizard.collect(pdir, cfg, name, preview_inputs=inputs)),  # M13：六步向导的步骤状态
         "busy": jobs.busy_view(),  # 全局正在跑的任务（任务胶囊）
         "manual": shots_store.manual_changes(pdir),  # M14：手动改了几处（不抛）
-        "preview": {"status": outputs.preview_state(pdir, cfg, inputs)["status"]},  # 暂存预览片是不是当前分镜表的
+        "preview": {"status": preview["status"], "at": preview["at"]},  # 暂存预览片是不是当前分镜表的、什么时候生成的
+        "next_version": outputs.next_version(pdir),  # ⑥「本次导出」会新开的版本号（当前分镜表已有一版时界面改说复用）
         "jianying": {"installed": jianying.installed()},  # KI-98：没装就不显示「打开剪映」
     }
 

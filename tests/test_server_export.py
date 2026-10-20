@@ -63,7 +63,7 @@ def test_export_rejects_bad_version(gui_server, seen, version):
 def test_export_requires_timeline(gui_server, seen):
     project(gui_server)
     status, data = export(gui_server, "v9")
-    assert status == 400 and "生成新版本" in data["error"]
+    assert status == 400 and "⑥ 导出" in data["error"] and "生成新版本" not in data["error"]
     assert seen == []
 
 
@@ -145,3 +145,17 @@ def test_bidi_and_zero_width_chars_stripped(tmp_path):
     assert outputs.windows_zip(tmp_path / "p1", "v1", title).name == name
     assert not any(c in name for c in "​‮⁦‏")
     assert name.endswith("_v1_Windows.zip")
+
+
+def test_gui_build_without_target_is_400_and_starts_nothing(gui_server, seen):
+    """M14c：旧的「生成新版本」暂存界面没了，GUI 的 build 必须带 target。"""
+    project(gui_server)
+    for body in ({}, {"no_draft": True}, {"target": "linux"}):
+        status, raw, _ = call(gui_server, "POST", "/api/job", {"project": "p1", "task": "build", **body})
+        assert status == 400 and json.loads(raw)["error"], body
+    assert seen == [] and gui_server.module.JOBS == {}
+
+
+def test_build_task_label_is_export_in_conflict_message(gui_server):
+    from gui import jobs
+    assert jobs.TASK_LABELS["build"] == "导出" and jobs.TASK_LABELS["export"] == "生成 Windows 剪映包"

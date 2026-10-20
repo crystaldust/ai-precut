@@ -151,3 +151,27 @@ def test_topic_name_limit_matches_server():
 def test_analysis_labels_come_from_server_not_a_second_table():
     js = (STATIC / "step-analyze.js").read_text(encoding="utf-8")
     assert "esc(s.label)" in js and "STEP_LABELS" not in js and "PREPARE_LABELS" not in js
+
+
+# ---------------------------------------------------------------- M14c：⑥ 导出的名词与旧入口
+OLD_EXPORT_UI = ("这次只生成预览片", "生成新版本", "noDraft", "openBuild", "doBuild", "COPY_BUILD_PREVIEW_ONLY",
+                 "COPY_EXPORT_NEW")
+
+
+@pytest.mark.parametrize("path", UI_FILES, ids=[p.name for p in UI_FILES])
+def test_old_temporary_export_flow_is_gone(path):
+    text = _ui_source(path)
+    assert [w for w in OLD_EXPORT_UI if w in text] == []
+
+
+def test_build_task_wording_follows_the_export_step():
+    js = _ui_source(STATIC / "jobs.js")
+    assert "build:'正在导出'" in js and "build:'导出'" in js and "build:'已导出'" in js
+    assert jobs.TASK_LABELS["build"] == "导出"
+
+
+def test_export_copy_uses_prd_terms():
+    js = _ui_source(STATIC / "step-export.js") + _ui_source(STATIC / "export-compare.js")
+    for word in ("导出到 Mac 剪映", "生成 Windows 剪映包", "历史版本", "回到这一版", "对比两版", "预览片"):
+        assert word in js
+    assert "成片" not in js and "草稿库" in js  # 版本卡片只说「版本 vN」「预览片」，不说「成片」

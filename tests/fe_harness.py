@@ -17,7 +17,7 @@ NODE = shutil.which("node")
 SCRIPTS = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
            "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "step-criteria.js",
            "criteria-analysis.js", "criteria-pending.js", "reselect.js", "result-table.js", "result-unused.js",
-           "step-result.js", "step-export.js", "app.js"]
+           "step-result.js", "step-export.js", "export-compare.js", "app.js"]
 
 HARNESS = r"""
 const vm = require('vm');
@@ -35,6 +35,8 @@ function mkEl(sel, parent){
     setAttribute(k, v){ this.attrs[k] = String(v); }, getAttribute(k){ return k in this.attrs ? this.attrs[k] : null; },
     removeAttribute(k){ delete this.attrs[k]; },
     addEventListener(t, fn){ (this.listeners[t] = this.listeners[t] || []).push(fn); },
+    removeEventListener(t, fn){ this.listeners[t] = (this.listeners[t] || []).filter(f => f !== fn); },
+    load(){ this.loaded = (this.loaded || 0) + 1; },
     closest(q){  // 只认 [attr] 选择器：沿 parent 往上找带这个属性的元素（事件委托测试用）
       const a = q.replace(/^\[|\]$/g, ''); let n = this;
       while(n){ if(a in n.attrs) return n; n = n.parent; }

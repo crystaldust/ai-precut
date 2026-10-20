@@ -138,6 +138,8 @@ def _result_step(f: dict) -> dict:
 
 
 def _export_step(f: dict) -> dict:
+    if f.get("exported_current"):  # 当前分镜表已经是某一版（Mac 剪映或 Windows 包）
+        return _step("export", DONE)
     if f.get("preview_fresh") or f.get("has_versions"):
         return _step("export", AVAILABLE)
     return _step("export", LOCKED, hint=LOCKED_EXPORT_HINT)

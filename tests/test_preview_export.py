@@ -369,9 +369,11 @@ def _extra(jobs_mod, env, body):
     return jobs_mod.job_extra(env.pdir, "build", body, "片名")
 
 
-def test_job_extra_build_legacy_args_without_target(env, jobs_mod):
-    assert _extra(jobs_mod, env, {}) == []
-    assert _extra(jobs_mod, env, {"version": "v2", "no_draft": True}) == ["--version", "v2", "--no-draft"]
+def test_job_extra_build_requires_a_target(env, jobs_mod):
+    """M14c：旧的暂存界面（无 target、--no-draft 勾选）已删除，GUI 的导出必须说清导出到哪里。"""
+    for body in ({}, {"version": "v2", "no_draft": True}, {"target": None}):
+        with pytest.raises(ValueError, match="缺少导出目标：mac 或 windows"):
+            _extra(jobs_mod, env, body)
 
 
 def test_job_extra_build_target_requires_fresh_preview(env, jobs_mod):

@@ -1,14 +1,14 @@
 // 剪辑台 · 任务（GL-17 / GL-22）：启动、轮询、取消 / 重试，任务胶囊，启动类按钮置灰（M13 D16）。
-// 分析 / 重新选段只在顶栏胶囊里露面（② 页自己就是进度）；生成新版本 / 导出 Windows 包仍自动弹出日志窗口。
+// 分析 / 重新选段只在顶栏胶囊里露面（② 页自己就是进度）；导出 / 生成 Windows 包仍自动弹出日志窗口。
 // 依赖 base.js 的 $ / state / api / showModal / closeModal / logLine / toast 和 app.js 的 refreshOrWarn / go，
 // 只在调用时才用到，所以本文件可以先于它们加载。
 
 /* 界面文案：产品可直接改这里 */
-const JOB_TITLES = {prepare:'正在分析', build:'正在生成新版本', select:'正在重新选段',
+const JOB_TITLES = {prepare:'正在分析', build:'正在导出', select:'正在重新选段',
                     export:'正在生成 Windows 剪映包', questions:'正在重新出题', preview:'正在生成预览片'};
-const JOB_LABELS = {prepare:'分析', build:'生成新版本', select:'重新选段',
+const JOB_LABELS = {prepare:'分析', build:'导出', select:'重新选段',
                     export:'生成 Windows 剪映包', questions:'重新出题', preview:'生成预览片'};
-const JOB_DONE = {prepare:'分析完成', build:'新版本已生成', select:'已重新选段',
+const JOB_DONE = {prepare:'分析完成', build:'已导出', select:'已重新选段',
                   export:'Windows 剪映包已生成', questions:'决策问题已重新生成', preview:'预览片已生成'};
 const MODAL_TASKS = new Set(['build', 'export']);  // 这两个任务自动弹日志窗口，其余（含预览片）只在胶囊里
 const AFTER_DONE_GO = {prepare: ['analyze', 'browse'], select: ['criteria', 'result']};  // [正在看的步骤, 完成后去]
@@ -28,7 +28,7 @@ const COPY_JOB_CANCEL_SENT = '[取消] 已请求停止…';
 const COPY_JOB_ERROR = '[错误] ';
 const COPY_JOB_DONE_WITH_WARNINGS = '完成了，但有需要你留意的提示（上面以 [!] 开头的行），看完再关';
 const COPY_JOB_DONE_OTHER = '「{project}」：{done}';
-const COPY_JOB_SAVE_FIRST = '分镜表还没保存成功，先不生成新版本';  // KI-35：生成前先把改动存盘
+const COPY_JOB_SAVE_FIRST = '分镜表还没保存成功，先不导出';  // KI-35：生成前先把改动存盘
 const COPY_CHIP_PROGRESS = '{title} {done}/{total}';
 const COPY_CHIP_WORKING = '{title}…';
 const COPY_CHIP_ELAPSED = ' · {t}';
@@ -109,6 +109,8 @@ function onJobStartError(e, task, extra, opts = {}, modal = MODAL_TASKS.has(task
   if(blocked && (d.need === 'consent' || d.need === 'keys') && opts.onBlocked) return opts.onBlocked(e, again);
   if(blocked && d.need === 'consent') return openConsent(again);
   if(blocked && d.need === 'keys'){ toast(e.message, NEED_TOAST_MS); return openSettings(again, d.missing); }
+  if(blocked && d.need === 'close_jianying' && typeof closeJianyingModal === 'function') return closeJianyingModal(again);  // 剪映开着：不是「这台 Mac 不能分析」
+  if(blocked && d.need === 'export_blocked'){ toast(e.message, TOAST_ERROR_MS); return; }  // KI-100：含不可用片段的版本（卡片本不该给按钮）
   if(blocked) return showNeedModal(e.message);
   if(!modal){  // 没有日志窗口：原因用提示说；别的任务占着时改为盯着它
     toast(e.message, TOAST_ERROR_MS);

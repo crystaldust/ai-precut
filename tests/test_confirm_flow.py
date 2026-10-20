@@ -91,7 +91,7 @@ def test_confirm_save_conflict_keeps_answers(gui_server, monkeypatch):
     from gui import jobs
     pdir = _project(gui_server)
     fake_command(monkeypatch, jobs, LONG)
-    status, first = post_job(gui_server, task="build")
+    status, first = post_job(gui_server, task="preview")
     assert status == 200
     status, data = _save(gui_server, answers={"q1": "签字"}, confirmed=True)
     assert status == 200 and data["job_id"] is None

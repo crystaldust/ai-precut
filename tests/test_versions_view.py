@@ -154,7 +154,7 @@ def test_state_has_manual_and_preview_status(gui_server):
     _, raw, _ = call(gui_server, "GET", "/api/state?project=p1")
     data = json.loads(raw)
     assert data["manual"]["edited"] is True and data["manual"]["count"] == 1
-    assert data["preview"] == {"status": "none"}
+    assert data["preview"] == {"status": "none", "at": None} and data["next_version"] == "v1"
 
 
 def _open_export(gs, version="v1"):
@@ -244,7 +244,7 @@ def test_state_request_fingerprints_the_preview_inputs_once(tmp_path, monkeypatc
     real = fingerprints.preview_inputs
     monkeypatch.setattr(fingerprints, "preview_inputs", lambda *a, **k: calls.append(1) or real(*a, **k))
     state = views.project_state(pdir, "p1")
-    assert len(calls) == 1 and state["preview"] == {"status": "none"} and len(state["versions"]) == 2
+    assert len(calls) == 1 and state["preview"] == {"status": "none", "at": None} and len(state["versions"]) == 2
 
 
 def test_project_list_does_not_fingerprint_previews(tmp_path, monkeypatch):

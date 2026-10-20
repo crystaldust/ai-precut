@@ -439,3 +439,20 @@ def test_export_is_available_with_a_fresh_preview_and_no_versions():
 def test_export_still_waits_for_criteria_first():
     d = wizard.derive(F(analysis_done=True))
     assert "④ 定标准" in by_key(d, "export")["hint"]
+
+
+# ---------------------------------------------------------------- ⑥ 完成：当前分镜表已经导出过（M14c）
+def test_export_is_done_when_the_current_table_is_already_a_version():
+    d = wizard.derive(F(**READY, preview_fresh=True, has_versions=True, exported_current=True))
+    assert by_key(d, "export")["status"] == "done" and d["next"] == "export"
+
+
+def test_export_stays_available_when_only_older_versions_exist():
+    d = wizard.derive(F(**READY, preview_fresh=True, has_versions=True, exported_current=False))
+    assert by_key(d, "export")["status"] == "available" and d["next"] == "export"
+
+
+def test_export_done_never_hides_a_stale_result_step():
+    d = wizard.derive(F(**READY, preview_fresh=True, has_versions=True, exported_current=True,
+                        selection_inputs_saved=SAVED, selection_inputs_now={**SAVED, "overrides": "changed"}))
+    assert by_key(d, "result")["status"] == "stale" and d["next"] == "result"

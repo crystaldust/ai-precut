@@ -81,12 +81,12 @@ def test_second_job_conflicts_409(gui_server, jobs, monkeypatch):
     make_project(gui_server.root)
     make_project(gui_server.root, "p2")
     fake_command(monkeypatch, jobs, LONG)
-    status, first = post_job(gui_server, task="build")
+    status, first = post_job(gui_server, task="preview")
     assert status == 200
     status, second = post_job(gui_server, task="select")
     assert status == 409 and second["job_id"] == first["job_id"]
     assert "已有任务在运行" in second["error"] and "p1" in second["error"]
-    status, other = call(gui_server, "POST", "/api/job", {"project": "p2", "task": "build"})[:2]
+    status, other = call(gui_server, "POST", "/api/job", {"project": "p2", "task": "preview"})[:2]
     assert status == 409  # 全局一次一个（MAX_ACTIVE_JOBS = 1）
     assert len(jobs.JOBS) == 1
 
@@ -95,7 +95,7 @@ def test_second_job_conflicts_409(gui_server, jobs, monkeypatch):
 def test_cancel_kills_process_group(gui_server, jobs, monkeypatch):
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, GRANDCHILD)
-    _, data = post_job(gui_server, task="build")
+    _, data = post_job(gui_server, task="preview")
     job_id = data["job_id"]
     assert wait_for(lambda: any(l.startswith("child") for l in get_job(gui_server, job_id)[1]["log"]))
     grandchild = int(next(l for l in get_job(gui_server, job_id)[1]["log"]
@@ -107,7 +107,7 @@ def test_cancel_kills_process_group(gui_server, jobs, monkeypatch):
     assert any(l.startswith("[取消]") for l in job["log"])
     assert wait_for(lambda: not pid_alive(grandchild)), "孙进程（ffmpeg）也必须被杀"
     fake_command(monkeypatch, jobs, [sys.executable, "-c", "print('ok')"])
-    status, _ = post_job(gui_server, task="build")
+    status, _ = post_job(gui_server, task="preview")
     assert status == 200  # 互斥已释放
 
 
@@ -119,7 +119,7 @@ def test_cancel_unknown_job_404(gui_server):
 def test_cancel_finished_job_returns_false(gui_server, jobs, monkeypatch):
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, [sys.executable, "-c", "print('ok')"])
-    _, data = post_job(gui_server, task="build")
+    _, data = post_job(gui_server, task="preview")
     assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] == "done")
     status, raw, _ = call(gui_server, "POST", f"/api/job/{data['job_id']}/cancel", {})
     assert status == 200 and json.loads(raw)["ok"] is False
@@ -129,19 +129,19 @@ def test_cancel_finished_job_returns_false(gui_server, jobs, monkeypatch):
 def test_failed_job_status_and_exit_code(gui_server, jobs, monkeypatch):
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, [sys.executable, "-c", "import sys; print('x'); sys.exit(2)"])
-    _, data = post_job(gui_server, task="build")
+    _, data = post_job(gui_server, task="preview")
     assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] != "running")
     job = get_job(gui_server, data["job_id"])[1]
     assert job["status"] == "failed" and job["exit"] == 2
     assert job["log"][-1] == "[退出码] 2"
-    assert job["project"] == "p1" and job["task"] == "build"
+    assert job["project"] == "p1" and job["task"] == "preview"
     assert set(job) == {"status", "log", "exit", "task", "project", "elapsed_s"}  # 绝不序列化 Popen
 
 
 def test_start_failure_is_reported_not_ghost(gui_server, jobs, monkeypatch):
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, ["/nonexistent/aicut-binary"])
-    _, data = post_job(gui_server, task="build")
+    _, data = post_job(gui_server, task="preview")
     assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] == "failed")
     assert any("无法启动任务" in l for l in get_job(gui_server, data["job_id"])[1]["log"])
 
@@ -150,9 +150,9 @@ def test_state_reports_active_job(gui_server, jobs, monkeypatch):
     make_project(gui_server.root)
     make_project(gui_server.root, "p2")
     fake_command(monkeypatch, jobs, LONG)
-    _, data = post_job(gui_server, task="build")
+    _, data = post_job(gui_server, task="preview")
     state = json.loads(call(gui_server, "GET", "/api/state?project=p1")[1])
-    assert state["job"] == {"id": data["job_id"], "task": "build"}
+    assert state["job"] == {"id": data["job_id"], "task": "preview"}
     other = json.loads(call(gui_server, "GET", "/api/state?project=p2")[1])
     assert other["job"] is None
 
@@ -248,7 +248,7 @@ def test_cancel_force_kills_group_even_if_main_child_already_exited(gui_server, 
     monkeypatch.setattr(jobs, "CANCEL_GRACE_S", 0.5)
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, STUBBORN)
-    _, data = post_job(gui_server, task="build")
+    _, data = post_job(gui_server, task="preview")
     job_id = data["job_id"]
     assert wait_for(lambda: any(l.startswith("child") for l in get_job(gui_server, job_id)[1]["log"]))
     call(gui_server, "POST", f"/api/job/{job_id}/cancel", {})
@@ -268,7 +268,7 @@ def test_repeated_cancel_starts_one_kill_timer(gui_server, jobs, monkeypatch):
     started = []
     real = jobs._terminate
     monkeypatch.setattr(jobs, "_terminate", lambda *a: (started.append(a), real(*a)))
-    _, data = post_job(gui_server, task="build")
+    _, data = post_job(gui_server, task="preview")
     assert wait_for(lambda: jobs.JOBS[data["job_id"]]["popen"] is not None)
     for _ in range(3):
         call(gui_server, "POST", f"/api/job/{data['job_id']}/cancel", {})
@@ -280,7 +280,7 @@ def test_shutdown_all_kills_running_jobs_and_grandchildren(gui_server, jobs, mon
     monkeypatch.setattr(jobs, "CANCEL_GRACE_S", 0.5)
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, STUBBORN)
-    _, data = post_job(gui_server, task="build")
+    _, data = post_job(gui_server, task="preview")
     job_id = data["job_id"]
     assert wait_for(lambda: any(l.startswith("child") for l in get_job(gui_server, job_id)[1]["log"]))
     grandchild = int(next(l for l in get_job(gui_server, job_id)[1]["log"]
@@ -312,10 +312,10 @@ def test_child_env_carries_parent_pid_for_watchdog(jobs):
 def test_marker_written_while_running_and_removed_after(gui_server, jobs, monkeypatch):
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, LONG)
-    _, data = post_job(gui_server, task="build")
+    _, data = post_job(gui_server, task="preview")
     assert wait_for(lambda: jobs.marker_path().exists())
     marker = json.loads(jobs.marker_path().read_text(encoding="utf-8"))
-    assert marker["project"] == "p1" and marker["task"] == "build" and marker["pid"] > 0
+    assert marker["project"] == "p1" and marker["task"] == "preview" and marker["pid"] > 0
     jobs.cancel_job(data["job_id"])
     assert wait_for(lambda: not jobs.marker_path().exists())
 
@@ -336,7 +336,7 @@ def test_stale_job_from_previous_server_blocks_new_job(gui_server, jobs, monkeyp
             encoding="utf-8")
         make_project(gui_server.root)
         fake_command(monkeypatch, jobs, LONG)
-        status, data = post_job(gui_server, task="build")
+        status, data = post_job(gui_server, task="preview")
         assert status == 409 and str(orphan.pid) in data["error"] and "old" in data["error"]
         assert jobs.JOBS == {}
         assert jobs.stale_job()["pid"] == orphan.pid
@@ -351,7 +351,7 @@ def test_dead_stale_marker_is_ignored_and_cleaned(gui_server, jobs, monkeypatch)
                                   encoding="utf-8")
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, [sys.executable, "-c", "print('ok')"])
-    status, _ = post_job(gui_server, task="build")
+    status, _ = post_job(gui_server, task="preview")
     assert status == 200
 
 
@@ -369,9 +369,9 @@ def test_unrelated_live_pid_in_marker_is_ignored(gui_server, jobs, monkeypatch):
 def test_conflict_body_names_running_task_and_project(gui_server, jobs, monkeypatch):
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, LONG)
-    post_job(gui_server, task="build")
+    post_job(gui_server, task="preview")
     status, data = post_job(gui_server, task="select")
-    assert status == 409 and data["task"] == "build" and data["project"] == "p1"
+    assert status == 409 and data["task"] == "preview" and data["project"] == "p1"
 
 
 def test_thread_start_failure_unregisters_job(gui_server, jobs, monkeypatch):
@@ -558,7 +558,7 @@ def _finish_quick(gs, jobs, monkeypatch, argv, task="select"):
 
 
 def test_task_labels_use_wizard_terms(jobs):
-    assert jobs.TASK_LABELS == {"prepare": "分析", "build": "生成新版本", "select": "重新选段",
+    assert jobs.TASK_LABELS == {"prepare": "分析", "build": "导出", "select": "重新选段",
                                 "export": "生成 Windows 剪映包", "questions": "重新出题",
                                 "preview": "生成预览片"}
 
@@ -591,9 +591,9 @@ def test_busy_view_none_without_jobs_and_describes_running(gui_server, jobs, mon
     assert jobs.busy_view() is None
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, LONG)
-    _, data = post_job(gui_server, task="build")
-    assert jobs.busy_view() == {"id": data["job_id"], "task": "build", "project": "p1",
-                                "label": "生成新版本"}
+    _, data = post_job(gui_server, task="preview")
+    assert jobs.busy_view() == {"id": data["job_id"], "task": "preview", "project": "p1",
+                                "label": "生成预览片"}
 
 
 def test_busy_view_none_after_finish(gui_server, jobs, monkeypatch):

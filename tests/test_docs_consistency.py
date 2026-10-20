@@ -240,10 +240,25 @@ def test_gui_doc_file_map_lists_every_static_script():
             assert name in doc, f"GUI.md 的文件地图缺 {name}"
 
 
-def test_known_issues_and_blockers_reflect_m13():
+def _row(text, key):
+    return next(line for line in text.splitlines() if line.startswith(f"| {key} "))
+
+
+def test_known_issues_and_blockers_reflect_m13_and_m14():
     ki = _read(KNOWN_ISSUES)
-    for number in ("KI-93", "KI-96", "KI-97", "KI-99"):
-        row = next(line for line in ki.splitlines() if line.startswith(f"| {number} "))
+    for number in ("KI-93", "KI-94", "KI-95", "KI-96", "KI-97", "KI-98", "KI-99", "KI-100", "KI-102"):
+        row = _row(ki, number)
         assert "已修复" in row or "fixed" in row, row
-    gl = next(line for line in _read(BLOCKERS).splitlines() if line.startswith("| GL-26 "))
-    assert "①–④ 完成（M13），⑤⑥ 待 M14" in gl and "fixed" not in gl
+    assert "open" in _row(ki, "KI-101") and "fixed" not in _row(ki, "KI-101")  # 因重复：改选段算法，另立项
+    blockers = _read(BLOCKERS)
+    assert "fixed" in _row(blockers, "GL-26") and "fixed" in _row(blockers, "GL-27")
+    assert "open" not in _row(blockers, "GL-26") and "open" not in _row(blockers, "GL-27")
+
+
+def test_progress_release_checks_cover_steps_five_and_six():
+    progress = _read("docs/PROGRESS.md")
+    assert "暂住" not in progress
+    for n in range(19, 25):
+        assert re.search(rf"^\| {n} \|", progress, re.M), n
+    for word in ("预览片", "shots_backups", "剪映正在运行", "INSTALL.bat", "回到这一版", "不可用", "打开剪映"):
+        assert word in progress, word

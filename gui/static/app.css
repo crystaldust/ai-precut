@@ -136,6 +136,17 @@ tr:hover .row-btns,tr.sel .row-btns{opacity:1}
 .ver .m{color:var(--muted);font-size:12px;margin-bottom:10px}
 .ver video{max-height:52vh;max-width:340px}
 .ver-export{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.ver.cur{border-color:var(--accent)}
+.ver.blocked{border-color:#5a2b2b}
+.ver .blocked-note{color:var(--danger)}
+.ver .tag{font-size:11px;color:var(--accent);border:1px solid var(--accent);border-radius:8px;padding:0 6px;font-weight:400}
+.ver h3 input[type=checkbox]{margin-right:6px}
+.x-cur{margin-bottom:18px}
+.cmp-vids{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.cmp-side{flex:1 1 280px;min-width:240px}
+.cmp-side h4{margin:0 0 6px;font-size:14px}
+.cmp-side video{max-width:100%}
+.cmp .changes{margin:6px 0;padding-left:18px;line-height:1.7}
 
 /* 弹窗、提示 */
 .mask{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:20}

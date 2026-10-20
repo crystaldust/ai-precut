@@ -1,7 +1,7 @@
 # 剪辑台（图形界面）
 
 > 界面是**六步项目向导**：① 新建 → ② 分析 → ③ 看素材 → ④ 定标准 → ⑤ 看结果 → ⑥ 导出（设计见 [界面流程 v2](界面流程-v2.md)）。
-> M13 已完成 ①–④ 和整个外壳；⑤ ⑥ 暂时沿用原来的分镜表和版本页面，随 M14 重做。
+> ①–⑥ 和整个外壳都已完成（M13：①–④ 与外壳；M14：⑤ 看结果、⑥ 导出）。
 
 给剪辑师用的界面：**双击启动 → 一步一步点 → 出片**。不用碰 JSON、不用记命令。
 
@@ -48,11 +48,36 @@
    - **决策问题**：3–5 题，每个选项下一行「选了会怎样」；点选即自动保存；可以「重新出题」；兜底模板出的题会标明。
    点底部「确认，生成分镜表」：保存答案并重新选段，完成后自动进入 ⑤。如果还有待定没裁完，会先问
    「还有 N 段待定，按 AI 建议处理？」，不会拦住你。改版前就出过片的旧项目，④ 顶部有一行提示，可以直接去 ⑤ ⑥。
-5. **⑤ 看结果**（暂住）：分镜表可以改字幕、调顺序、删镜头、设入出点、试听；「改目标时长」；顶部 ⚠ 横幅可以「重新选段」。
-6. **⑥ 导出**（暂住）：「生成新版本」导出到 Mac 剪映，「生成 Windows 剪映包」完成后「在访达中显示」，把
-   `片名_vN_Windows.zip` 拷到 Windows 解压后双击 `INSTALL.bat`。含「不可用」片段的旧版本不能导出 Windows 包。
+5. **⑤ 看结果**（闸门 B）：
+   - 顶栏：目标时长（点「改」就地改，确定后重新选段）· 当前总时长 · 镜头数 · 剪辑列表 N/M 进片 ✓；剪辑列表超过目标时长时
+     变成警告条并直接给建议时长。
+   - 左边是**分镜表**：字幕直接改（自动保存）、↑ ↓ 调顺序、✕ 删镜头、＋空镜、按时间排序；每镜有「为什么选它」，
+     可展开看被删掉的替代句；选中一镜可以在播放器里设入点 / 出点。
+   - 右上是**预览片**：点「生成预览片」（只在顶栏胶囊里显示进度）。**预览片不产生版本号**；分镜表改过后会提示
+     「分镜表改过了 · 重新生成预览片」。
+   - 右下是**未采用清单**：可用但没进片的段 + 原因（因时长 / 你删掉的 / 未勾选为必须记住的信息 / 剪辑列表里的片段要加回），
+     每行「试听」「加回」（按时间插入，算一次手动修改）。
+   - **手动修改与重新选段冲突**（改目标时长、④ 重新确认、③ 改标记后的横幅「重新选段」）：如果你手动改过分镜表，会先问
+     「覆盖，用新的 AI 选段 / 保留我的修改 / 取消」；没有改动（或内容和 AI 选段一样）就不问。覆盖前原表自动备份在
+     `work/shots_backups/`。「恢复为 AI 选段」（只在手动改过后出现）同样先确认、先备份。重新选段进行中分镜表是只读的。
+   - 闸门按钮「看过了，去导出 →」：当前分镜表的预览片已生成才可点。
+6. **⑥ 导出**：有历史版本，或当前分镜表的预览片已生成，就能进；一个版本都没有又没有预览片时是「未到」。
+   - **本次导出**：显示「当前分镜表 N 镜 · 时长 · 预览片 时间」和这次会得到的版本号。
+     「导出到 Mac 剪映」（剪映开着时先提示「剪映正在运行」，退出后点「我已关掉，继续」）、
+     「生成 Windows 剪映包」（完成后出现「已生成 …_vN_Windows.zip」「在访达中显示」和一行用法：拷到 Windows 解压，
+     双击 `INSTALL.bat`）。两个按钮都**晋升当前分镜表的预览片**为版本 vN，所以预览片不是最新的时候按钮置灰并说明
+     「先在「⑤ 看结果」生成当前分镜表的预览片」。**同一张分镜表先导 Mac、再导 Windows 算同一个版本**；同一版再点
+     「导出到 Mac 剪映」会变成「已在 Mac 剪映里：片名_vN」（剪映不允许同名草稿）。
+   - 「打开剪映」只在检测到剪映专业版（`/Applications` 下、bundle id 校验过）时出现；没检测到就说明「装好后在剪映的本地草稿里找「片名_vN」」。
+   - **历史版本**：每版一张卡片：版本号、「当前」标记、时间、镜头数、时长、预览片播放；Mac 剪映草稿名**只在真的导出到
+     Mac 剪映的版本上显示**（改版前生成的旧版本标「改版前生成，未记录是否导入过」）；Windows 包的状态、「在访达中显示」。
+     含已标为「不可用」片段的旧版本标红，**不能生成 / 定位它的 Windows 包**（预览片仍可看、可对比）。
+   - **对比两版**：点「对比两版」，每张卡片出现勾选框，选满两个（选第三个会顶掉最早选的）→ 两个预览片并排「同时播放」，
+     下面是镜头差异（新增 / 删除 / 改字幕「之前 → 之后」/ 改入出点 / 顺序变了）；缺留存分镜表的旧版本只并排播放并说明。
+   - **回到这一版**：确认后把这一版的分镜表恢复成当前分镜表（原表自动备份、不删除任何版本；其中含不可用片段的镜头会被去掉并提示），
+     然后回到 ⑤。改版前生成、没有留存分镜表的版本该按钮置灰。
 
-> 每次生成都是新版本（v1、v2、v3…），不会覆盖上一版。剪映里的草稿名是 `片名_v3`。
+> 每次**导出**才产生新版本（v1、v2、v3…），不会覆盖上一版；预览片不算版本。剪映里的草稿名是 `片名_v3`。
 
 **常见操作对照**
 
@@ -65,7 +90,9 @@
 | 换一句字幕 | ⑤ 分镜表 → 直接改那个输入框（自动保存） |
 | 镜头长一点/短一点 | ⑤ 分镜表 → 选中 → 小播放器定位 → 设为入点/出点 |
 | 删镜头 / 调顺序 / 加空镜 | ⑤ 分镜表 → ✕ / ↑ ↓ / ＋空镜 |
-| 重出一版 | ⑥ 生成新版本（版本号自动 +1） |
+| 看一眼当前分镜表出来什么样 | ⑤ 生成预览片 |
+| 导出一版 | ⑥ 导出到 Mac 剪映 / 生成 Windows 剪映包（版本号自动 +1） |
+| 两版哪里不一样 / 退回某一版 | ⑥ 对比两版 / 回到这一版 |
 | 出了问题要发给开发 | 更多 → 导出诊断包 |
 
 ---
@@ -78,7 +105,8 @@
 gui/static/index.html   界面（原生 JS，无框架无构建；一个页面、一个窗口，六步都在 #stage 里切换）
         ↓ fetch
 gui/server.py           本地服务（127.0.0.1，只做转发和文件服务）；项目内容类接口在 gui/project_routes.py，
-                        步骤状态 gui/wizard.py，分析进度 gui/analysis.py，界面偏好 gui/prefs.py，
+                        步骤状态 gui/wizard.py，⑤⑥ 的接口与数据 gui/result_routes.py / gui/result_payload.py，
+                        剪映检测与打开 gui/jianying.py / gui/opener.py，分析进度 gui/analysis.py，界面偏好 gui/prefs.py，
                         任务子进程 gui/jobs.py，Key/告知 gui/settings.py
         ↓ subprocess
 aicut.py                业务入口（和命令行完全同一套逻辑）
@@ -100,7 +128,9 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 |---|---|---|
 | GET | `/api/projects` | 项目列表（含每项的「当前步骤」）+ `stale_job`（上次退出时留下、仍在跑的任务，顶部提示条显示） |
 | GET | `/api/presets` | 预设列表 |
-| GET | `/api/state?project=` | 项目全量状态：阶段 / 版本 / 分镜 / 警告，加 `wizard`（六步状态 `steps` + `next` + `legacy`）和 `busy`（全局正在跑的任务） |
+| GET | `/api/state?project=` | 项目全量状态：阶段 / 版本 / 分镜 / 警告，加 `wizard`（六步状态 `steps` + `next` + `legacy`）、`busy`（全局正在跑的任务）、`manual`（手动改了几处）、`preview`（`status: none/fresh/outdated` + 生成时间 `at`）、`jianying.installed`、`next_version`；每张版本卡片带 `exports`（`mac` / `windows` 导出记录，`null` = 改版前生成）、`legacy`、`current`、`has_snapshot`、`unusable_hits` / `blocked`（KI-100），`draft` 只在真的导出到 Mac 剪映的版本上有值 |
+| GET | `/api/result?project=` | ⑤ 的数据：顶栏（目标 / 总时长 / 镜头数 / 剪辑列表）、每镜 `notes`（为什么选它 + 替代句）、`unused`（未采用清单 + 原因）、`preview`、`manual`、`wizard` |
+| GET | `/api/versions/compare?project=&a=&b=` | ⑥ 对比两版：两侧的预览片 / 镜头数 / 时长 + `diff`（新增 / 删除 / 改字幕 / 改入出点 / 顺序）；任一版没有留存分镜表 → `diff:null` + `note` |
 | GET | `/api/analysis?project=` | ② 的人话进度：11 项 `{label, status, seconds}`、`done/total`、`failed`、`notice`；重新分析时只显示要重跑的部分 |
 | GET | `/api/browse?project=` | ③ 的数据：摘要、`segments`（含 `must_keep` / `unusable` / `inCut`）、`speakers`、`clip_list` |
 | GET | `/api/confirm?project=` | ④ 的数据：`questions`、`answers`、`pending`（待定段的 id 和起止，按时间）、`segments`（精简分段，文字最多 400 字）、`topics`（显示名 + 原名 + 段数）、`speakers`；还没有决策问题 → 404，分析结果不完整 → 409 |
@@ -115,19 +145,22 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | POST | `/api/browse/level` | A / D：人工档位 `{project, id, level}`；`level: null` = 撤销人工档位；响应同上 |
 | POST | `/api/browse/unusable` | X：标 / 取消不可用；标记时会把手动分镜表里对应镜头移除（`removed_shots`，撤销时可 `restore_shots` 放回） |
 | POST | `/api/topics/rename` | 话题改名 `{project, name, display}`：只改显示名，选段 / 答案仍按原名匹配；`display` 为空 = 恢复原名；重名 / 超长 → 400 |
-| POST | `/api/confirm/answers` | ④ 保存答案 `{project, answers, confirmed?}`：不带 `confirmed` = 草稿（不动确认状态、不起任务）；`confirmed:true` 保存并起「重新选段」任务（`job_id`，没能起来时 `job_error`）；响应带 `wizard` |
+| POST | `/api/confirm/answers` | ④ 保存答案 `{project, answers, confirmed?, manual?}`：不带 `confirmed` = 草稿（不动确认状态、不起任务）；`confirmed:true` 保存并起「重新选段」任务（`manual:'replace'|'keep'` 决定手动分镜表怎么处理；`job_id`，没能起来时 `job_error`）；响应带 `wizard` |
+| POST | `/api/result/restore-ai` | ⑤ 恢复为 AI 选段：备份并删除手动分镜表；没有手动表是空操作；没有 AI 选段 / 项目有任务在跑 → 409 |
+| POST | `/api/versions/restore` | ⑥ 回到这一版 `{project, version}`：该版留存的分镜表写成当前分镜表（先备份当前手动表；含不可用片段的镜头去掉并列在 `dropped`）；无快照 / 任务在跑 / 镜头全被去掉 → 409；不删除任何版本 |
 | POST | `/api/prefs` | 改界面偏好；快捷键冲突 / 非法键位 → 400 并说明 |
 | POST | `/api/prefs/reset` | 恢复默认快捷键 `{what:'shortcuts'}` |
-| POST | `/api/job` | 起任务：`{project, task:'prepare'|'build'|'select'|'export'|'questions', version, target}`；已有任务在跑 → 409 `{job_id}`；分析 / 重新出题缺告知 / 缺 Key → 409 `{need:'consent'|'keys', missing}`，编码器不可用等 → `need:'encoder'` |
+| POST | `/api/job` | 起任务：`{project, task:'prepare'|'preview'|'build'|'select'|'export'|'questions', version, target, manual}`。`preview` 只生成预览片（不产生版本）；`build` **必须带** `target:'mac'|'windows'`（缺 / 非法 → 400），当前预览片不是最新的 → 400，同一张表已经导到 Mac 剪映 → 400；`select` 的 `target` 是目标时长（秒）、`manual:'replace'|'keep'`。已有任务在跑 → 409 `{job_id}`；分析 / 重新出题缺告知 / 缺 Key → 409 `{need:'consent'|'keys', missing}`，编码器不可用等 → `need:'encoder'`；Mac 导出时剪映在运行 → 409 `need:'close_jianying'`；版本含不可用片段时 `export` → 409 `need:'export_blocked'` |
 | GET | `/api/cache?project=` | 「清理缓存」弹窗：可清理的项 `{items:[{label,path,bytes}], total}` |
 | POST | `/api/cache/clean` | 清理缓存 `{project}` → `{freed}`；这个项目有任务在跑 → 409 |
 | POST | `/api/job/<id>/cancel` | 取消任务（连同它拉起的 ffmpeg 一起停） |
 | POST | `/api/config/consent` | 记录「已阅读数据外发说明」（存 `~/.config/ai-cut/consent.json`，不进项目） |
 | POST | `/api/config/key` | 保存 Key：`{provider:'mediakit'|'deepseek', value}`，存本机钥匙串，响应只含掩码 |
 | POST | `/api/config/key/delete` | 清除 Key：`{provider}` |
-| POST | `/api/open` | 在访达打开项目 / 打开剪映 / `{target:'export', version}` 在访达中选中这一版的 Windows 包 |
+| POST | `/api/open` | 在访达打开项目 / 打开剪映（没检测到剪映 → 404；`open` 命令失败 / 超时 → 500 并带原因）/ `{target:'export', version}` 在访达中选中这一版的 Windows 包（含不可用片段的版本 → 409） |
 | GET | `/media/<project>/proxy` | 浏览小样（支持 Range，能拖进度条） |
 | GET | `/media/<project>/preview/v3` | 某一版的预览片 |
+| GET | `/media/<project>/current-preview` | ⑤ 当前分镜表的预览片（暂存，不是版本） |
 
 ### 安全模型（单用户本机）
 
@@ -173,7 +206,8 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | `result-table.js` | ⑤ 分镜表（字幕可改、为什么选它、替代句）、一个播放器两种模式（预览片 / 素材）、入出点、重新选段期间只读 |
 | `result-unused.js` | ⑤ 未采用清单：原因、试听、加回（按时间插入，算一次手动修改） |
 | `reselect.js` | 重新选段前的「覆盖 / 保留我的修改 / 取消」询问（⑤ 改时长、横幅重新选段、④ 重新确认）与「恢复为 AI 选段」 |
-| `step-export.js` | ⑥ 导出（暂住，随 M14c 重做） |
+| `step-export.js` | ⑥ 导出：本次导出（导出到 Mac 剪映 / 生成 Windows 剪映包）、历史版本卡片、打开剪映、剪映正在运行的提示 |
+| `export-compare.js` | ⑥ 对比两版（并排同步播放 + 镜头差异）与「回到这一版」 |
 | `app.js` | 项目选择与状态刷新、步骤切换、分镜表保存队列、启动 |
 | `main.js` | 最后加载，只调用 `boot()` |
 
@@ -213,6 +247,15 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 ```bash
 python3 gui/server.py --port 8765 --open   # 前台启动，看日志
 python3 gui/server.py --port 8800          # 换端口
+```
+
+界面里的 ⑤⑥ 对应的命令（和界面同一套逻辑）：
+
+```bash
+uv run python aicut.py preview <项目>                       # 只生成当前分镜表的预览片（不产生版本）
+uv run python aicut.py build <项目> --require-preview       # 晋升当前预览片为新版本并装进 Mac 剪映（预览片过期就停）
+uv run python aicut.py build <项目> --require-preview --windows --no-draft   # 同一张表补 Windows 包，不新开版本
+uv run python aicut.py select <项目> --manual=replace       # 重新选段，备份后覆盖手动分镜表（默认 keep）
 ```
 
 服务端会把 `aicut.py` 的输出实时打到浏览器弹窗里，出问题就把那段日志发回来。

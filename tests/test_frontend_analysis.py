@@ -121,7 +121,7 @@ def test_landing_on_analysis_step_loads_progress_without_clicking():
      {"text": "正在分析 6/11 · 3 分钟", "cls": ""}),
     ({"status": "running", "task": "prepare", "elapsed_s": 20}, None, None, {"text": "正在分析 · 不到 1 分钟", "cls": ""}),
     ({"status": "running", "task": "select"}, None, None, {"text": "正在重新选段…", "cls": ""}),
-    (None, {"task": "build"}, None, {"text": "正在生成新版本…", "cls": ""}),
+    (None, {"task": "build"}, None, {"text": "正在导出…", "cls": ""}),
     ({"status": "failed", "task": "select"}, None, None, {"text": "失败 · 查看", "cls": "failed"}),
     ({"status": "cancelled", "task": "select"}, None, None, {"text": "已取消 · 查看", "cls": "failed"}),
     ({"status": "done", "task": "build", "warned": True}, None, None, {"text": "完成，有提示 · 查看", "cls": "warn"}),
@@ -167,9 +167,9 @@ def test_busy_guard_disables_job_starters_with_reason():
 def test_busy_guard_uses_global_busy_from_state_for_other_projects():
     out = run_app("""(() => {
       const a = el('a'); lists['[data-starts-job]'] = [a];
-      state.data = {busy: {id: 'z', task: 'build', project: '别的项目', label: '生成新版本'}};
+      state.data = {busy: {id: 'z', task: 'build', project: '别的项目', label: '导出'}};
       applyBusyGuard(); return [a.disabled, a.getAttribute('title')]; })()""")
-    assert out == [True, "正在生成新版本，完成后再试"]
+    assert out == [True, "正在导出，完成后再试"]
 
 
 def test_prepare_done_while_viewing_analysis_goes_to_browse():
