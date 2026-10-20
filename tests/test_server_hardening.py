@@ -174,8 +174,7 @@ def test_handler_has_socket_timeout(gui_server):
 
 
 # ---------------------------------------------------------------- MEDIUM 5：CSP
-@pytest.mark.parametrize("path", ["/", "/static/browse.html", "/static/confirm.html",
-                                  "/static/calibrate.html"])
+@pytest.mark.parametrize("path", ["/", "/static/browse.html", "/static/confirm.html"])
 def test_html_has_csp(gui_server, path):
     _, _, headers = call(gui_server, "GET", path, token=False)
     csp = headers["content-security-policy"]

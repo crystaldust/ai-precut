@@ -94,7 +94,8 @@ from test_frontend_jobs import NODE, STATIC, run_js  # noqa: E402
 def test_sidebar_has_diagnostics_and_about_entries():
     html = (STATIC / "index.html").read_text(encoding="utf-8")
     assert '<script src="/static/support.js"></script>' in html
-    assert 'data-act="exportDiag"' in html and 'data-act="openAbout"' in html  # KI-53：事件委托
+    more = (STATIC / "wizard.js").read_text(encoding="utf-8")  # M13：入口收进「更多」菜单
+    assert "act: 'exportDiag'" in more and "act: 'openAbout'" in more
 
 
 @pytest.mark.skipif(NODE is None, reason="需要 node")

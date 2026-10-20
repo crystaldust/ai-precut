@@ -24,7 +24,7 @@ def test_without_opener_tells_page_to_fall_back(gui_server, opener):
     assert _open(gui_server) == (200, {"opened": False})
 
 
-@pytest.mark.parametrize("page", ["browse", "calibrate", "confirm"])
+@pytest.mark.parametrize("page", ["browse", "confirm"])  # 剪辑偏好已并入项目设置（M13）
 def test_opener_gets_local_url_and_title(gui_server, opener, page):
     desktop, seen = opener
     make_project(gui_server.root, name="九月 一号")

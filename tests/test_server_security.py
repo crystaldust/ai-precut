@@ -104,7 +104,7 @@ def test_pick_post_with_empty_json_ok(gui_server, monkeypatch):
 
 
 @pytest.mark.parametrize("path", ["/", "/static/index.html", "/static/browse.html",
-                                  "/static/confirm.html", "/static/calibrate.html"])
+                                  "/static/confirm.html"])
 def test_pages_need_cookie_and_hold_no_secret(gui_server, path):
     from gui import session
     assert call(gui_server, "GET", path, token=False)[0] == 403  # KI-88：「请从剪辑台 App 打开」
@@ -270,6 +270,7 @@ def test_every_script_referenced_by_pages_is_whitelisted(gui_server):
     for page in pages:
         html = (gui_server.module.STATIC / page).read_text(encoding="utf-8")
         srcs |= set(re.findall(r'<script[^>]*\ssrc="/static/([^"]+)"', html))
+        srcs |= set(re.findall(r'<link[^>]*\shref="/static/([^"]+)"', html))  # M13：样式表外置
     assert srcs and srcs <= static_files.STATIC_FILES
     for name in sorted(srcs | set(pages)):
         assert call(gui_server, "GET", f"/static/{name}")[0] == 200, name

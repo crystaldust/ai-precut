@@ -111,11 +111,11 @@ def test_confirm_answers_missing_project_404(gui_server):
     assert status == 404
 
 
-def test_index_has_confirm_entry():  # KI-53：脚本外置到 index.js；KI-36：子页面经 openSubpage 打开
-    html = (ROOT / "gui/static/index.html").read_text(encoding="utf-8")
-    js = (ROOT / "gui/static/index.js").read_text(encoding="utf-8")
-    assert 'data-act="openConfirm"' in html and "openSubpage('confirm')" in js
-    assert "/static/${page}.html?project=" in js and "COPY_CONFIRM_ENTRY" in js
+def test_index_has_confirm_entry():  # KI-53 脚本外置；KI-36 子页面经 openSubpage 打开；M13b：④ 暂住卡片
+    js = (ROOT / "gui/static/step-criteria.js").read_text(encoding="utf-8")
+    app = (ROOT / "gui/static/app.js").read_text(encoding="utf-8")
+    assert 'data-act="openConfirm"' in js and "openSubpage('confirm')" in js and "COPY_CONFIRM_ENTRY" in js
+    assert "/static/${page}.html?project=" in app
 
 
 def test_confirm_page_polls_job():
@@ -126,9 +126,9 @@ def test_confirm_page_polls_job():
 
 
 
-def test_calibrate_hint_says_one_quote_per_line():  # M6 · KI-03 / D5
-    html = (ROOT / "gui/static/calibrate.html").read_text(encoding="utf-8")
-    assert "每句一行（也可以用逗号分隔）" in html and "用逗号分隔。" not in html
+def test_new_project_hint_says_one_quote_per_line():  # M6 · KI-03 / D5；M13：剪辑偏好并进新建弹窗 / 项目设置
+    js = (ROOT / "gui/static/project-form.js").read_text(encoding="utf-8")
+    assert "每行一句，最多 3 句" in js and "用逗号分隔。" not in js
 
 
 def test_saved_answers_carry_rules_version(tmp_path):  # KI-84

@@ -3,164 +3,41 @@
 <head>
 <meta charset="utf-8">
 <title>剪辑台</title>
-<script src="/static/common.js"></script>
-<script src="/static/jobs.js"></script>
-<script src="/static/settings.js"></script>
-<script src="/static/support.js"></script>
-<style>
-  :root{
-    --bg:#16181d; --panel:#1e2128; --panel2:#252932; --line:#2f3440;
-    --text:#e8eaf0; --muted:#9aa2b1; --accent:#4a9eff; --ok:#3ddc84; --warn:#ffb020; --danger:#ff5c5c;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--text);
-       font:14px/1.6 -apple-system,"PingFang SC","Helvetica Neue",sans-serif;
-       -webkit-font-smoothing:antialiased}
-  button{font:inherit;cursor:pointer;border:none;border-radius:8px;padding:8px 14px;
-         background:var(--panel2);color:var(--text);transition:.15s}
-  button:hover{filter:brightness(1.15)}
-  button.primary{background:var(--accent);color:#06121f;font-weight:600}
-  button.ghost{background:transparent;border:1px solid var(--line)}
-  button.danger{background:transparent;color:var(--danger);border:1px solid #4a2b2b}
-  button:disabled{opacity:.45;cursor:not-allowed}
-  input,textarea,select{font:inherit;background:#12141a;color:var(--text);
-        border:1px solid var(--line);border-radius:6px;padding:6px 8px;outline:none}
-  input:focus,textarea:focus,select:focus{border-color:var(--accent)}
-  #app{display:grid;grid-template-columns:230px 1fr;height:100vh}
-  /* 侧栏 */
-  aside{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:14px}
-  .brand{font-size:15px;font-weight:700;margin:2px 0 14px;letter-spacing:.5px}
-  .brand small{display:block;font-weight:400;color:var(--muted);font-size:11px;letter-spacing:0}
-  #projects{list-style:none;margin:10px 0 0;padding:0;overflow:auto;flex:1}
-  #projects li{padding:9px 10px;border-radius:8px;cursor:pointer;margin-bottom:4px}
-  #projects li:hover{background:var(--panel2)}
-  #projects li.on{background:#22304a;border:1px solid #2f4b74}
-  #projects li b{display:block;font-size:13px}
-  #projects li span{font-size:11px;color:var(--muted)}
-  /* 主区 */
-  main{display:flex;flex-direction:column;overflow:hidden}
-  header{padding:16px 20px 10px;border-bottom:1px solid var(--line)}
-  header h1{margin:0;font-size:19px}
-  header .meta{color:var(--muted);font-size:12px;margin-top:3px}
-  .steps{display:flex;gap:8px;padding:12px 20px;flex-wrap:wrap}
-  .warnbar{margin:10px 20px 0;padding:8px 12px;border:1px solid var(--warn);border-radius:8px;
-           background:rgba(255,176,32,.08);color:var(--text);font-size:13px}
-  .warnbar b{color:var(--warn)}
-  .warnbar ul{margin:4px 0 0;padding-left:18px}
-  .step{font-size:12px;padding:5px 10px;border-radius:20px;background:var(--panel2);
-        color:var(--muted);border:1px solid transparent}
-  .step.done{color:var(--ok);border-color:#1f4a34;background:#16281f}
-  .actions{display:flex;gap:10px;padding:0 20px 12px;flex-wrap:wrap;align-items:center}
-  .tabs{display:flex;gap:4px;padding:0 20px;border-bottom:1px solid var(--line)}
-  .tab{padding:9px 14px;border-radius:8px 8px 0 0;color:var(--muted);cursor:pointer;font-size:13px}
-  .tab.on{background:var(--panel);color:var(--text);border:1px solid var(--line);border-bottom-color:var(--panel)}
-  .body{flex:1;overflow:auto;padding:16px 20px 170px}
-  .empty{color:var(--muted);text-align:center;padding:60px 20px;line-height:2}
-  /* 预览 */
-  .player{display:grid;grid-template-columns:minmax(320px,420px) 1fr;gap:18px;align-items:start}
-  video{width:100%;background:#000;border-radius:10px;max-height:64vh}
-  .timebar{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--muted);font-size:13px}
-  .timebar b{color:var(--accent);font-variant-numeric:tabular-nums;font-size:15px}
-  /* 表 */
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th{color:var(--muted);text-align:left;font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line);font-size:12px}
-  td{padding:6px 8px;border-bottom:1px solid #23262e;vertical-align:top}
-  tr.sel td{background:#1b2740}
-  tr:hover td{background:#1a1d24}
-  .tc{font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
-  .row-btns{display:flex;gap:4px;opacity:.5}
-  tr:hover .row-btns,tr.sel .row-btns{opacity:1}
-  .row-btns button{padding:2px 7px;font-size:12px;border-radius:5px}
-  .sub-edit{width:100%;min-height:38px;resize:vertical}
-  /* 文稿 */
-  .seg{display:grid;grid-template-columns:86px 1fr auto;gap:10px;padding:9px 6px;
-       border-bottom:1px solid #23262e;align-items:start}
-  .seg:hover{background:#1a1d24}
-  .seg .t{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;padding-top:2px}
-  .seg .x{line-height:1.75;cursor:pointer}
-  .seg .x:hover{color:#fff}
-  /* 版本 */
-  .ver{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
-  .ver h3{margin:0 0 4px;font-size:15px}
-  .ver .m{color:var(--muted);font-size:12px;margin-bottom:10px}
-  .ver video{max-height:52vh;max-width:340px}
-  /* 弹窗 */
-  .mask{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:20}
-  .mask.on{display:flex}
-  .modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;width:min(760px,92vw);max-height:86vh;display:flex;flex-direction:column}
-  .modal h2{margin:0;padding:16px 20px 8px;font-size:16px}
-  .modal .c{padding:0 20px 16px;overflow:auto}
-  .log{background:#0e1014;border:1px solid var(--line);border-radius:8px;padding:12px;
-       height:320px;overflow:auto;font:12px/1.7 ui-monospace,Menlo,monospace;color:#b9c2d0;white-space:pre-wrap}
-  .field{margin-bottom:12px}
-  .field label{display:block;color:var(--muted);font-size:12px;margin-bottom:4px}
-  .field input,.field select{width:100%}
-  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);
-         background:#2a3344;padding:9px 16px;border-radius:20px;
-         font-size:13px;opacity:0;transition:.3s;pointer-events:none;z-index:30;border:1px solid var(--line)}
-  .toast.on{opacity:1;bottom:32px}
-  .hint{color:var(--muted);font-size:12px}
-  #shotbar{border-top:1px solid var(--line);background:var(--panel);padding:10px 20px;
-           display:flex;gap:16px;align-items:center;flex-shrink:0}
-  #shotbar video{width:150px;max-height:90px;border-radius:8px;background:#000}
-  .sticky{display:none;
-          background:var(--panel);border:1px solid var(--line);border-radius:12px;
-          display:flex;gap:16px;align-items:center}
-  .sticky video{width:200px;max-height:120px;border-radius:8px}
-  .sub-edit{min-height:30px;font-size:12.5px}
-  td{padding:4px 8px}
-  .job-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-  .key-row{display:flex;gap:8px}
-  .key-row input{flex:1}
-  .key-status{margin-bottom:4px}
-  .consent-flows{line-height:2;padding-left:18px}
-  .ver-export{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  #btnSettings{margin-top:10px}
-  .side-support{margin-top:6px;font-size:12px}
-  pre.notices{white-space:pre-wrap;font-size:12px;line-height:1.5;max-height:60vh;overflow:auto}
-</style>
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <div id="app">
-  <aside>
-    <div class="brand">剪辑台<small>素材 → 粗剪 → 剪映</small></div>
-    <button class="primary" data-act="openNew">＋ 新建项目</button>
-    <ul id="projects"></ul>
-    <button class="ghost" id="btnSettings" data-act="openSettings"></button>
-    <button class="ghost side-support" data-act="exportDiag">导出诊断包</button>
-    <button class="ghost side-support" data-act="openAbout">关于 / 第三方许可</button>
-  </aside>
+  <nav id="rail" class="rail" aria-label="项目栏">
+    <div class="rail-mini">
+      <button class="ghost rail-burger" data-act="toggleRail" title="项目栏" aria-label="展开项目栏">☰</button>
+      <span class="rail-initial" id="railInitial"></span>
+    </div>
+    <div class="rail-full">
+      <div class="rail-head">
+        <span class="brand">剪辑台</span>
+        <button class="ghost pin" id="btnPin" data-act="togglePin" aria-pressed="false">固定</button>
+      </div>
+      <button class="primary" data-act="openNew">＋ 新建项目</button>
+      <ul id="projects"></ul>
+    </div>
+  </nav>
 
   <main>
-    <header>
-      <h1 id="title">还没有选择项目</h1>
-      <div class="meta" id="meta">先在左边新建一个项目，或者选一个已有项目</div>
+    <header id="topbar">
+      <div class="title"><h1 id="title">还没有选择项目</h1><div class="meta" id="meta"></div></div>
+      <nav class="steps" id="steps" aria-label="步骤"></nav>
+      <button class="chip" id="chip" data-act="openJobDetail" hidden></button>
+      <div class="more-wrap">
+        <button class="ghost" id="btnMore" data-act="toggleMore">更多 ▾</button>
+        <div class="menu" id="moreMenu"></div>
+      </div>
     </header>
-    <div class="warnbar" id="stalebar" role="status" style="display:none"></div>
-    <div class="warnbar" id="warnbar" role="status" style="display:none"></div>
-    <div class="steps" id="steps"></div>
-    <div class="actions" id="actions" style="display:none">
-      <button class="primary" id="btnPrepare" data-act="startJob" data-task="prepare">① 处理素材</button>
-      <button class="primary" id="btnBuild" data-act="openBuild">② 生成成片</button>
-      <button class="ghost" id="btnConfirm" data-act="openConfirm">确认与提问</button>
-      <button class="ghost" data-act="openBrowse">浏览素材</button>
-      <button class="ghost" data-act="openTarget">改目标时长</button>
-      <button class="ghost" data-act="openCalibrate">剪辑偏好</button>
-      <button class="ghost" data-act="openFolder">打开文件夹</button>
-      <button class="ghost" data-act="openJianying">打开剪映</button>
-      <button class="ghost" id="btnCache" data-act="openCache">清理缓存</button>
-    </div>
-    <div class="tabs" id="tabs" style="display:none">
-      <div class="tab on" data-tab="preview">预览</div>
-      <div class="tab" data-tab="script">文稿</div>
-      <div class="tab" data-tab="shots">分镜表 <span id="shotCount"></span></div>
-      <div class="tab" data-tab="junk">废片</div>
-      <div class="tab" data-tab="versions">版本</div>
-    </div>
-    <div id="shotbar" style="display:none"></div>
-    <div class="body" id="body">
-      <div class="empty">选择或新建一个项目开始</div>
-    </div>
+    <div class="warnbar" id="stalebar" role="status" hidden></div>
+    <div class="warnbar" id="warnbar" role="status" hidden></div>
+    <div id="banner" role="status"></div>
+    <div class="stage" id="stage"></div>
+    <div id="shotbar" hidden></div>
+    <footer class="nav" id="nav"></footer>
   </main>
 </div>
 
@@ -174,7 +51,20 @@
 </div>
 <div class="toast" id="toast"></div>
 
-<script src="/static/index.js"></script>
-
+<script src="/static/common.js"></script>
+<script src="/static/base.js"></script>
+<script src="/static/jobs.js"></script>
+<script src="/static/settings.js"></script>
+<script src="/static/support.js"></script>
+<script src="/static/sidebar.js"></script>
+<script src="/static/wizard.js"></script>
+<script src="/static/project-form.js"></script>
+<script src="/static/step-analyze.js"></script>
+<script src="/static/step-browse.js"></script>
+<script src="/static/step-criteria.js"></script>
+<script src="/static/step-result.js"></script>
+<script src="/static/step-export.js"></script>
+<script src="/static/app.js"></script>
+<script src="/static/main.js"></script>
 </body>
 </html>

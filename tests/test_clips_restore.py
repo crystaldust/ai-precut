@@ -87,7 +87,7 @@ def test_export_without_snapshot_dies_with_clear_reason(project, monkeypatch, tm
 
 
 def test_clean_dialog_says_old_versions_recut_on_demand():
-    js = (Path(__file__).resolve().parent.parent / "gui/static/index.js").read_text(encoding="utf-8")
+    js = (Path(__file__).resolve().parent.parent / "gui/static/support.js").read_text(encoding="utf-8")
     from pipeline import cache
     assert "旧版本" in cache.CLIPS_LABEL or "旧版本" in js
     assert "重新切" in js

@@ -5,17 +5,22 @@ from pathlib import Path
 import pytest
 
 STATIC = Path(__file__).resolve().parent.parent / "gui" / "static"
-PAGES = ["index.html", "browse.html", "confirm.html", "calibrate.html"]
+PAGES = ["index.html", "browse.html", "confirm.html"]
 XSS_PAGES = ["index.html", "browse.html", "confirm.html"]
 COMMON_JS = '<script src="/static/common.js"></script>'
 
 
+def _scripts(page):
+    """页面按顺序加载的 /static/*.js 文件名。"""
+    return re.findall(r'<script[^>]*\ssrc="/static/([^"]+\.js)"', (STATIC / page).read_text(encoding="utf-8"))
+
+
 def _read(name):
-    """页面源码 + 它外置出去的脚本（KI-53：内联脚本搬进同名 .js，守卫照样看得到）。"""
+    """页面源码 + 它加载的全部脚本（KI-53 脚本外置；M13 主页拆成多个文件，守卫照样看得到）。"""
     text = (STATIC / name).read_text(encoding="utf-8")
-    js = STATIC / name.replace(".html", ".js")
-    if name.endswith(".html") and js.exists():
-        text += "\n" + js.read_text(encoding="utf-8")
+    if name.endswith(".html"):
+        for js in _scripts(name):
+            text += "\n" + (STATIC / js).read_text(encoding="utf-8")
     return text
 
 
@@ -25,13 +30,19 @@ def _html(name):
 
 ALL_SOURCES = sorted(p.name for p in STATIC.glob("*.html") if p.name != "prototype.html") + \
     sorted(p.name for p in STATIC.glob("*.js"))
+JS_FILES = sorted(p.name for p in STATIC.glob("*.js"))
+MAX_JS_LINES = 400          # M13：每个前端脚本聚焦一件事
+INDEX_ENTRY = "main.js"     # 主页最后加载的启动脚本（所有 ACTIONS 注册都在它之前）
+INDEX_SCRIPT_ORDER = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js",
+                      "wizard.js", "project-form.js", "step-analyze.js", "step-browse.js",
+                      "step-criteria.js", "step-result.js", "step-export.js", "app.js", INDEX_ENTRY]
 
 
 # ---------------------------------------------------------------- GL-05 / KI-88
 @pytest.mark.parametrize("page", PAGES)
 def test_pages_load_common_js_first_and_hold_no_token(page):
     src = _html(page)
-    own = f'<script src="/static/{page.replace(".html", ".js")}"></script>'
+    own = f'<script src="/static/{INDEX_ENTRY if page == "index.html" else page.replace(".html", ".js")}"></script>'
     assert COMMON_JS in src and own in src
     assert src.index(COMMON_JS) < src.index(own)
     assert "aicut-token" not in src and "__AICUT_TOKEN__" not in src  # 凭证只在 HttpOnly cookie 里
@@ -108,7 +119,7 @@ def test_renumber_not_position_based():
 def test_new_project_asks_target():
     src = _read("index.html")
     assert "durationFields('np'" in src
-    create = src[src.index("async function createProject"):]
+    create = src[src.index("async function createAndAnalyze"):]
     assert "target" in create[:create.index("\n}")]
 
 
@@ -130,7 +141,7 @@ def test_target_modal_uses_num_for_numbers():
 def _job_poll_src():
     """任务轮询与收尾在 jobs.js（M4 从 index.html 搬出）。"""
     src = _read("jobs.js")
-    return src[src.index("function pollJob"):src.index("/* ---------------- 版本卡片")]
+    return src[src.index("function pollJob"):src.index("/* ---------------- 任务胶囊")]
 
 
 def test_over_target_modal_opened_after_job():
@@ -142,8 +153,10 @@ def test_over_target_modal_opened_after_job():
 def test_index_has_persistent_warning_bar():
     src = _read("index.html")
     assert 'id="warnbar"' in src
-    body = src[src.index("async function refresh"):src.index("/* ---------------- Tab")]
-    assert "warnbar" in body and "esc(" in body
+    refresh = src[src.index("async function refresh("):]
+    assert re.search(r"renderWarnbar\(\w+\.warnings\)", refresh[:refresh.index("\n}\n")])
+    bar = src[src.index("function renderWarnbar"):]
+    assert "#warnbar" in bar[:bar.index("\n}\n")] and "esc(" in bar[:bar.index("\n}\n")]
 
 
 def test_job_modal_stays_open_when_job_warned():
@@ -234,7 +247,7 @@ def test_index_shows_stale_job_bar():
 
 def test_create_project_has_no_hash_navigation():
     src = _read("index.html")
-    body = src[src.index("async function createProject"):]
+    body = src[src.index("async function createAndAnalyze"):]
     body = body[:body.index("\n}\n")]
     assert "location.hash" not in body and "await selectProject(name)" in body
 
@@ -253,7 +266,7 @@ def test_confirm_page_offers_regenerate_for_stale_questions():  # KI-86
     assert "stale_questions" in src and "task: 'questions'" in src
 
 
-@pytest.mark.parametrize("name", ["index.js", "browse.js"])
+@pytest.mark.parametrize("name", [n for n in JS_FILES if n != "common.js"])  # common.js 里就是那个安全包装 playQuietly
 def test_video_play_rejections_are_handled(name):  # 审查修复 L10
     assert re.findall(r"\.play\(\)(?!\.catch)", _html(name)) == []
 
@@ -264,7 +277,7 @@ def test_new_project_duration_is_free_input_above_preset():
     assert "durationFields('np'" in body and 'id="npTarget"' not in body
     assert body.index("durationFields('np'") < body.index('id="npPreset"')  # 时长在预设上面
     assert "esc(p.duration)" not in body                                     # 下拉里不再写死时长
-    create = src[src.index("async function createProject"):]
+    create = src[src.index("async function createAndAnalyze"):]
     assert "readDuration('np')" in create[:create.index("\n}")]
 
 
@@ -274,3 +287,48 @@ def test_retarget_modal_uses_minutes_and_seconds():
     assert "durationFields('tgt'" in body and 'id="tgtInput"' not in body
     save = src[src.index("function saveTarget"):]
     assert "readDuration('tgt')" in save[:save.index("\n}")]
+
+
+# ---------------------------------------------------------------- M13 Task 11：拆分后的守卫
+@pytest.mark.parametrize("name", JS_FILES)
+def test_static_js_files_are_focused(name):
+    lines = len((STATIC / name).read_text(encoding="utf-8").splitlines())
+    assert lines <= MAX_JS_LINES, f"{name} {lines} 行，超过 {MAX_JS_LINES}"
+
+
+def test_static_whitelist_is_exactly_the_files_on_disk():
+    from gui.static_files import STATIC_FILES
+    on_disk = {p.name for p in STATIC.iterdir()
+               if p.suffix in {".html", ".js", ".css"} and p.name != "prototype.html"}
+    assert set(STATIC_FILES) == on_disk
+
+
+def test_index_has_no_style_block_and_links_app_css():
+    html = _html("index.html")
+    assert "<style" not in html and 'href="/static/app.css"' in html
+    assert "calibrate" not in html
+
+
+def test_index_loads_scripts_in_order_with_entry_last():
+    assert _scripts("index.html") == INDEX_SCRIPT_ORDER
+    assert not (STATIC / "index.js").exists() and not (STATIC / "calibrate.html").exists()
+
+
+def test_every_index_script_is_loaded_by_some_page():
+    loaded = set(_scripts("index.html")) | set(_scripts("browse.html")) | set(_scripts("confirm.html"))
+    assert set(JS_FILES) == loaded
+
+
+def test_no_script_uses_local_storage():
+    """M12 的承诺：要持久的偏好都走 /api/prefs，前端不碰 localStorage / sessionStorage。"""
+    for name in JS_FILES:
+        src = (STATIC / name).read_text(encoding="utf-8")
+        assert "localStorage" not in src and "sessionStorage" not in src, name
+
+
+def test_app_css_served_and_removed_pages_gone(gui_server):
+    from conftest import call
+    status, _, headers = call(gui_server, "GET", "/static/app.css", token=False)
+    assert status == 200 and headers["content-type"].startswith("text/css")
+    assert call(gui_server, "GET", "/static/calibrate.html", token=False)[0] == 404
+    assert call(gui_server, "GET", "/static/index.js", token=False)[0] == 404

@@ -34,7 +34,11 @@
     const target = start && typeof start.closest === 'function' ? start.closest(`[${attr}]`) : null;
     if (!target) return;
     const fn = window.ACTIONS[target.getAttribute(attr)];
-    if (typeof fn === 'function') fn(target, ev);
+    if (typeof fn !== 'function') return;
+    const result = fn(target, ev);
+    // 异步动作失败不能悄悄吞掉：没自己处理的错误统一用 toast 说出来（toast 在 base.js，调用时才取）
+    if (result && typeof result.catch === 'function')
+      result.catch(e => { if (typeof window.toast === 'function') window.toast((e && e.message) || String(e), 6000); });
   }
   window.dispatchAction = dispatchAction;
   document.addEventListener('click', ev => dispatchAction('data-act', ev));

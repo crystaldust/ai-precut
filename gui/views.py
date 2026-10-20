@@ -55,19 +55,10 @@ def project_state(pdir: Path, name: str) -> dict:
     schema.ensure_supported(cfg)  # 新版程序建的项目不能让旧界面去改
     work = pdir / "work"
     material = cfg.get("material") or None  # KI-62：素材换过的音轨 / 代理不算完成
-    stages = [
-        {"key": "ingest", "label": "素材台账", "done": (work / "materials.json").exists()},
-        {"key": "audio", "label": "抽音轨", "done": media_io.complete_or_adopt(work / "audio/asr.wav", source=material)},
-        {"key": "transcribe", "label": "语音转写", "done": (work / "transcript.md").exists()},
-        {"key": "junk", "label": "废片检测", "done": (work / "junk_report.csv").exists()},
-        {"key": "brief", "label": "策划分派单", "done": (work / "brief.md").exists()},
-        {"key": "shots", "label": "分镜表", "done": (pdir / "shots.json").exists()},
-    ]
     manual = jload(pdir / "shots.json", {}).get("shots", [])
     selected = jload(work / "shots-selected.json", {}).get("shots", [])
     return {
         "project": cfg,
-        "stages": stages,
         "versions": _versions(pdir, cfg, name),
         "segments": jload(work / "segments.json", {}).get("segments", []),
         # 没有手存分镜表时用选段结果预填；有就不覆盖（M2）
@@ -75,7 +66,6 @@ def project_state(pdir: Path, name: str) -> dict:
         "shots_from_selection": not manual and bool(selected),
         "selection": select.summary(jload(work / "selection.json")),
         "warnings": notices.project_warnings(work),
-        "junk": jload(work / "junk_report.json", {}).get("items", []),
         "material_duration": (jload(work / "materials.json", {}).get("items") or [{}])[0].get("duration", 0),
         "has_proxy": media_io.complete_or_adopt(work / "proxy.mp4", source=material),
         "has_transcript": (work / "transcript.md").exists(),

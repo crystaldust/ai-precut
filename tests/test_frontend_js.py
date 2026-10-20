@@ -90,9 +90,9 @@ def test_fetch_non_api_untouched(url):
 
 # ---------------------------------------------------------------- renumber / nextShotId
 def _shot_id_src() -> str:
-    src = (STATIC / "index.js").read_text(encoding="utf-8")  # KI-53：脚本外置
+    src = (STATIC / "step-result.js").read_text(encoding="utf-8")  # M13：分镜表视图迁到 step-result.js
     m = re.search(r"const SHOT_ID_RE[\s\S]*?\nfunction renumber\(\)\{[\s\S]*?\n\}\n", src)
-    assert m, "index.js 里找不到 SHOT_ID_RE / nextShotId / renumber"
+    assert m, "step-result.js 里找不到 SHOT_ID_RE / nextShotId / renumber"
     return "var state = {shots: []};\n" + m.group(0).replace("const SHOT_ID_RE", "var SHOT_ID_RE")
 
 
@@ -139,8 +139,13 @@ ctx.$ = s => el(s);
 ctx.document = {querySelectorAll: () => []};
 ctx.toast = (m) => ctx.toasts.push(m);
 ctx.renderWarnbar = (l) => ctx.warnbars.push(l);
-ctx.renderTab = () => {}; ctx.attachRunningJob = () => {}; ctx.renumber = () => {};
+ctx.renderChrome = () => {}; ctx.renderView = () => {}; ctx.setRail = () => {}; ctx.renderProjects = () => {};
+ctx.stopAnalysisPoll = () => {}; ctx.resetAnalysis = () => {}; ctx.resetShotBar = () => {};
+ctx.setStage = h => { el('#stage').innerHTML = h; };
+ctx.attachRunningJob = () => {}; ctx.renumber = () => {};
 ctx.fmtLong = String; ctx.num = Number; ctx.esc = String; ctx.TOAST_ERROR_MS = 6000;
+ctx.ENTER_HOOKS = {};
+ctx.COPY_PROJECT_OPEN_FAILED = '这个项目打不开';
 ctx.api = async (path, opt) => {
   if (path.startsWith('/api/state')) { if (ctx.stateErr) throw new Error(ctx.stateErr); return ctx.stateResp; }
   ctx.posts.push(path); return {};
@@ -154,12 +159,12 @@ Promise.resolve(vm.runInContext(script, ctx)).then(out =>
 
 
 def _project_switch_src() -> str:
-    src = (STATIC / "index.js").read_text(encoding="utf-8")  # KI-53：脚本外置
-    parts = ["var state = { project:null, data:null, tab:'preview', sel:null, shots:[], dirty:false };",
+    src = (STATIC / "app.js").read_text(encoding="utf-8")  # M13：状态刷新 / 保存队列在 app.js
+    parts = ["var state = { project:null, data:null, view:null, sel:null, shots:[], dirty:false };",
              "var saveTimer = null; var stateSeq = 0; var usageText = () => '';",
              "var COPY_SAVE_FAILED = '保存失败：';",
              "var saveQ = {chain: Promise.resolve(true), queued: null};"]
-    for name in ("selectProject", "flushPendingSave", "refreshOrWarn", "showProjectError", "refresh",
+    for name in ("selectProject", "flushPendingSave", "refreshOrWarn", "showProjectError", "resolveView", "refresh",
                  "saveShots", "postShots", "scheduleSave"):
         m = re.search(r"(async )?function " + name + r"\([^)]*\)\{[\s\S]*?\n\}\n", src)
         assert m, name
@@ -174,7 +179,7 @@ def run_async(script, extra_src=""):
     return json.loads(r.stdout)
 
 
-GOOD_STATE = "{project:{name:'A', title:'A'}, stages:[], shots:[{id:'sh01'}], warnings:[]}"
+GOOD_STATE = "{project:{name:'A', title:'A'}, wizard:{steps:[], next:'analyze'}, shots:[{id:'sh01'}], warnings:[]}"
 
 
 def test_switch_to_corrupt_project_clears_previous_project():
@@ -183,10 +188,11 @@ def test_switch_to_corrupt_project_clears_previous_project():
       await selectProject('A');
       stateErr = 'project.json 损坏'; 
       await selectProject('B');
-      return [state.project, state.data, state.shots.length, els['#actions'].style.display,
-              els['#tabs'].style.display, els['#title'].textContent, toasts, warnbars.at(-1)];
+      return [state.project, state.data, state.shots.length,
+              els['#steps'].innerHTML, els['#title'].textContent, toasts, warnbars.at(-1),
+              els['#stage'].innerHTML.includes('project.json 损坏')];
     }})()""")
-    assert out == [None, None, 0, "none", "none", "B", ["project.json 损坏"], ["project.json 损坏"]]
+    assert out == [None, None, 0, "", "B", ["project.json 损坏"], ["project.json 损坏"], True]
 
 
 def test_pending_shot_save_goes_to_original_project_and_no_save_after_failure():
@@ -233,15 +239,15 @@ def test_stale_state_response_is_dropped():
     out = run_async("""(async () => {
       let releaseA;
       api = (path) => path.includes('project=A')
-        ? new Promise(r => { releaseA = () => r({project:{name:'A', title:'A'}, stages:[], shots:[], warnings:[]}); })
-        : Promise.resolve({project:{name:'B', title:'B'}, stages:[], shots:[], warnings:[]});
+        ? new Promise(r => { releaseA = () => r({project:{name:'A', title:'A'}, wizard:{steps:[], next:'analyze'}, shots:[], warnings:[]}); })
+        : Promise.resolve({project:{name:'B', title:'B'}, wizard:{steps:[], next:'analyze'}, shots:[], warnings:[]});
       const a = selectProject('A');
       const b = selectProject('B');
       await b;
       releaseA(); const aResult = await a;
-      return [state.project, state.data.project.name, els['#title'].textContent, aResult === undefined];
+      return [state.project, state.data.project.name, aResult === undefined];
     })()""")
-    assert out == ["B", "B", "B", True]
+    assert out == ["B", "B", True]
 
 
 def test_stale_state_error_is_not_reported():
@@ -249,7 +255,7 @@ def test_stale_state_error_is_not_reported():
       let failA;
       api = (path) => path.includes('project=A')
         ? new Promise((_, rej) => { failA = () => rej(new Error('A 损坏')); })
-        : Promise.resolve({project:{name:'B', title:'B'}, stages:[], shots:[], warnings:[]});
+        : Promise.resolve({project:{name:'B', title:'B'}, wizard:{steps:[], next:'analyze'}, shots:[], warnings:[]});
       const a = selectProject('A');
       await selectProject('B');
       failA(); await a;
@@ -264,6 +270,7 @@ def _build_src():
     assert m, "jobs.js 里找不到 startJob"
     stubs = ("var jobUi = {last: null, id: null, polling: null}; var COPY_JOB_SAVE_FIRST = 'save first';"
              "var jobModal = () => {}; var setJobActions = () => {}; var pollJob = () => {};"
+             "var MODAL_TASKS = new Set(['build', 'export']); var renderChip = () => {}; var applyBusyGuard = () => {};"
              "var onJobStartError = () => {};")
     return stubs + "\n" + m.group(0)
 
@@ -329,7 +336,7 @@ process.stdout.write(JSON.stringify(vm.runInContext(script, ctx)));
 
 
 def _duration_src() -> str:
-    src = (STATIC / "index.js").read_text(encoding="utf-8")
+    src = (STATIC / "project-form.js").read_text(encoding="utf-8")  # M13：KI-92 的时长输入迁到 project-form.js
     parts = [m.group(0) for m in re.finditer(r"const (TARGET_MIN_SEC|TARGET_MAX_SEC)\b.*\n", src)]
     for name in ("durationFields", "readDuration", "syncTarget", "markTargetTouched"):
         m = re.search(r"function " + name + r"\([^)]*\)\{[\s\S]*?\n\}\n", src)

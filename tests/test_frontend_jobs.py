@@ -55,7 +55,7 @@ var logLine = t => calls.push(['log', t]);
 var toast = t => calls.push(['toast', t]);
 var refresh = () => Promise.resolve();
 var openTarget = () => calls.push(['openTarget']);
-var renderTab = () => calls.push(['renderTab']);
+var renderView = () => calls.push(['renderView']);
 var flushPendingSave = () => Promise.resolve(true);
 """
 
@@ -75,16 +75,16 @@ def api_rejects(status, data):
 
 # ---------------------------------------------------------------- GL-22：字幕框可输入
 def _index_fn(name):
-    src = (STATIC / "index.js").read_text(encoding="utf-8")  # KI-53：内联脚本外置到 index.js
+    src = (STATIC / "step-result.js").read_text(encoding="utf-8")  # M13：分镜表视图在 step-result.js
     m = re.search(r"^function %s\(.*?\n(?=function |let |const |/\*)" % name, src, re.S | re.M)
-    assert m, f"index.js 里找不到 {name}"
+    assert m, f"step-result.js 里找不到 {name}"
     return m.group(0)
 
 
 def test_pick_only_toggles_highlight_not_rerender():
     rows = "__rows = [0,1,2].map(i => ({cls: new Set(), classList: {toggle(c, on){ on ? this._o.add(c) : this._o.delete(c); }}}));" \
            "__rows.forEach(r => r.classList._o = r.cls);"
-    out = run_js(rows + "pick(1); [calls.filter(c => c[0]==='renderTab').length,"
+    out = run_js(rows + "pick(1); [calls.filter(c => c[0]==='renderView').length,"
                  " __rows.map(r => r.cls.has('sel')), state.sel];",
                  extra="function seekNoSwitch(){}\n" + _index_fn("pick"))
     assert out == [0, [False, True, False], 1]
@@ -140,7 +140,7 @@ def test_bad_request_offers_retry_and_close():
 
 def test_version_export_html_uses_index_not_name():
     html = run_js("versionExportHtml({name: \"v1');alert(1)//\", windows_zip: '<b>x.zip', windows_mb: 3}, 0)",
-                  files=["jobs.js"])
+                  files=["jobs.js", "step-export.js"])
     assert 'data-act="exportVersion" data-i="0"' in html and 'data-act="revealExport" data-i="0"' in html
     assert "alert" not in html and "<b>" not in html and "&lt;b&gt;x.zip" in html
 
@@ -148,7 +148,7 @@ def test_version_export_html_uses_index_not_name():
 def test_export_version_posts_export_task():
     out = run_js("window.__api = () => new Promise(() => {}); exportVersion(0);"
                  "calls.filter(c => c[0]==='api').map(c => JSON.parse(c[2]));",
-                 files=["jobs.js"])
+                 files=["jobs.js", "step-export.js"])
     assert out == [{"project": "p1", "task": "export", "version": "v1"}]
 
 
@@ -176,21 +176,6 @@ def test_consent_html_names_both_data_flows():
         assert text in html
 
 
-def test_first_run_without_consent_opens_consent():
-    out = run_js("window.__api = () => Promise.resolve({consent: false, providers: []});"
-                 "checkFirstRun().then(() => calls.filter(c => c[0]==='showModal').map(c => c[1]));",
-                 files=["settings.js"])
-    assert out == ["使用前请知悉：哪些数据会发到云端"]
-
-
-def test_first_run_with_consent_but_missing_key_only_toasts():
-    out = run_js("window.__api = () => Promise.resolve({consent: true,"
-                 " providers: [{key:'deepseek', configured:false}]});"
-                 "checkFirstRun().then(() => calls.map(c => c[0]));",
-                 files=["settings.js"])
-    assert "showModal" not in out and "toast" in out
-
-
 def test_save_key_clears_input_and_never_toasts_plaintext():
     out = run_js("el('key_deepseek').value = ' sk-secret-value ';"
                  "window.__api = (p) => Promise.resolve({consent: true, providers: [{key:'deepseek', configured:true}]});"
@@ -202,12 +187,12 @@ def test_save_key_clears_input_and_never_toasts_plaintext():
 
 def test_static_scripts_load_before_page_script_and_settings_entry_exists():
     src = (STATIC / "index.html").read_text(encoding="utf-8")
-    page = src.index('<script src="/static/index.js"></script>')
-    for name in ("common.js", "jobs.js", "settings.js", "support.js"):
+    page = src.index('<script src="/static/main.js"></script>')
+    for name in ("common.js", "base.js", "jobs.js", "settings.js", "support.js", "app.js"):
         tag = f'<script src="/static/{name}"></script>'
         assert tag in src and src.index(tag) < page
-    assert 'id="btnSettings"' in src
-    assert "checkFirstRun()" in (STATIC / "index.js").read_text(encoding="utf-8")
+    assert "act: 'openSettings'" in (STATIC / "wizard.js").read_text(encoding="utf-8")  # 入口在「更多」菜单
+    assert "checkFirstRun()" in (STATIC / "app.js").read_text(encoding="utf-8")
 
 
 def test_legacy_key_is_read_only_in_settings():
@@ -263,15 +248,20 @@ def test_keys_409_passes_missing_list_to_settings():
 
 
 def test_modal_closes_on_escape_and_backdrop_unless_job_running():
-    src = (STATIC / "index.js").read_text(encoding="utf-8")
+    src = (STATIC / "base.js").read_text(encoding="utf-8")  # M13：弹窗基础设施在 base.js
     assert "'Escape'" in src and "e.target === mask" in src
     assert "modalDismissable()" in src
 
 
 def test_modal_dismissable_only_when_no_job_polling():
-    out = run_js("[(jobUi.polling = 'x', modalDismissable()), (jobUi.polling = null, modalDismissable())]",
+    out = run_js("state.modalKind = 'job'; [(jobUi.polling = 'x', modalDismissable()), (jobUi.polling = null, modalDismissable())]",
                  files=["jobs.js"])
     assert out == [False, True]
+
+
+def test_other_modals_stay_dismissable_while_a_background_job_polls():  # M13：胶囊模式下任务常驻后台
+    out = run_js("state.modalKind = null; jobUi.polling = 'x'; modalDismissable()", files=["jobs.js"])
+    assert out is True
 
 
 # ---------------------------------------------------------------- MEDIUM-4：查看别人的任务后不能「重试」它

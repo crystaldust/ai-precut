@@ -242,7 +242,7 @@ def test_state_has_wizard_and_busy(gui_server):
     data = json.loads(raw)
     assert status == 200 and data["busy"] is None
     assert data["wizard"]["next"] == "analyze" and len(data["wizard"]["steps"]) == 6
-    assert "stages" in data and "junk" in data  # 旧界面还在用（M13b 才删）
+    assert "stages" not in data and "junk" not in data  # D18：M13b 起旧阶段条、废片 tab 的数据不再下发
 
 
 def test_state_busy_reports_running_job(gui_server, monkeypatch):

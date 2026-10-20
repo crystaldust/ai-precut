@@ -7,6 +7,15 @@ def _state(gs, name="p1"):
     return gs.module.project_state(name)
 
 
+def _audio_done(gs, name="p1"):
+    """M13：阶段条没了，「抽音轨」是否完成看 ② 分析页的进度项。"""
+    from conftest import call
+    import json
+    status, body, _ = call(gs, "GET", f"/api/analysis?project={name}")
+    assert status == 200
+    return {s["key"]: s["status"] for s in json.loads(body)["steps"]}["audio"] == "done"
+
+
 def test_half_written_media_not_reported_done(gui_server, monkeypatch):
     monkeypatch.setattr(media_io, "_probe_duration", lambda *a: 0.0)
     make_project(gui_server.root, "p1", **{"work/proxy.mp4": b"half", "work/audio/asr.wav": b"half",
@@ -14,7 +23,8 @@ def test_half_written_media_not_reported_done(gui_server, monkeypatch):
                                            "output/v1/timeline.json": "{}"})
     st = _state(gui_server)
     assert st["has_proxy"] is False
-    assert {s["key"]: s["done"] for s in st["stages"]}["audio"] is False
+    assert _audio_done(gui_server) is False
+    assert "stages" not in st and "junk" not in st  # D18：旧阶段条、废片 tab 的数据不再下发
     assert st["versions"][0]["preview"] is False
 
 
@@ -25,7 +35,7 @@ def test_marked_media_reported_done(gui_server, monkeypatch):
             tmp.write_bytes(b"full")
     st = _state(gui_server)
     assert st["has_proxy"] is True
-    assert {s["key"]: s["done"] for s in st["stages"]}["audio"] is True
+    assert _audio_done(gui_server) is True
     assert st["versions"][0]["preview"] is True
 
 
