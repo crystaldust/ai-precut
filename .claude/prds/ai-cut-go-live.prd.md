@@ -70,7 +70,7 @@
 | 11 | 文档一致 | 指标可检验、PLAN 与 PRD 对齐、术语统一 | KI-40..KI-44 | complete | [plan](../PRPs/plans/m11-docs-consistency.plan.md) · [report](../PRPs/reports/m11-docs-consistency-report.md) · `83d2a1a` |
 | 12 | 收尾 | 相对 staging 路径可用；同机其他用户拿不到 token；旧版本切片不被新版本改动 | KI-80 KI-88 KI-89 | complete | [plan](../PRPs/plans/m12-wrapup.plan.md) · [report](../PRPs/reports/m12-wrapup-report.md) |
 | 13 | 向导：从新建到定标准 | 剪辑师按步骤条走：首次打开告知 + 填 Key → 新建（含剪辑偏好）即开始分析 → 看人话进度 → 看素材时用 S 快速挑进剪辑列表、标不可用 → 定标准（确认分析、裁决待定、答题）后生成分镜表；没走到的步骤点不了，往回改下游标「需要更新」；名词统一；项目栏自动隐藏；快捷键可自定义 | GL-26（①–④ 与框架）KI-93 KI-96 KI-97 | complete（待放行检查 #13–#19） | [plan](../PRPs/plans/m13-wizard-setup-to-criteria.plan.md) · [report](../PRPs/reports/m13-wizard-setup-to-criteria-report.md) · `9a705c3`..`efeb92b` |
-| 14 | 向导：看结果与导出 | 看结果里能改时长、改分镜表、手动生成预览片、从未采用清单加回；手动改过后重新选段先询问、可恢复 AI 选段；预览片看过才能导出；导出 Mac / Windows 生成新版本，可对比两版、回到某一版；「打开剪映」只在可用时出现 | GL-26（⑤⑥）GL-27 KI-94 KI-95 KI-98（含 M13 留下的 KI-100；另登记 KI-101 open、KI-102 fixed） | complete（待放行检查 #19–#24） | [plan](../PRPs/plans/m14-wizard-result-export.plan.md) · `1f63524` `6972b5c` `aa18643` `6d812f7` |
+| 14 | 向导：看结果与导出 | 看结果里能改时长、改分镜表、手动生成预览片、从未采用清单加回；手动改过后重新选段先询问、可恢复 AI 选段；预览片看过才能导出；导出 Mac / Windows 生成新版本，可对比两版、回到某一版；「打开剪映」只在可用时出现 | GL-26（⑤⑥）GL-27 KI-94 KI-95 KI-98（含 M13 留下的 KI-100；另登记 KI-101 open、KI-102 fixed） | complete（待放行检查 #19–#24） | [plan](../PRPs/plans/m14-wizard-result-export.plan.md) · [report](../PRPs/reports/m14-wizard-result-export-report.md) · `1f63524` `6972b5c` `aa18643` `6d812f7` |
 
 ## Open Questions
 
