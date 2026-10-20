@@ -145,3 +145,4 @@
 | KI-96 | 名词混乱：「预览」tab 放的是代理片、预览片在「版本」tab；「废片」tab（画面技术问题）与「废片」档位同名；待定 / 待判断混用；窗口「浏览素材」页标题「素材浏览」；阶段条用「素材台账」「策划分派单」等内部术语且只列 6 项（实际 12 步）。统一按 PRD §12 | `gui/static/*`；`gui/views.py:58-65` | open（随 GL-26） |
 | KI-97 | 任务前置检查返回 `need=encoder` 时前端没处理，只记一行「[错误]」日志 | `gui/static/jobs.js:76-80` | open |
 | KI-98 | 「打开剪映」硬编码 `/Applications/VideoFusion-macOS.app`，任何时候都可点；剪映装在别处时无提示 | `gui/server.py:566` | open |
+| KI-99 | `/api/browse` 判断已用 / 未用只看手动 `shots.json`：没有手动分镜表时所有片段都显示「未用」 | `gui/payloads.py:35-39` | open（M13 Task 15） |
