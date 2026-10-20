@@ -9,12 +9,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from pipeline import applog, consent, encode, readiness, secrets
+from pipeline import applog, consent, encode, readiness, secrets, to_jianying
 
 KEY_RE = re.compile(r"[\x21-\x7e]{8,512}")  # 可打印 ASCII、无空白
 
 NEED_CONSENT_MSG = "请先阅读并确认数据外发说明"
 NEED_KEYS_MSG = "还没有填写 API Key：{names}。请在「更多 → 设置 · API Key」里填写"
+JIANYING_RUNNING_MSG = "剪映正在运行，请先完全退出（Cmd+Q）再导出到 Mac 剪映"
 UNKNOWN_PROVIDER_MSG = "未知的 Key 类型"
 BAD_KEY_MSG = "Key 格式不对：应为 8–512 位、不含空格的英文字母 / 数字 / 符号"
 SAVE_FAILED_MSG = "保存失败：无法写入钥匙串或配置文件"
@@ -57,13 +58,22 @@ def check_questions_ready(_pdir: Path) -> None:
             names=secrets.PROVIDER_LABELS["deepseek"]["label"]), ["deepseek"])
 
 
+def check_build_ready(_pdir: Path, body: dict) -> None:
+    """导出到 Mac 剪映：剪映开着就先停（E19），免得切片、晋升都做完才在装草稿时失败。"""
+    if body.get("target") == "mac" and to_jianying.jianying_running():
+        raise PrepareBlocked("close_jianying", JIANYING_RUNNING_MSG)
+
+
 READY_CHECKS = {"prepare": check_prepare_ready, "questions": check_questions_ready}
+BODY_READY_CHECKS = {"build": check_build_ready}  # 要看请求内容的检查
 
 
-def check_ready(pdir: Path, task: str) -> None:
+def check_ready(pdir: Path, task: str, body: dict | None = None) -> None:
     """起任务前的前置检查（没有检查的任务直接放行）；不满足抛 PrepareBlocked → 409。"""
     if isinstance(task, str) and (check := READY_CHECKS.get(task)) is not None:
         check(pdir)
+    if isinstance(task, str) and (body_check := BODY_READY_CHECKS.get(task)) is not None:
+        body_check(pdir, body or {})
 
 
 def _provider(body: dict) -> str | None:

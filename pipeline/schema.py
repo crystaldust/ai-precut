@@ -171,11 +171,16 @@ def _clear_stale_tmps(path: Path) -> None:
 
 def write_json(path: Path, obj: Any, *, indent: int | None = 2) -> None:
     """原子写：每次用唯一临时文件，并发写同一路径不会互相踩。indent=None 写紧凑 JSON。"""
+    write_text(path, json.dumps(obj, ensure_ascii=False, indent=indent))
+
+
+def write_text(path: Path, text: str) -> None:
+    """文本原子写（临时文件 → fsync → os.replace）：目标换成新 inode，别的硬链接看到的仍是旧内容。"""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = _tmp_path(path)
     try:
-        _write_synced(tmp, json.dumps(obj, ensure_ascii=False, indent=indent))
+        _write_synced(tmp, text)
         os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)

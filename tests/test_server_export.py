@@ -132,12 +132,16 @@ def test_non_string_title_never_500(gui_server, title):
 
 def test_windows_zip_falls_back_to_project_name_for_bad_title(tmp_path):
     from gui import jobs
+    from pipeline import outputs
     assert jobs.windows_zip(tmp_path / "p1", "v1", 123).name == "p1_v1_Windows.zip"
+    assert outputs.windows_zip(tmp_path / "p1", "v1", 123) == jobs.windows_zip(tmp_path / "p1", "v1", 123)
 
 
 def test_bidi_and_zero_width_chars_stripped(tmp_path):
     from gui import jobs
     title = "片​名‮gpj.exe⁦‏"
     name = jobs.windows_zip(tmp_path / "p1", "v1", title).name
+    from pipeline import outputs
+    assert outputs.windows_zip(tmp_path / "p1", "v1", title).name == name
     assert not any(c in name for c in "​‮⁦‏")
     assert name.endswith("_v1_Windows.zip")

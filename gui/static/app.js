@@ -145,13 +145,20 @@ function saveShots(silent){
   return slot.done;
 }
 async function postShots(project, shots, silent){
+  // 带上页面读到的 AI 选段指纹：期间被「覆盖」重新选段了，服务端拒收（409 stale），不把旧页面存回去
+  const selection_digest = state.project === project && state.data ? state.data.selection_digest : undefined;
   try{
     await api('/api/shots?project='+encodeURIComponent(project), {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({shots})
+      body: JSON.stringify({shots, selection_digest})
     });
     return true;  // 不重绘，避免输入框失焦
-  }catch(e){ toast(COPY_SAVE_FAILED+e.message); return false; }
+  }catch(e){
+    toast(COPY_SAVE_FAILED+e.message);
+    // 过期页面:等本次保存收尾后重新读(refresh 会等保存队列,在队列里直接调用会等自己)
+    if(e.status === 409 && e.data && e.data.stale) setTimeout(()=>{ refreshOrWarn(project); }, 0);
+    return false;
+  }
 }
 
 /* ---------------- 启动 ---------------- */

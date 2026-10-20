@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import aicut
+from conftest import fake_ensure_preview
 from pipeline import applog, proc
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -80,7 +81,7 @@ def test_build_records_clip_preview_draft_timings(cli_env, monkeypatch, tmp_path
     monkeypatch.setattr(aicut, "ensure_clips", lambda *a: tmp_path)
     monkeypatch.setattr(aicut, "actual_durations", lambda *a: {"s1": 1.0})
     monkeypatch.setattr(aicut, "compose_timeline", lambda *a: {"video": [], "text": []})
-    monkeypatch.setattr(aicut, "ensure_preview", lambda *a: tmp_path / "p.mp4")
+    monkeypatch.setattr(aicut, "ensure_preview", fake_ensure_preview)
     monkeypatch.setattr(aicut, "install_draft", lambda *a: None)
     aicut.main(["build", "p1", "--version", "v1"])
     timings = json.loads((pdir / "work/timings.json").read_text(encoding="utf-8"))

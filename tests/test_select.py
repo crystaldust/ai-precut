@@ -809,3 +809,23 @@ def test_current_rules_version_is_used_as_stored(tmp_path):
     ap = _write(tmp_path / "brief_answers.json", {"answers": {"q1": "只要合同"}, "rules_version": RV,
                                                   "rules": {"exclude_topics": ["聊吃饭"]}})
     assert select.run(sp, ap, tmp_path, questions_path=qp)["rules"]["exclude_topics"] == ["聊吃饭"]
+
+
+# ---------------------------------------------------------------- M14 Q4：未采用原因 cause
+def test_unused_cause_excluded_not_must_and_duration():
+    # 目标只够 S001：讲合同有入选但 S002/S003 时长用完 → duration；聊吃饭一句都没进 → not_must
+    segs = [seg(i, i * 10, 6, "讲合同", must=(i == 1)) for i in range(1, 4)] + [seg(9, 200, 6, "聊吃饭")]
+    res = select.select(segs, TOPICS, {}, 6)
+    by_id = {u["segment_id"]: u for u in res["unused"]}
+    assert by_id["S002"]["cause"] == select.CAUSE_DURATION == "duration"
+    assert by_id["S009"]["cause"] == select.CAUSE_NOT_MUST == "not_must"
+    # 话题被排除 → excluded
+    res = select.select(segs, TOPICS, {"exclude_topics": ["聊吃饭"]}, 6)
+    excluded = next(u for u in res["unused"] if u["segment_id"] == "S009")
+    assert excluded["cause"] == select.CAUSE_EXCLUDED == "excluded"
+    # reason 文本保持原样（旧断言不破）
+    assert (excluded["reason"], by_id["S002"]["reason"]) == ("话题未入选", "超出话题预算")
+
+
+def test_with_lines_is_public():
+    assert callable(select.with_lines) and not hasattr(select, "_with_lines")

@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from gui import jobs, payloads
-from pipeline import fingerprints, questions, schema, select_rules
+from pipeline import fingerprints, questions, schema, select_rules, shots_store
 
 RESELECT_TASK = "select"
 ANSWERS_NOT_OBJECT = "answers 必须是对象（{题目 id: 选项}）"
@@ -30,6 +30,7 @@ def save_answers(pdir: Path, name: str, body: dict) -> dict:
     raw = body.get("answers") if body.get("answers") is not None else {}
     if not isinstance(raw, dict):
         raise ValueError(ANSWERS_NOT_OBJECT)
+    manual = shots_store.check_manual(body["manual"]) if body.get("manual") is not None else None  # 先校验再写盘
     work = Path(pdir) / "work"
     questions_def = schema.read_json(work / "questions.json", default=None)  # 损坏 → CorruptJSON
     if questions_def is None:
@@ -44,6 +45,6 @@ def save_answers(pdir: Path, name: str, body: dict) -> dict:
     if body.get("confirmed") is not True:  # 只有显式确认才起选段；草稿保存不动原来的确认状态
         return {"ok": True, "job_id": None}
     try:  # select 是本地计算：不外发、不需要 Key，不走 prepare 的前置检查
-        return {"ok": True, "job_id": jobs.start_job(name, RESELECT_TASK, [])}
+        return {"ok": True, "job_id": jobs.start_job(name, RESELECT_TASK, [f"--manual={manual}"] if manual else [])}
     except jobs.JobConflict as exc:  # 含 StaleJob：答案已保存，只是选段没能马上开始
         return {"ok": True, "job_id": None, "job_error": str(exc)}

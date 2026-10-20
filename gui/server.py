@@ -281,13 +281,15 @@ class Handler(BaseHTTPRequestHandler):
             pdir = existing_project(name)
             title = (jload(pdir / "project.json", {}) or {}).get("title")
             extra = jobs.job_extra(pdir, task, body, title)
-            settings.check_ready(pdir, task)  # prepare / questions 的告知与 Key（GL-02、KI-86）
+            settings.check_ready(pdir, task, body)  # prepare / questions 的告知与 Key（GL-02、KI-86）
             job_id = start_job(name, task, extra)
         except JobConflict as e:  # 含 StaleJob（job_id 为 None：上次留下的进程，界面无法接管）
             return self._json({"error": str(e), "job_id": e.job_id, "task": e.task,
                                "project": e.project}, 409)
         except settings.PrepareBlocked as e:
             return self._json({"error": str(e), "need": e.need, "missing": e.missing}, 409)
+        except schema.CorruptJSON as e:  # 必须在 ValueError 之前
+            return self._json({"error": str(e)}, 409)
         except (ValueError, FileNotFoundError) as e:
             return self._json({"error": str(e)}, 400)
         return self._json({"job_id": job_id})
@@ -441,6 +443,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": str(exc)}, 404)
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
+            if (job := jobs.project_job(name)) and job["task"] == "select":  # E10：覆盖期间的保存会被吞掉
+                return self._json({"error": shots_store.SHOTS_BUSY_MSG}, 409)
             shots = body.get("shots")
             if not isinstance(shots, list):
                 return self._json({"error": "缺少 shots 列表，未保存"}, 400)
@@ -449,10 +453,15 @@ class Handler(BaseHTTPRequestHandler):
                 clean = schema.clean_shots(shots)
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
-            with shots_store.LOCK:  # 与「标记不可用」移除镜头共用一把锁，防丢更新
-                jdump(pdir / "shots.json", {"project": jload(pdir / "project.json", {}).get("title", name),
-                                            "source": jload(pdir / "project.json", {}).get("material", ""),
-                                            "shots": clean})
+            proj = jload(pdir / "project.json", {})
+            try:
+                with shots_store.locked(pdir):  # 与「标记不可用」「覆盖」共用线程锁 + 文件锁，防丢更新
+                    if shots_store.selection_replaced(pdir, body.get("selection_digest")):
+                        return self._json({"error": shots_store.STALE_SELECTION_MSG, "stale": True}, 409)
+                    shots_store.write_manual(pdir, clean, {"project": proj.get("title", name),
+                                                           "source": proj.get("material", "")})
+            except shots_store.Busy as exc:
+                return self._json({"error": str(exc)}, 409)
             return self._json({"ok": True, "count": len(clean)})
 
         if p == "/api/job":

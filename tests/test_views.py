@@ -13,8 +13,9 @@ def _project(root, name, versions=(), title="", extra_files=()):
     (pdir / "project.json").write_text(json.dumps(
         {"name": name, "title": title, "preset": "纪实3min", "material": "/v/a.mov",
          "schema_version": 2}, ensure_ascii=False), encoding="utf-8")
-    for v in versions:
+    for v in versions:  # 已完成的版本目录一定有时间线（晋升是整体改名，M14）
         (pdir / "output" / v).mkdir()
+        (pdir / "output" / v / "timeline.json").write_text("{}", encoding="utf-8")
     for f in extra_files:
         (pdir / "output" / f).write_text("x")
     return pdir
@@ -39,8 +40,10 @@ def test_projects_list_tolerates_corrupt_project_json(tmp_path):
 def test_versions_sorted_numerically_newest_first(tmp_path):
     pdir = _project(tmp_path, "p", versions=("v2", "v10", "v1", "vx"), title="T",
                     extra_files=("v99",))
+    (pdir / "output" / "v5").mkdir()                    # 没有时间线的残目录不列出
+    (pdir / "output" / ".v6.tmp").mkdir()               # 晋升的组装目录不列出
     names = [v["name"] for v in views._versions(pdir, {"title": "T"}, "p")]
-    assert names == ["v10", "v2", "v1", "vx"]  # 按数字排（v10 比 v2 新）；非数字版本垫底；同名文件被跳过
+    assert names == ["v10", "v2", "v1"]  # 按数字排（v10 比 v2 新）；非数字目录、同名文件、残目录都被跳过
     assert views._versions(pdir, {}, "p")[0]["draft"] == "p_v10"  # 没有标题用项目名
 
 

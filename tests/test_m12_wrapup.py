@@ -176,6 +176,7 @@ import argparse  # noqa: E402
 import pytest  # noqa: E402
 
 import aicut  # noqa: E402
+from conftest import fake_ensure_preview  # noqa: E402
 from pipeline import build_documentary, clips, media_io, schema  # noqa: E402
 
 
@@ -204,7 +205,7 @@ def cutter(calls):
 def _build(pdir, shots, version, monkeypatch):
     (pdir / "shots.json").write_text(json.dumps({"shots": shots}), encoding="utf-8")
     monkeypatch.setattr(aicut, "load_preset", lambda n: {})
-    monkeypatch.setattr(aicut, "ensure_preview", lambda *a: "p.mp4")
+    monkeypatch.setattr(aicut, "ensure_preview", fake_ensure_preview)
     monkeypatch.setattr(media_io, "duration_or_zero", lambda p, **k: 0.0)
     aicut.cmd_build(argparse.Namespace(name="p", version=version, no_draft=True))
     tl = json.loads((pdir / "output" / version / "timeline.json").read_text(encoding="utf-8"))
@@ -418,7 +419,8 @@ def test_review_cmd_build_cuts_writes_and_prunes_inside_build_lock(project, monk
     monkeypatch.setattr(clips, "prune_unreferenced", lambda p: events.append("prune") or real_prune(p))
     monkeypatch.setattr(media_io, "run_ffmpeg", cutter([]))
     _build(project, [_shot()], "v1", monkeypatch)
-    assert events == ["lock", "cut", "prune", "unlock"]
+    # M14：暂存（切片 + 时间线 + 清理）与晋升（版本号 + 覆盖旧版后清理）在同一把锁内完成
+    assert events == ["lock", "cut", "prune", "prune", "unlock"]
 
 
 def test_review_prune_keeps_recently_written_unreferenced_clip(project):

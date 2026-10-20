@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import aicut
+from conftest import fake_ensure_preview
 from pipeline import media_io, schema
 
 
@@ -335,7 +336,7 @@ def test_cmd_build_uses_fingerprint(project, monkeypatch):
     monkeypatch.setattr(aicut, "ensure_clips", lambda *a: project / "work/clips")
     monkeypatch.setattr(aicut, "actual_durations", lambda clips, shots: {s["id"]: 5.0 for s in shots})
     monkeypatch.setattr(aicut, "compose_timeline", lambda *a: {"video": [], "text": []})
-    monkeypatch.setattr(aicut, "ensure_preview", lambda vdir, h: hashes.append(h) or vdir / "p.mp4")
+    monkeypatch.setattr(aicut, "ensure_preview", lambda vdir, h: fake_ensure_preview(vdir, h, hashes))
     monkeypatch.setattr(aicut, "install_draft", lambda *a: None)
 
     def build(inn):
@@ -425,7 +426,7 @@ def test_timeline_artifact_schema_stamped(project, monkeypatch):  # KI-37
     monkeypatch.setattr(aicut, "load_preset", lambda n: {})
     monkeypatch.setattr(aicut, "ensure_clips", lambda *a: project / "work/clips")
     monkeypatch.setattr(aicut, "actual_durations", lambda *a: {"S01": 1.0})
-    monkeypatch.setattr(aicut, "ensure_preview", lambda *a: "p.mp4")
+    monkeypatch.setattr(aicut, "ensure_preview", fake_ensure_preview)
     aicut.cmd_build(argparse.Namespace(name="p", version="v1", no_draft=True))
     tl = json.loads((project / "output/v1/timeline.json").read_text())
     assert tl["artifact_schema"] == schema.ARTIFACT_SCHEMA and tl["video"]

@@ -559,7 +559,8 @@ def _finish_quick(gs, jobs, monkeypatch, argv, task="select"):
 
 def test_task_labels_use_wizard_terms(jobs):
     assert jobs.TASK_LABELS == {"prepare": "分析", "build": "生成新版本", "select": "重新选段",
-                                "export": "生成 Windows 剪映包", "questions": "重新出题"}
+                                "export": "生成 Windows 剪映包", "questions": "重新出题",
+                                "preview": "生成预览片"}
 
 
 def test_conflict_message_uses_new_label(gui_server, jobs, monkeypatch):

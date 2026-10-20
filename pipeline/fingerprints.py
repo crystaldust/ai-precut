@@ -11,12 +11,14 @@ import hashlib
 import json
 from pathlib import Path
 
-from pipeline import review, schema, style
+from pipeline import media_io, proc, review, schema, shots_store, style
 
 DIGEST_LEN = 12
 CORRUPT = "corrupt"
 DEFAULT_TARGET_S = 175  # 与 aicut.cmd_select 传给 select.run 的默认目标时长同源
 SELECTION_KEYS = ("scored", "overrides", "answers", "target", "lines")
+PREVIEW_KEYS = ("table", "unusable", "preset", "title", "platform", "material")  # M14 E2：预览片的分项输入（都进 compose_timeline）
+PRESETS_DIR = proc.resource_path("presets")
 
 
 def _sha(data: bytes) -> str:
@@ -93,3 +95,51 @@ def changed(saved: object, now: dict) -> list[str]:
     if not isinstance(saved, dict):
         return []
     return [k for k, v in now.items() if k in saved and saved[k] != v]
+
+
+def table_digest(shots: list[dict]) -> str:
+    """分镜表指纹：只看每镜 [id, in, out, sub]（note 等不影响成片）；空表 ""。"""
+    if not shots:
+        return ""
+    return _sha(_canonical([[s.get("id"), s.get("in"), s.get("out"), s.get("sub") or ""] for s in shots]))
+
+
+def unusable_digest(workdir: Path) -> str:
+    """被标为「不可用」的片段 id 集合的指纹（出片会按它剔镜头）；overrides 读不出记 CORRUPT。"""
+    try:
+        data = review.load(workdir)
+    except review.OverridesCorrupt:
+        return CORRUPT
+    ids = sorted(sid for sid, item in data.items() if isinstance(item, dict) and item.get("unusable") is True)
+    return _sha(_canonical(ids))
+
+
+def _material_digest(cfg: dict) -> str:
+    fp = media_io.source_fingerprint(cfg.get("material"))
+    return _sha(_canonical(fp)) if fp else ""
+
+
+def _preset_digest(cfg: dict) -> str:
+    """预设名 + 预设文件内容：名字没变但文件被改了（升级 / 手改）也算变。"""
+    name = cfg.get("preset") or ""
+    return _sha(_canonical([name, file_digest(PRESETS_DIR / f"{name}.json") if name else ""]))
+
+
+def preview_inputs(pdir: Path, cfg: dict) -> dict[str, str]:
+    """预览片的分项输入指纹（键序固定为 PREVIEW_KEYS）：当前分镜表（手动优先）、不可用集合、预设、素材。
+
+    读表失败（损坏）记 CORRUPT，不抛：状态判定与项目列表不能因为一个坏文件整体失败。
+    """
+    try:
+        shots, _source = shots_store.current(pdir)
+        table = table_digest(shots)
+    except (schema.CorruptJSON, ValueError, OSError):
+        table = CORRUPT
+    return {
+        "table": table,
+        "unusable": unusable_digest(Path(pdir) / "work"),
+        "preset": _preset_digest(cfg),
+        "title": _sha(_canonical(cfg.get("title") or "")),
+        "platform": _sha(_canonical(cfg.get("platform") or "")),
+        "material": _material_digest(cfg),
+    }

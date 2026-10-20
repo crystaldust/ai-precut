@@ -16,7 +16,6 @@ import atexit
 import contextlib
 import json
 import os
-import re
 import signal
 import subprocess
 import threading
@@ -24,17 +23,19 @@ import time
 import uuid
 from pathlib import Path
 
-from pipeline import applog, proc, schema, secrets
+from pipeline import applog, outputs, proc, schema, secrets, shots_store
 
 JOB_COMMANDS = {"prepare": ["prepare"], "build": ["build"], "select": ["select"],
-                "export": ["export"], "questions": ["questions", "--force"]}  # KI-86：确认页重新出题
+                "export": ["export"], "questions": ["questions", "--force"],  # KI-86：确认页重新出题
+                "preview": ["preview"]}  # M14：只生成预览片，不产生版本
 # M13：任务名词统一到向导的步骤名（PRD §12）；JOB_CONFLICT_MSG / 遗留任务提示 / 任务胶囊都用它
 TASK_LABELS = {"prepare": "分析", "build": "生成新版本", "select": "重新选段",
-               "export": "生成 Windows 剪映包", "questions": "重新出题"}
+               "export": "生成 Windows 剪映包", "questions": "重新出题", "preview": "生成预览片"}
 MAX_ACTIVE_JOBS = 1          # 重任务全局串行：ffmpeg / ASR 吃满资源，也避免重复计费
 CANCEL_GRACE_S = 5.0         # SIGTERM 后等这么久仍未退出就 SIGKILL
 SHORT_CMD_TIMEOUT_S = 60     # 短命令（新建项目等）的超时
-ZIP_TITLE_MAX_CHARS = 60     # 片名在 zip 文件名里最多保留的字数（中文 3 字节/字，远低于 255 字节）
+ZIP_TITLE_MAX_CHARS = outputs.ZIP_TITLE_MAX_CHARS  # 别名：测试按 jobs.<名> 引用
+_UNSAFE_FILENAME = outputs.UNSAFE_FILENAME
 PUBLIC_FIELDS = ("status", "log", "exit", "task", "project")
 MARKER_FILE = "job.marker"   # 配置目录下：当前运行中的任务（跨剪辑台实例 / 重启可见）
 JOB_PROCESS_HINTS = ("aicut", "--aicut-cli")  # 判断 marker 里的 pid 还是不是我们的任务进程
@@ -62,10 +63,6 @@ LOGGED_LINE_MAX = 300
 ERROR_PREFIX = "[x]"  # aicut.die() 输出的失败行
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
-
-# 路径字符、控制字符，以及能把文件名显示成别的样子的零宽 / 双向控制字符
-_UNSAFE_FILENAME = re.compile(
-    r'[\\/:*?"<>|\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069]')
 
 
 class JobConflict(Exception):
@@ -438,11 +435,8 @@ def stale_job_view() -> dict | None:
 
 # ------------------------------------------------------------------ Windows 导出（GL-14）
 def windows_zip(pdir: Path, version: str, title: str | None) -> Path:
-    """<项目>/output/vN/<片名>_vN_Windows.zip；片名里的路径字符一律换成 _。"""
-    raw = title if isinstance(title, str) and title.strip() else pdir.name
-    name = _UNSAFE_FILENAME.sub("_", raw).lstrip(".-")[:ZIP_TITLE_MAX_CHARS] or pdir.name
-    stem = f"{name}_{version}_Windows"
-    return pdir / "output" / version / f"{stem}.zip"
+    """<项目>/output/vN/<片名>_vN_Windows.zip（实现在 outputs，M14 E22）。"""
+    return outputs.windows_zip(pdir, version, title)
 
 
 def export_args(pdir: Path, version: object, title: str | None) -> list[str]:
@@ -467,13 +461,13 @@ def windows_export_state(pdir: Path, version: str, title: str | None) -> dict:
 def job_extra(pdir: Path, task: str, body: dict, title: str | None) -> list[str]:
     """把界面请求翻译成 aicut 子命令的额外参数；全部先过白名单。"""
     extra: list[str] = []
-    if task == "build":
-        if body.get("version"):
-            extra += ["--version", schema.check_version(body["version"])]
-        if body.get("no_draft"):
-            extra.append("--no-draft")
-    elif task == "select" and body.get("target") is not None:
-        extra += ["--target", str(schema.check_target_duration(body["target"]))]
+    if task == "build":  # 项目文件损坏抛 CorruptJSON，由路由变成 409
+        extra = outputs.build_args(pdir, body, schema.read_json(Path(pdir) / "project.json"))
+    elif task == "select":
+        if body.get("target") is not None:
+            extra += ["--target", str(schema.check_target_duration(body["target"]))]
+        if body.get("manual") is not None:
+            extra.append(f"--manual={shots_store.check_manual(body['manual'])}")
     elif task == "export":
         extra = export_args(pdir, body.get("version"), title)
     return extra

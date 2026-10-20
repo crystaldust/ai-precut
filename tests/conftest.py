@@ -140,3 +140,14 @@ def _no_real_jianying_version(request, monkeypatch):
         return
     from pipeline import jy_version
     monkeypatch.setattr(jy_version, "installed_version", lambda *a: None)
+
+
+def fake_ensure_preview(vdir, tl_hash, seen=None):
+    """替身 aicut.ensure_preview：写一个带完成标记的假预览片和哈希戳（M14 起 build 要晋升它，不能只返回路径）。"""
+    from pipeline import media_io
+    with media_io.atomic_output(vdir / "preview.mp4") as tmp:
+        tmp.write_bytes(b"fake-mp4")
+    (vdir / ".timeline.sha").write_text(tl_hash)
+    if seen is not None:
+        seen.append(tl_hash)
+    return vdir / "preview.mp4"

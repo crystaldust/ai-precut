@@ -13,7 +13,7 @@ from pipeline.llm import DEFAULT_MODEL  # 唯一定义在 llm（L13）
 
 DEFAULT_PRESET = "纪实3min"
 NAME_ONLY = ("prepare", "ingest", "analyze", "transcribe", "junk", "brief", "status", "quality",
-             "score")
+             "score", "preview")
 
 
 def _new(sub, handlers: dict[str, Callable]) -> None:
@@ -33,6 +33,9 @@ def _project_commands(sub, handlers: dict[str, Callable]) -> None:
     for name in ("run", "build"):  # KI-16：run 有 shots.json 时直接调 cmd_build
         p = sub.add_parser(name); p.add_argument("name"); p.set_defaults(fn=handlers[name])
         p.add_argument("--version"); p.add_argument("--no-draft", action="store_true")
+        p.add_argument("--windows", action="store_true", help="晋升后同时打 Windows 剪映包")
+        p.add_argument("--require-preview", dest="require_preview", action="store_true",
+                       help="只晋升已生成的当前预览片，过期就停（GUI 用）")
     for name in NAME_ONLY:
         p = sub.add_parser(name); p.add_argument("name"); p.set_defaults(fn=handlers[name])
 
@@ -49,6 +52,8 @@ def _project_commands(sub, handlers: dict[str, Callable]) -> None:
 
     p = sub.add_parser("select"); p.add_argument("name")
     p.add_argument("--target", default=None, help="改目标时长（秒）后只重跑选段")
+    p.add_argument("--manual", choices=("keep", "replace"), default="keep",
+                   help="手动分镜表：keep 保留我的修改（默认）/ replace 备份后用新的 AI 选段覆盖")
     p.set_defaults(fn=handlers["select"])
 
     p = sub.add_parser("questions"); p.add_argument("name")

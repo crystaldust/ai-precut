@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import aicut
+from conftest import fake_ensure_preview
 from pipeline import clips, media_io, schema
 
 
@@ -55,7 +56,7 @@ def test_build_writes_version_shot_snapshot(project, monkeypatch):
     monkeypatch.setattr(aicut, "load_preset", lambda n: {})
     monkeypatch.setattr(aicut, "ensure_clips", lambda *a: project / "work/clips")
     monkeypatch.setattr(aicut, "actual_durations", lambda *a: {"S01": 2.0, "S02": 2.0})
-    monkeypatch.setattr(aicut, "ensure_preview", lambda *a: "p.mp4")
+    monkeypatch.setattr(aicut, "ensure_preview", fake_ensure_preview)
     aicut.cmd_build(argparse.Namespace(name="p", version="v1", no_draft=True))
     assert clips.load_snapshot(project / "output/v1") == SHOTS
 
@@ -112,7 +113,7 @@ def test_build_preflight_counts_only_pending(project, monkeypatch):
     monkeypatch.setattr(aicut.diskspace, "shortfall", lambda path, need, **k: seen.append(need))
     monkeypatch.setattr(aicut, "ensure_clips", lambda *a: project / "work/clips")
     monkeypatch.setattr(aicut, "actual_durations", lambda *a: {"S01": 2.0, "S02": 2.0})
-    monkeypatch.setattr(aicut, "ensure_preview", lambda *a: "p.mp4")
+    monkeypatch.setattr(aicut, "ensure_preview", fake_ensure_preview)
     aicut.cmd_build(argparse.Namespace(name="p", version=None, no_draft=True))
     from pipeline import diskspace
     assert seen == [diskspace.need_for_build(0.0, 4.0)]

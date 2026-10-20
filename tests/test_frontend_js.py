@@ -380,3 +380,34 @@ def test_switching_preset_keeps_hand_typed_duration():
       [first, [els['#npMin'].value, els['#npSec'].value]];
     """)
     assert out == [["2", "55"], ["8", "0"]]
+
+
+# ---------------------------------------------------------------- M14 审查 MEDIUM-5：保存带上页面读到的选段指纹
+def test_save_sends_selection_digest_from_current_state():
+    out = run_async("""(async () => {
+      stateResp = {project:{name:'A', title:'A'}, wizard:{steps:[], next:'analyze'}, shots:[{id:'sh01'}],
+                   warnings:[], selection_digest:'abc123'};
+      await selectProject('A');
+      const bodies = [];
+      api = async (path, opt) => { bodies.push(JSON.parse(opt.body)); return {}; };
+      await saveShots(true);
+      return bodies.map(b => b.selection_digest);
+    })()""")
+    assert out == ["abc123"]
+
+
+def test_save_409_stale_selection_refreshes_state():
+    out = run_async("""(async () => {
+      stateResp = {project:{name:'A', title:'A'}, wizard:{steps:[], next:'analyze'}, shots:[{id:'sh01'}],
+                   warnings:[], selection_digest:'old'};
+      await selectProject('A');
+      let stateCalls = 0;
+      api = async (path, opt) => {
+        if (path.startsWith('/api/state')) { stateCalls++; return {...stateResp, selection_digest:'new'}; }
+        const e = new Error('分镜表刚被重新选段覆盖了，请刷新'); e.status = 409; e.data = {stale: true}; throw e;
+      };
+      const ok = await saveShots(true);
+      await new Promise(r => setTimeout(r, 20));
+      return [ok, stateCalls, state.data.selection_digest];
+    })()""")
+    assert out == [False, 1, "new"]

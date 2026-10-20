@@ -35,7 +35,7 @@ from pipeline import (applog, build_documentary, classify, cloud, consent, disks
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
                       select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
                       usage)
-from pipeline import brief, cli_args, clips, config_cli, fingerprints, outputs, project_cli, project_lock, transcript_stamp  # noqa: E402
+from pipeline import brief, cli_args, clips, config_cli, export_flow, fingerprints, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
 from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
 from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
 from pipeline.prompts import ask_calibration, ask_target  # noqa: E402,F401 - 测试按 aicut.<名> 打桩
@@ -466,6 +466,15 @@ def cmd_select(args) -> None:
     if new_target is not None:  # 选段成功后才保存新目标；加锁读改写，不覆盖别人刚改的字段（KI-51）
         schema.update_project(pdir / "project.json", lambda cur: {**cur, "target_duration": new_target})
         info(TARGET_CHANGED.format(target=select.fmt_duration(new_target)))
+    if getattr(args, "manual", "keep") == "replace":  # 选段成功之后才覆盖（失败时 die 已退出）
+        try:
+            saved = outputs.replace_manual(pdir)
+        except shots_store.Busy:
+            die(outputs.MANUAL_BUSY)
+        except OSError as exc:  # 备份没写成就不删原表
+            die(outputs.MANUAL_BACKUP_FAILED.format(exc=exc))
+        if saved:
+            info(outputs.MANUAL_REPLACED.format(path=saved.name))
     _report_selection(res, args.name)
 
 
@@ -487,8 +496,7 @@ def cmd_export(args) -> None:
     pdir = project_dir(args.name)
     timeline = Path(args.timeline) if args.timeline else None
     if timeline is None:
-        candidates = sorted((pdir / "output").glob("*/timeline.json"),
-                            key=lambda x: x.stat().st_mtime, reverse=True)
+        candidates = [d / "timeline.json" for d in reversed(outputs.version_dirs(pdir))]  # 版本号最大的优先；不含暂存 preview
         if not candidates:
             die("找不到时间线，先跑 select 与 build_documentary，或指定 --timeline")
         timeline = candidates[0]
@@ -553,68 +561,24 @@ def ensure_preview(vdir: Path, tl_hash: str) -> Path:
             _run_pipeline("pipeline.render_preview", [str(vdir / "timeline.json"), "-o", str(tmp)])
     except media_io.MediaError as exc:
         die(f"预览片渲染失败：{exc}")
-    stamp.write_text(tl_hash)  # 必须在产物落盘之后
+    schema.write_text(stamp, tl_hash)  # 必须在产物落盘之后；原子写（换新 inode），已晋升版本里的旧内容不受影响
     return preview
 
 
 def next_version(pdir: Path) -> str:
-    vs = [int(p.name[1:]) for p in (pdir / "output").glob("v*")
-          if p.is_dir() and p.name[1:].isdigit()]
-    return f"v{max(vs) + 1 if vs else 1}"
+    return outputs.next_version(pdir)
+
+
+def cmd_preview(args) -> None:
+    """生成当前分镜表的预览片到 output/preview，不产生版本（M14 E1）。"""
+    pdir = project_dir(args.name)
+    export_flow.preview(sys.modules[__name__], pdir, cfg(pdir))
 
 
 def cmd_build(args) -> None:
+    """出片 = 暂存预览片（必要时重做）→ 晋升为 vN → 装 Mac 草稿 / 打 Windows 包（M14 E4，流程在 export_flow）。"""
     pdir = project_dir(args.name)
-    c = cfg(pdir)
-    preset = load_preset(c["preset"])
-    shots_file = pdir / "shots.json"
-    if not shots_file.exists():  # 用覆盖式选段的结果直接出片
-        selected = pdir / "work/shots-selected.json"
-        if selected.exists():
-            shots_file = selected
-            info("使用覆盖式选段结果：work/shots-selected.json")
-    if not shots_file.exists():
-        die(f"缺少分镜表 {shots_file}（先跑 brief，再写 shots.json）")
-    shots = schema.read_shots(shots_file)  # KI-48：损坏 / 缺键 / 入出点不对 → CorruptJSON，切片前由 main() 报
-    if args.version:
-        check_or_die(schema.check_version, args.version)
-    try:  # GL-25：切片（耗时）之前确认分镜表覆盖全部必留段
-        missing = select.missing_must_keep(pdir / "work", shots)
-    except review.OverridesCorrupt as exc:
-        die(str(exc))
-    if missing:
-        die(select.describe_missing(missing, from_selection=shots_file != pdir / "shots.json"))
-    try:  # KI-93：手动 / 旧分镜表里含「不可用」片段的镜头出片前再剔一次
-        shots, dropped = exclusions.filter_shots(pdir / "work", shots)
-    except exclusions.ExclusionError as exc:
-        die(str(exc))
-    if dropped:
-        warn(exclusions.DROPPED_WARNING.format(n=len(dropped), ids="、".join(dropped[:exclusions.DROPPED_SHOWN])))
-        if not shots:
-            die(exclusions.ALL_DROPPED)
-    if low := diskspace.shortfall(pdir, build_need(pdir, c, shots, args.version)):
-        die(low)  # KI-33：切片 / 预览之前确认磁盘够（只算要写的，M5）
-
-    with project_lock.build_section(pdir):  # KI-89 复审：切片 → 时间线 → 清理，同项目出片串行
-        with applog.stage(pdir / "work", "clips"):
-            clip_paths = ensure_clips(pdir, c, shots)
-        version = args.version or next_version(pdir)
-        vdir = pdir / "output" / version
-        vdir.mkdir(parents=True, exist_ok=True)
-        durations = actual_durations(clip_paths, shots)
-        tl = compose_timeline(c, preset, shots, clip_paths, durations)
-        save_json(vdir / "timeline.json", schema.stamp(tl))  # KI-37；指纹仍按未打标的时间线算
-        clips.save_snapshot(vdir, shots)  # 清理缓存后导出这一版时按它补切（审查修复 H2）
-        clips.prune_unreferenced(pdir)  # KI-89：带键切片只留仍被某一版引用的
-    tl_hash = build_documentary.preview_fingerprint(tl, shots, Path(c["material"]))  # KI-11
-    total = sum(durations.values())
-    ok(f"时间线：{len(shots)} 镜，{int(total // 60)}:{total % 60:05.2f}")
-    with applog.stage(pdir / "work", "preview"):
-        ok(f"预览片：{ensure_preview(vdir, tl_hash)}")
-    if not args.no_draft:
-        with applog.stage(pdir / "work", "draft"):
-            install_draft(vdir, f"{c['title']}_{version}")
-    ok(f"完成 → {vdir}")
+    export_flow.build(sys.modules[__name__], pdir, cfg(pdir), args)
 
 
 def install_draft(vdir: Path, draft_name: str) -> None:

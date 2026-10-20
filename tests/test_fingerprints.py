@@ -2,7 +2,7 @@
 """输入指纹（M13 T4）：只看会改变结果的内容，忽略 at / anchor 等易变字段。"""
 import json
 
-from pipeline import fingerprints, style
+from pipeline import fingerprints, schema, style
 
 
 def _write(path, obj):
@@ -114,3 +114,91 @@ def test_target_of_tolerates_infinity_and_junk():
     assert fingerprints.target_of({"target_duration": float("inf")}) == 175
     assert fingerprints.target_of({"target_duration": "abc"}) == 175
     assert fingerprints.target_of({"target_duration": float("nan")}) == 175
+
+
+# ---------------------------------------------------------------- M14 T3：预览片输入指纹
+def _shot(i, a=0, b=1, sub="", note=""):
+    return {"id": f"s{i}", "in": a, "out": b, "sub": sub, "note": note}
+
+
+def test_table_digest_only_looks_at_id_in_out_sub():
+    base = fingerprints.table_digest([_shot(1, note="a")])
+    assert fingerprints.table_digest([_shot(1, note="b")]) == base
+    assert fingerprints.table_digest([_shot(1, sub="x")]) != base
+    assert fingerprints.table_digest([_shot(1, b=2)]) != base
+    assert fingerprints.table_digest([]) == ""
+
+
+def test_unusable_digest_only_tracks_unusable_true_ids(tmp_path):
+    empty = fingerprints.unusable_digest(tmp_path)
+    _write(tmp_path / "overrides.json", {"S1": {"must_keep": True}, "S2": {"unusable": False}})
+    assert fingerprints.unusable_digest(tmp_path) == empty
+    _write(tmp_path / "overrides.json", {"S1": {"unusable": True}})
+    marked = fingerprints.unusable_digest(tmp_path)
+    assert marked != empty
+    _write(tmp_path / "overrides.json", {"S1": {"unusable": True, "at": "t2", "level": 2}})
+    assert fingerprints.unusable_digest(tmp_path) == marked
+    (tmp_path / "overrides.json").write_text("{坏", encoding="utf-8")
+    assert fingerprints.unusable_digest(tmp_path) == fingerprints.CORRUPT
+
+
+def _proj(tmp_path, *, manual=None, ai=None):
+    pdir = tmp_path / "p"
+    (pdir / "work").mkdir(parents=True)
+    if manual is not None:
+        _write(pdir / "shots.json", {"shots": manual})
+    if ai is not None:
+        _write(pdir / "work" / "shots-selected.json", {"shots": ai})
+    return pdir
+
+
+CFG = {"preset": "纪实3min", "material": "/nonexistent/a.mp4"}
+
+
+def test_preview_inputs_keys_and_empty_table(tmp_path):
+    got = fingerprints.preview_inputs(_proj(tmp_path), CFG)
+    assert list(got) == ["table", "unusable", "preset", "title", "platform", "material"]
+    assert got["table"] == "" and len(got["preset"]) == fingerprints.DIGEST_LEN
+
+
+def test_preview_inputs_manual_table_wins_over_ai(tmp_path):
+    pdir = _proj(tmp_path, manual=[_shot(1)], ai=[_shot(2)])
+    def digest(i):  # 读盘会过 schema.clean_shots 规整，期望值也走同一条路
+        return fingerprints.table_digest(schema.clean_shots([_shot(i)]))
+    assert fingerprints.preview_inputs(pdir, CFG)["table"] == digest(1)
+    (pdir / "shots.json").unlink()
+    assert fingerprints.preview_inputs(pdir, CFG)["table"] == digest(2)
+
+
+def test_preview_inputs_corrupt_table_does_not_raise(tmp_path):
+    pdir = _proj(tmp_path, ai=[_shot(1)])
+    (pdir / "shots.json").write_text("{坏", encoding="utf-8")
+    assert fingerprints.preview_inputs(pdir, CFG)["table"] == fingerprints.CORRUPT
+
+
+def test_preview_inputs_track_preset_and_material(tmp_path):
+    pdir = _proj(tmp_path, ai=[_shot(1)])
+    base = fingerprints.preview_inputs(pdir, CFG)
+    assert fingerprints.preview_inputs(pdir, {**CFG, "preset": "别的"})["preset"] != base["preset"]
+    mat = tmp_path / "m.mp4"
+    mat.write_bytes(b"1234")
+    first = fingerprints.preview_inputs(pdir, {**CFG, "material": str(mat)})["material"]
+    mat.write_bytes(b"12345678")
+    assert fingerprints.preview_inputs(pdir, {**CFG, "material": str(mat)})["material"] != first
+
+
+def test_preview_inputs_track_title_platform_and_preset_file_content(tmp_path, monkeypatch):
+    """MEDIUM-4：title / platform 都进 compose_timeline；预设文件内容变了（名字没变）也要判过期。"""
+    pdir = _proj(tmp_path, ai=[_shot(1)])
+    presets = tmp_path / "presets"
+    presets.mkdir()
+    (presets / "纪实3min.json").write_text('{"a": 1}', encoding="utf-8")
+    monkeypatch.setattr(fingerprints, "PRESETS_DIR", presets)
+    cfg = {**CFG, "title": "T", "platform": "douyin"}
+    base = fingerprints.preview_inputs(pdir, cfg)
+    assert fingerprints.preview_inputs(pdir, {**cfg, "title": "T2"})["title"] != base["title"]
+    assert fingerprints.preview_inputs(pdir, {**cfg, "platform": "bili"})["platform"] != base["platform"]
+    (presets / "纪实3min.json").write_text('{"a": 2}', encoding="utf-8")
+    changed = fingerprints.preview_inputs(pdir, cfg)
+    assert changed["preset"] != base["preset"]
+    assert fingerprints.changed(base, changed) == ["preset"]

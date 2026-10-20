@@ -199,3 +199,22 @@ def test_regenerate_questions_needs_consent(gui_server, monkeypatch):
     fake_command(monkeypatch, jobs, QUICK)
     status, data = post_job(gui_server, task="questions")
     assert status == 409 and data["need"] == "consent"
+
+
+# ---------------------------------------------------------------- M14 T5：manual 参数
+def test_confirm_with_manual_replace_passes_flag_to_select_job(gui_server, monkeypatch):
+    from gui import jobs
+    _project(gui_server)
+    seen = fake_command(monkeypatch, jobs, QUICK)
+    status, data = _save(gui_server, answers={"q1": "全部"}, confirmed=True, manual="replace")
+    assert status == 200 and data["job_id"]
+    assert seen == [("select", "p1", ["--manual=replace"])]
+
+
+def test_confirm_with_invalid_manual_is_400_and_answers_not_saved(gui_server, monkeypatch):
+    from gui import jobs
+    pdir = _project(gui_server)
+    seen = fake_command(monkeypatch, jobs, QUICK)
+    status, data = _save(gui_server, answers={"q1": "签字"}, confirmed=True, manual="nuke")
+    assert status == 400 and "manual" in data["error"]
+    assert not (pdir / "work/brief_answers.json").exists() and seen == []

@@ -206,3 +206,28 @@ def test_material_to_windows_package_dev_mode(material, world, consented, monkey
     assert [p.name for p in out.iterdir()] == [pkg.name]          # 不留 .partial 残片
     assert json.loads((world["root"] / tj.ROOT_META_NAME).read_text(
         encoding="utf-8"))["all_draft_store"] == []               # 导出不碰剪映草稿库
+
+
+def test_preview_then_export_promotes_the_same_preview(material, world, consented, monkeypatch,
+                                                       capsys):
+    """M14：先生成预览片（不产生版本），导出时晋升同一份预览片与时间线，再装草稿。"""
+    monkeypatch.setattr(proc, "FROZEN", True)
+    monkeypatch.setattr(tj, "jianying_running", lambda: False)
+    _prepare(material, world, capsys)
+    pdir, root = world["pdir"], world["root"]
+
+    assert aicut.run_cli(["preview", NAME]) == 0, capsys.readouterr().out
+    staging = pdir / "output/preview"
+    assert media_io.is_complete(staging / "preview.mp4")
+    assert [p.name for p in (pdir / "output").iterdir()] == ["preview"]  # 没有任何 vN
+
+    assert aicut.run_cli(["build", NAME, "--require-preview"]) == 0, capsys.readouterr().out
+    vdir = pdir / "output/v1"
+    assert (vdir / "preview.mp4").stat().st_ino == (staging / "preview.mp4").stat().st_ino
+    assert media_io.is_complete(vdir / "preview.mp4")
+    assert (vdir / "timeline.json").read_bytes() == (staging / "timeline.json").read_bytes()
+    entries = json.loads((root / tj.ROOT_META_NAME).read_text(encoding="utf-8"))["all_draft_store"]
+    assert [e["draft_name"] for e in entries] == [f"{NAME}_v1"]
+    res = validate_draft.check(str(root / f"{NAME}_v1"),
+                               expect=tj.expected(json.loads((vdir / "timeline.json").read_text(encoding="utf-8"))))
+    assert res["fails"] == [], res["fails"]

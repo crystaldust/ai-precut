@@ -19,6 +19,7 @@ LOG = applog.get("gui")
 Lookup = Callable[[str], Path]
 SAVED_BUT_STALE_MSG = "已保存，但没能读回最新状态，已重新读取"
 RESTORE_SHOTS_MAX = 500  # 撤销不可用时一次最多放回的镜头数（请求体上限；实际还要和备份核对）
+UNUSABLE_SHOTS_BUSY_MSG = shots_store.BUSY_MSG + "（标记已保存，手动分镜表里的相关镜头还没移除；出片前会自动剔除，也可稍后重试）"
 BAD_RESTORE_MSG = "restore_shots 必须是镜头列表（最多 {max} 镜）"
 MISSING_ID_MSG = "缺少 id"
 BAD_PARAM_MSG = "参数不对：id 必须是文本，{flag} 必须是 true 或 false"
@@ -343,10 +344,10 @@ def _post_browse_mark(path: str, body: dict, existing: Lookup) -> tuple[int, dic
 def _remove_manual_shots(pdir: Path, marked: list) -> list[dict]:
     """D12：手动分镜表里与不可用片段重叠的镜头整镜移除；没有分镜表不新建。返回被移除的完整镜头。
 
-    读-改-写在 shots_store.LOCK 内（与「保存分镜表」互斥）；真正移除之前先把原文件备份到 work/ 下。
+    读-改-写在 shots_store.locked 内（与「保存分镜表」互斥）；真正移除之前先把原文件备份到 work/ 下。
     """
     shots_path = pdir / "shots.json"
-    with shots_store.LOCK:
+    with shots_store.locked(pdir):
         if not shots_path.exists():
             return []
         raw = schema.read_json(shots_path)
@@ -379,7 +380,7 @@ def _restore_manual_shots(pdir: Path, clean: list[dict]) -> tuple[int, int]:
     → (放回几镜, 没放回几镜)
     """
     path = pdir / "shots.json"
-    with shots_store.LOCK:  # 与「保存分镜表」「标记不可用」互斥
+    with shots_store.locked(pdir):  # 与「保存分镜表」「标记不可用」互斥
         if not path.exists() or not clean:
             return 0, len(clean)
         raw = schema.read_json(path)
@@ -433,6 +434,8 @@ def _post_browse_unusable(path: str, body: dict, existing: Lookup) -> tuple[int,
         restored, skipped = _restore_manual_shots(pdir, restore) if restore else (0, 0)
     except (review.OverridesCorrupt, schema.CorruptJSON) as exc:  # 必须在 ValueError 之前
         return 409, {"error": str(exc)}
+    except shots_store.Busy:  # 标记已落盘，只是没能同步改手动分镜表：出片前会再剔一次（D12），重试同一操作即可
+        return 409, {"error": UNUSABLE_SHOTS_BUSY_MSG}
     except (ValueError, OSError) as exc:
         return 400, {"error": str(exc)}
     extra = {"removed_shots": removed, "restored": restored, "not_restored": skipped}

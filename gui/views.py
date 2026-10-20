@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from gui import jobs, wizard
-from pipeline import media_io, notices, proc, schema, select, usage
+from pipeline import fingerprints, media_io, notices, outputs, proc, schema, select, usage
 
 PRESET_CORRUPT_MSG = "已跳过预设「{name}」：{reason}"
 FFMPEG_VERSION_TIMEOUT_S = 5
@@ -23,15 +23,9 @@ def jload(p: Path, default=None):
     return schema.read_json_lenient(p, default)
 
 
-def _version_sort_key(d: Path) -> int:
-    return int(d.name[1:]) if d.name[1:].isdigit() else 0
-
-
 def _versions(pdir: Path, cfg: dict, name: str) -> list[dict]:
     versions = []
-    for d in sorted((pdir / "output").glob("v*"), key=_version_sort_key):
-        if not d.is_dir():
-            continue
+    for d in outputs.version_dirs(pdir):  # 已完成的 v<数字>；不含暂存 / 点目录 / 没有时间线的残目录
         tl = jload(d / "timeline.json", {})
         total = 0.0
         if tl.get("video"):
@@ -64,6 +58,7 @@ def project_state(pdir: Path, name: str) -> dict:
         # 没有手存分镜表时用选段结果预填；有就不覆盖（M2）
         "shots": manual or selected,
         "shots_from_selection": not manual and bool(selected),
+        "selection_digest": fingerprints.file_digest(work / "shots-selected.json"),  # 保存分镜表时带回，防止存进被「覆盖」换掉的选段
         "selection": select.summary(jload(work / "selection.json")),
         "warnings": notices.project_warnings(work),
         "material_duration": (jload(work / "materials.json", {}).get("items") or [{}])[0].get("duration", 0),
@@ -92,7 +87,7 @@ def projects_list(root: Path) -> list[dict]:
     for f in sorted(root.glob("*/project.json")):
         c = jload(f, {})
         pdir = f.parent
-        vs = sorted([d.name for d in (pdir / "output").glob("v*") if d.is_dir()])
+        vs = [d.name for d in outputs.version_dirs(pdir)]
         items.append({"name": c.get("name", pdir.name), "title": c.get("title", ""),
                       "preset": c.get("preset", ""), "versions": vs, "step": _step_of(pdir, c)})
     return items

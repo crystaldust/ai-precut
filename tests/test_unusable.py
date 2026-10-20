@@ -401,7 +401,7 @@ def test_shots_save_and_unusable_share_the_shots_lock(gui_server):
     results = []
     calls = [("/api/shots?project=p1", {"project": "p1", "shots": [{"id": "z", "in": 0, "out": 3}]}),
              ("/api/browse/unusable", {"project": "p1", "id": "S2", "unusable": True})]
-    with shots_store.LOCK:
+    with shots_store.thread_lock(gui_server.root / "p1"):
         threads = [threading.Thread(target=lambda c=c: results.append(call(gui_server, "POST", *c)[0]))
                    for c in calls]
         for t in threads:

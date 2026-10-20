@@ -55,6 +55,11 @@ class SelectionError(RuntimeError):
     """选段结果违反硬约束（必留段丢失）。"""
 
 
+CAUSE_EXCLUDED = "excluded"      # 你在决策问题里排除了这个话题
+CAUSE_NOT_MUST = "not_must"      # 话题一句都没入选：没勾选为必须记住的信息
+CAUSE_DURATION = "duration"      # 话题有入选，但时长用完了
+
+
 def fmt_duration(sec: float) -> str:
     """给人看的时长：「3 分 34 秒」/「45 秒」。"""
     sec = int(round(sec))
@@ -448,10 +453,12 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
              for i, s in enumerate(shots, 1)]
 
     used_ids = {s["segment_id"] for s in shots}
+    used_topics = {s.get("topic") for s in shots}
     unused = [{"segment_id": s["id"], "topic": s.get("topic"),
                "reason": ("话题未入选" if (s.get("topic") in exclude)
                           else "超出话题预算" if s.get("topic") in by_topic
-                          else "不在候选池")}
+                          else "不在候选池"),
+               "cause": _unused_cause(s.get("topic"), exclude, used_topics)}
               for s in segments
               if s.get("level") == 3 and s["id"] not in used_ids]
     report = _must_keep_report(segments, shots, covered, target, total)
@@ -567,7 +574,14 @@ def _current_rules(answers: dict, questions: dict | None, stored: dict | None,
     return fresh
 
 
-def _with_lines(segments: list[dict], segments_path: Path) -> list[dict]:
+def _unused_cause(topic: str | None, exclude: set, used_topics: set) -> str:
+    """M14 Q4：未采用的原因归类。选段没有去重判断，所以没有「重复」这一类（KI-101）。"""
+    if topic in exclude:
+        return CAUSE_EXCLUDED
+    return CAUSE_DURATION if topic in used_topics else CAUSE_NOT_MUST
+
+
+def with_lines(segments: list[dict], segments_path: Path) -> list[dict]:
     """KI-01：从 segments.json 取分句时间码（只放在内存里，不写进镜头 / selection.json）。
 
     文件缺失或损坏 → 没有分句，字幕按时长比例截；损坏已由 notices 在警告栏点名。
@@ -600,7 +614,7 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
 
     out_dir = Path(out_dir)
     overrides = review.load(out_dir)
-    segments = _with_lines(review.apply(scored_segments, overrides), out_dir / "segments.json")
+    segments = with_lines(review.apply(scored_segments, overrides), out_dir / "segments.json")
     if not all("signals" in x for x in segments):  # KI-06：旧项目的 scored 段没并入音频信号 → 回填
         audio = classify.load_audio_signals(out_dir / "segments_audio.json")
         segments = [x if "signals" in x else {**x, "signals": dict(audio.get(x["id"]) or {})}
