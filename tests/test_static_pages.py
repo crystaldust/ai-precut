@@ -107,7 +107,7 @@ def test_renumber_not_position_based():
 # ---------------------------------------------------------------- M2 目标时长
 def test_new_project_asks_target():
     src = _read("index.html")
-    assert 'id="npTarget"' in src
+    assert "durationFields('np'" in src
     create = src[src.index("async function createProject"):]
     assert "target" in create[:create.index("\n}")]
 
@@ -256,3 +256,21 @@ def test_confirm_page_offers_regenerate_for_stale_questions():  # KI-86
 @pytest.mark.parametrize("name", ["index.js", "browse.js"])
 def test_video_play_rejections_are_handled(name):  # 审查修复 L10
     assert re.findall(r"\.play\(\)(?!\.catch)", _html(name)) == []
+
+
+def test_new_project_duration_is_free_input_above_preset():
+    src = _read("index.html")
+    body = src[src.index("async function openNew"):src.index("function syncTarget")]
+    assert "durationFields('np'" in body and 'id="npTarget"' not in body
+    assert body.index("durationFields('np'") < body.index('id="npPreset"')  # 时长在预设上面
+    assert "esc(p.duration)" not in body                                     # 下拉里不再写死时长
+    create = src[src.index("async function createProject"):]
+    assert "readDuration('np')" in create[:create.index("\n}")]
+
+
+def test_retarget_modal_uses_minutes_and_seconds():
+    src = _read("index.html")
+    body = src[src.index("function openTarget"):src.index("function saveTarget")]
+    assert "durationFields('tgt'" in body and 'id="tgtInput"' not in body
+    save = src[src.index("function saveTarget"):]
+    assert "readDuration('tgt')" in save[:save.index("\n}")]

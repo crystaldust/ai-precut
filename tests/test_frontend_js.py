@@ -311,3 +311,64 @@ def test_action_dispatch_uses_innermost_target():
       hits;
     """)
     assert out == ["move:2:click", "pick:2"]
+
+
+# ---------------------------------------------------------------- 目标时长：分 + 秒自由填写，不受预设限制
+DURATION_HARNESS = r"""
+const vm = require('vm');
+const [src, script] = JSON.parse(process.argv[1]);
+const els = {};
+const ctx = {console, els, state: {presets: []}};
+ctx.$ = s => els[s] || null;
+ctx.num = v => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+ctx.esc = String;
+vm.createContext(ctx);
+vm.runInContext(src, ctx);
+process.stdout.write(JSON.stringify(vm.runInContext(script, ctx)));
+"""
+
+
+def _duration_src() -> str:
+    src = (STATIC / "index.js").read_text(encoding="utf-8")
+    parts = [m.group(0) for m in re.finditer(r"const (TARGET_MIN_SEC|TARGET_MAX_SEC)\b.*\n", src)]
+    for name in ("durationFields", "readDuration", "syncTarget", "markTargetTouched"):
+        m = re.search(r"function " + name + r"\([^)]*\)\{[\s\S]*?\n\}\n", src)
+        assert m, name
+        parts.append(m.group(0))
+    return "\n".join(parts).replace("const ", "var ")
+
+
+def run_duration(script: str):
+    args = json.dumps([_duration_src(), script])
+    r = subprocess.run([NODE, "-e", DURATION_HARNESS, args], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+@pytest.mark.parametrize("mins,secs,expected", [
+    ("5", "30", 330), ("10", "", 600), ("", "45", 45), ("60", "0", 3600), ("3", "0", 180),
+    ("60", "1", 0), ("0", "5", 0), ("1", "60", 0), ("-1", "30", 0), ("1.5", "0", 0), ("", "", 0), ("abc", "0", 0),
+])
+def test_read_duration_accepts_any_minutes_and_seconds(mins, secs, expected):
+    out = run_duration(f"els['#tMin'] = {{value: {json.dumps(mins)}}}; els['#tSec'] = {{value: {json.dumps(secs)}}};"
+                       "readDuration('t')")
+    assert out == expected
+
+
+def test_duration_fields_split_seconds_into_minutes_and_seconds():
+    html = run_duration("durationFields('np', 330)")
+    assert 'id="npMin"' in html and 'value="5"' in html
+    assert 'id="npSec"' in html and 'value="30"' in html
+
+
+def test_switching_preset_keeps_hand_typed_duration():
+    out = run_duration("""
+      state.presets = [{key:'a', duration:175}, {key:'b', duration:45}];
+      els['#npPreset'] = {value:'a'}; els['#npMin'] = {value:''}; els['#npSec'] = {value:''};
+      syncTarget();
+      const first = [els['#npMin'].value, els['#npSec'].value];
+      els['#npMin'].value = '8'; els['#npSec'].value = '0'; markTargetTouched();
+      els['#npPreset'].value = 'b'; syncTarget();
+      [first, [els['#npMin'].value, els['#npSec'].value]];
+    """)
+    assert out == [["2", "55"], ["8", "0"]]

@@ -11,7 +11,9 @@ const COPY_TARGET_ASK = '想剪成多长？';
 const COPY_TARGET_BUTTON = '按这个时长重新选段';
 const COPY_TARGET_LATER = '先不改';
 const COPY_TARGET_MANUAL_NOTE = '你已经手动编辑过分镜表，重新选段的结果不会覆盖它，只会更新「浏览素材」里的建议';
-const COPY_NEW_TARGET_LABEL = '想剪成多长（秒）· 预设只是默认值';
+const COPY_NEW_TARGET_LABEL = '成片时长（自己定，预设只给默认值）';
+const COPY_TARGET_RANGE = '时长要在 10 秒到 60 分钟之间（秒填 0–59 的整数）';
+const TARGET_MIN_SEC = 10, TARGET_MAX_SEC = 3600;  // 与 pipeline/schema.py 的 TARGET_MIN / TARGET_MAX 一致
 const COPY_WARNBAR_TITLE = '需要你留意';
 const COPY_CONFIRM_ENTRY = '确认与提问';  // KI-05：确认页入口（确认后自动按答案重新选段）
 const TOAST_ERROR_MS = 6000;
@@ -450,21 +452,40 @@ function openTarget(fromOverrun){
   const manual = state.data?.shots_from_selection === false && state.shots.length;
   showModal(over ? COPY_MUST_KEEP_OVER_TITLE : COPY_TARGET_TITLE, `
     ${head ? `<p>${esc(head)}</p>` : ''}
-    <div class="field"><label>${esc(COPY_TARGET_ASK)}（秒）</label>
-      <input id="tgtInput" type="number" min="10" max="3600" value="${num(value) || ''}"></div>
+    <div class="field"><label>${esc(COPY_TARGET_ASK)}</label>${durationFields('tgt', value)}</div>
     ${manual ? `<p class="hint">${esc(COPY_TARGET_MANUAL_NOTE)}</p>` : ''}
     <button class="primary" data-act="saveTarget">${esc(COPY_TARGET_BUTTON)}</button>
     <button class="ghost" data-act="closeModal">${esc(COPY_TARGET_LATER)}</button>`);
 }
 function saveTarget(){
-  const t = num($('#tgtInput')?.value);
-  if(!t) return toast(COPY_TARGET_ASK);
+  const t = readDuration('tgt');
+  if(!t) return toast(COPY_TARGET_RANGE);
   closeModal();
   startJob('select', {target: t});
 }
 
+/* 时长输入：分 + 秒两个框，任意时长（10 秒–60 分钟），不受预设限制 */
+function durationFields(prefix, sec){
+  sec = Math.round(num(sec));
+  const m = sec ? Math.floor(sec/60) : '', s = sec ? sec%60 : '';
+  return `<div style="display:flex;gap:6px;align-items:center">
+    <input id="${prefix}Min" type="number" min="0" max="60" step="1" value="${m}" style="width:80px" data-input="markTargetTouched"> 分
+    <input id="${prefix}Sec" type="number" min="0" max="59" step="1" value="${s}" style="width:80px" data-input="markTargetTouched"> 秒
+  </div>`;
+}
+function readDuration(prefix){
+  const part = id => { const v = String($('#'+prefix+id)?.value ?? '').trim();
+    return v === '' ? 0 : (/^\d+$/.test(v) ? Number(v) : NaN); };
+  const m = part('Min'), s = part('Sec');
+  if(!(s < 60)) return 0;  // NaN 也走这里
+  const total = m*60 + s;
+  return total >= TARGET_MIN_SEC && total <= TARGET_MAX_SEC ? total : 0;
+}
+function markTargetTouched(){ state.npTouched = true; }
+
 /* ---------------- 新建项目 ---------------- */
 async function openNew(){
+  state.npTouched = false;
   const {presets, warnings} = await api('/api/presets');
   state.presets = presets;
   const presetWarn = (warnings||[]).map(w=>`<div class="hint" style="color:var(--warn)">${esc(w)}</div>`).join('');
@@ -476,19 +497,20 @@ async function openNew(){
       </div></div>
     <div class="field"><label>项目名（文件夹名，别用斜杠）</label><input id="npName" placeholder="例如 2026-09-15_探店"></div>
     <div class="field"><label>片名（会显示在剪映草稿上）</label><input id="npTitle" placeholder="例如 九月一号"></div>
+    <div class="field"><label>${esc(COPY_NEW_TARGET_LABEL)}</label>${durationFields('np', 0)}</div>
     <div class="field"><label>风格预设</label>
-      <select id="npPreset" data-change="syncTarget">${presets.map(p=>`<option value="${esc(p.key)}">${esc(p.name)}（${esc(p.duration)}s·${esc(p.platform)}）</option>`).join('')}</select>
+      <select id="npPreset" data-change="syncTarget">${presets.map(p=>`<option value="${esc(p.key)}">${esc(p.name)} · ${esc(p.platform)}</option>`).join('')}</select>
       ${presetWarn}
     </div>
-    <div class="field"><label>${esc(COPY_NEW_TARGET_LABEL)}</label>
-      <input id="npTarget" type="number" min="10" max="3600"></div>
     <button class="primary" data-act="createProject">创建</button>
     <button class="ghost" data-act="closeModal">取消</button>`);
   syncTarget();
 }
-function syncTarget(){
-  const p = (state.presets||[]).find(x=>x.key===$('#npPreset')?.value);
-  if($('#npTarget')) $('#npTarget').value = num(p?.duration) || '';
+function syncTarget(){  // 换预设只在剪辑师还没自己填过时长时带出默认值
+  if(state.npTouched || !$('#npMin')) return;
+  const sec = Math.round(num((state.presets||[]).find(x=>x.key===$('#npPreset')?.value)?.duration));
+  $('#npMin').value = sec ? String(Math.floor(sec/60)) : '';
+  $('#npSec').value = sec ? String(sec%60) : '';
 }
 async function pickFile(){
   const {path} = await api('/api/pick', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
@@ -498,9 +520,9 @@ async function pickFile(){
 }
 async function createProject(){
   const material=$('#npPath').value, name=$('#npName').value.trim(), title=$('#npTitle').value.trim();
-  const preset=$('#npPreset').value, target=num($('#npTarget').value);
+  const preset=$('#npPreset').value, target=readDuration('np');
   if(!material) return toast('先选素材');
-  if(!target) return toast(COPY_TARGET_ASK);
+  if(!target) return toast(COPY_TARGET_RANGE);
   if(!name) return toast('填个项目名');
   try{
     await api('/api/new', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -558,6 +580,7 @@ async function openJianying(){ await api('/api/open', {method:'POST', headers:{'
 
 /* ---------------- 事件委托（KI-53：页面里没有 on* 属性） ---------------- */
 Object.assign(ACTIONS, {
+  markTargetTouched: ()=>markTargetTouched(),
   openNew: ()=>openNew(), openBuild: ()=>openBuild(), openConfirm: ()=>openConfirm(),
   openBrowse: ()=>openBrowse(), openCalibrate: ()=>openCalibrate(), openTarget: ()=>openTarget(false),
   openFolder: ()=>openFolder(), openJianying: ()=>openJianying(), openCache: ()=>openCache(),
