@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pipeline import media_io
 
-CLIPS_LABEL = "镜头切片缓存（重新生成成片、导出旧版本时按需重新切）"
+CLIPS_LABEL = "镜头切片缓存（生成新版本、导出旧版本时按需重新切）"
 PARTIAL_LABEL = "未完成的临时文件"
 WAV_LABEL = "转写用音轨（转写与声音分析已完成）"
 CLIPS_DIR = "work/clips"

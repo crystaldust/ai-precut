@@ -83,7 +83,7 @@ def test_export_without_snapshot_dies_with_clear_reason(project, monkeypatch, tm
         aicut.cmd_export(argparse.Namespace(name="p", timeline=str(vdir / "timeline.json"),
                                             package_name=None, out=str(tmp_path)))
     out = capsys.readouterr().out
-    assert "重新生成成片" in out and "v1" in out
+    assert "生成新版本" in out and "v1" in out
 
 
 def test_clean_dialog_says_old_versions_recut_on_demand():

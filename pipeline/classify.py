@@ -33,11 +33,11 @@ ANNOTATION_FAILED_REASON = "AI 标注失败，需要你判断"
 PENDING_DEMOTED_REASON = "待定队列超限，按信息量判定为废片"
 DARK_REASON = "画面过暗，不可用"
 TEXT_INCOMPLETE_ERROR = ("逐句标注未完成（segments_text.json 标记为未完成），不能据此分档："
-                         "先重新运行「处理素材」或 `aicut.py text` 补齐")
+                         "先在「② 分析」点「重新分析」或运行 `aicut.py text` 补齐")
 LEGACY_FAILED_WARNING = ("{n} 句 AI 标注失败（旧版结果），已放进待定由你判断；"
-                         "想让 AI 补标注，删掉 work/segments_text.json 后重新运行「处理素材」")
+                         "想让 AI 补标注，删掉 work/segments_text.json 后在「② 分析」点「重新分析」")
 AUDIO_MISSING_WARNING = ("没有声音特征（segments_audio.json）：本次分档没用上音量 / 语速 / 抢话，"
-                         "重新点「① 处理素材」可补上")
+                         "在「② 分析」点「重新分析」可补上")
 VISUAL_MISSING_WARNING = "没有画面质量结果（visual_quality.json）：本次分档没有识别过暗画面"
 PENDING_OVER_WARNING = ("待定 {left} 段超过上限 {limit} 段：其中 {kept} 段属于必留话题或 AI 标注失败，"
                         "不自动降级，需要你逐条裁决")

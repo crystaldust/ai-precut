@@ -63,7 +63,7 @@ def test_export_rejects_bad_version(gui_server, seen, version):
 def test_export_requires_timeline(gui_server, seen):
     project(gui_server)
     status, data = export(gui_server, "v9")
-    assert status == 400 and "先生成成片" in data["error"]
+    assert status == 400 and "生成新版本" in data["error"]
     assert seen == []
 
 

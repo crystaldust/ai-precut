@@ -22,6 +22,10 @@ QUESTIONS = [
 ]
 
 
+AUDIENCE_MAX = 60      # 字数上限（normalize 会截断；接口层先拒绝，不静默截断）
+MUST_LINES_MAX_CHARS = 200
+
+
 def normalize(calib: dict | None) -> dict:
     calib = calib or {}
     tone = str(calib.get("tone") or "balanced").strip()
@@ -29,8 +33,8 @@ def normalize(calib: dict | None) -> dict:
         tone = "balanced"
     return {
         "tone": tone,
-        "audience": str(calib.get("audience") or "").strip()[:60],
-        "must_lines": str(calib.get("must_lines") or "").strip()[:200],
+        "audience": str(calib.get("audience") or "").strip()[:AUDIENCE_MAX],
+        "must_lines": str(calib.get("must_lines") or "").strip()[:MUST_LINES_MAX_CHARS],
     }
 
 

@@ -9,17 +9,17 @@ from pathlib import Path
 
 from pipeline import schema, understand_text
 
-TEXT_INCOMPLETE_NOTICE = "上次逐句标注没有完成，部分句子还没有 AI 标注：重新点「① 处理素材」只会补跑这些句子"
+TEXT_INCOMPLETE_NOTICE = "上次逐句标注没有完成，部分句子还没有 AI 标注：在「② 分析」点「重新分析」只会补跑这些句子"
 MISSING_TOPICS_NOTICE = "这些必留话题在成片里没有镜头：{topics}"
-SUMMARY_FALLBACK_NOTICE = "内容摘要是兜底生成的（AI 调用失败：{error}）：重新点「① 处理素材」会再试"
+SUMMARY_FALLBACK_NOTICE = "内容摘要是兜底生成的（AI 调用失败：{error}）：在「② 分析」点「重新分析」会再试"
 QUESTIONS_FALLBACK_NOTICE = ("决策问题是兜底模板生成的（AI 调用失败：{error}）："
-                             "还没作答时重新点「① 处理素材」会重新生成")
+                             "还没作答时在「② 分析」点「重新分析」会重新生成")
 UNKNOWN_REASON = "原因未记录"
 CORRUPT_FILE_NOTICE = "{label}（{rel}）损坏、读不出来，界面上按「没有」显示：{remedy}"
-REMEDY_REBUILD = "重新点「① 处理素材」会重建"
-REMEDY_RESELECT = "点「改目标时长」重新选段会重建"
-REMEDY_REANSWER = "到「确认与提问」页重新作答"
-REMEDY_REBUILD_VERSION = "重新「② 生成成片」会重建这一版"
+REMEDY_REBUILD = "在「② 分析」点「重新分析」会重建"
+REMEDY_RESELECT = "在「⑤ 看结果」改目标时长或重新选段会重建"
+REMEDY_REANSWER = "到「④ 定标准」重新作答"
+REMEDY_REBUILD_VERSION = "在「⑥ 导出」生成新版本会重建这一版"
 CORRUPT_SHOTS_NOTICE = ("分镜表（shots.json）损坏、读不出来，界面上显示的是自动选段结果："
                         "在「分镜表」里重新保存会覆盖它")
 TIMELINE_LABEL = "{version} 的时间线"

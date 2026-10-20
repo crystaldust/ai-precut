@@ -210,7 +210,7 @@ def test_must_keep_over_target_never_trimmed_and_reported():
     assert res["must_keep_total"] == 30.0
     assert res["over_target"] is True
     assert res["suggested_target"] == 30
-    assert "必留内容共" in res["over_target_warning"]
+    assert "剪辑列表共" in res["over_target_warning"]
     assert res["warnings"] == []  # 超目标提示单独一个字段，不靠下标切片
 
 

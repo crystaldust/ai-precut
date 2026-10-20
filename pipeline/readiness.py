@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import secrets
+from pipeline import schema, secrets
 
 TRANSCRIPT_RAW = "transcript_raw.json"  # 与 aicut.cmd_transcribe 的跳过条件一致
-# 「处理素材」依次跑的步骤（aicut.cmd_<名>），每段计时进 work/timings.json
-PREPARE_STEPS = ("ingest", "transcribe", "analyze", "text", "junk", "scenes", "quality",
+# 「分析」依次跑的步骤（aicut.cmd_<名>），每段计时进 work/timings.json。
+# M13 D10：顺序 = 界面「② 分析」的人话列表顺序（浏览小样提到转写前；总耗时不变，本来就是串行）
+PREPARE_STEPS = ("ingest", "junk", "transcribe", "analyze", "scenes", "quality", "text",
                  "score", "summary", "questions", "select", "brief")
+ANALYSIS_STAMP = "analysis_inputs.json"  # 分析成功时写：当时的剪辑偏好 + 预设指纹（判断「需要更新」）
 # `aicut status` 逐项列出的产物（标签, 相对项目目录的路径）
 STATUS_ARTIFACTS = (
     ("素材台账", "work/materials.json"), ("音轨", "work/audio/asr.wav"),
@@ -25,6 +27,15 @@ STATUS_ARTIFACTS = (
     ("人工裁决", "work/overrides.json"), ("策划分派单", "work/brief.md"),
     ("分镜表", "shots.json"), ("选段时间线", "work/shots-selected.json"),
 )
+
+
+def write_analysis_stamp(work: Path, inputs: dict) -> None:
+    """分析全部成功后记下输入戳；失败时不调用，旧戳保持不变。
+
+    inputs 是分析**开始时**取的指纹（fingerprints.analysis_inputs），不是结束时重算的：
+    分析过程中改了偏好，结束后才能显示「需要更新」（与 select.run 同一做法）。
+    """
+    schema.write_json(Path(work) / ANALYSIS_STAMP, inputs)
 
 
 def needed_keys(work: Path) -> list[str]:

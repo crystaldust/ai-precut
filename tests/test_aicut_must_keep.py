@@ -120,7 +120,7 @@ def test_select_target_saves_and_only_reselects(monkeypatch, tmp_path, capsys):
     assert seen["target"] == 300
     assert _cfg(pdir / "project.json")["target_duration"] == 300
     out = capsys.readouterr().out
-    assert "必留 2 段" in out
+    assert "剪辑列表 2 段" in out
 
 
 def test_select_failure_does_not_persist_target(monkeypatch, tmp_path):
@@ -156,7 +156,7 @@ def test_select_over_target_prints_hint(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     assert "[!]" in out and "--target 215" in out and "3 分 34 秒" in out
     assert "[!] 其它警告" in out
-    assert out.count("必留内容共") == 1  # 超目标只提示一次（带改时长命令的那条）
+    assert out.count("剪辑列表共") == 1  # 超目标只提示一次（带改时长命令的那条）
 
 
 def test_select_guard_failure_dies(monkeypatch, tmp_path, capsys):
@@ -239,7 +239,7 @@ def test_build_blocks_when_storyboard_misses_must_keep(monkeypatch, tmp_path, ca
     with pytest.raises(SystemExit):
         aicut.cmd_build(Namespace(name="p", version=None, no_draft=True))
     out = capsys.readouterr().out
-    assert "[x] 分镜表缺少 1 段必留内容" in out
+    assert "[x] 分镜表缺少 1 段剪辑列表里的片段" in out
     assert "九千八包含耗材" in out and "01:10" in out
     assert not (pdir / "output").exists()
 

@@ -35,7 +35,7 @@ from pipeline import (applog, build_documentary, classify, cloud, consent, disks
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
                       select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
                       usage)
-from pipeline import brief, cli_args, clips, config_cli, project_cli, project_lock, transcript_stamp  # noqa: E402
+from pipeline import brief, cli_args, clips, config_cli, fingerprints, project_cli, project_lock, transcript_stamp  # noqa: E402
 from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
 from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
 from pipeline.prompts import ask_calibration, ask_target  # noqa: E402,F401 - 测试按 aicut.<名> 打桩
@@ -69,14 +69,14 @@ def warn(msg: str) -> None:
 
 
 TEXT_PARTIAL_WARNING = ("上次逐句标注没有完成（work/segments_text.partial.json），"
-                        "这次分档用的是上一次完整的标注结果；重新运行「处理素材」可补齐")
+                        "这次分档用的是上一次完整的标注结果；在「② 分析」点「重新分析」可补齐")
 TARGET_CHANGED = "目标时长已改为 {target}，只重跑选段"
 DRAFT_LOG_LINES = 40  # 草稿失败时打印的日志行数（按行截，不按字符，KI-60）
 DRAFT_NOT_INSTALLED = "草稿未安装（已回滚，剪映草稿库保持原样）"
-PREPARE_KEYS_MISSING = ("缺少 {names}：在剪辑台「⚙ 设置 · API Key」里填写，"
+PREPARE_KEYS_MISSING = ("缺少 {names}：在剪辑台「更多 → 设置 · API Key」里填写，"
                         "或运行 `uv run python aicut.py config set <mediakit|deepseek>`")
 DIR_NOT_EMPTY = "{pdir} 已存在且不是空目录（也不是项目），换个项目名"
-MUST_KEEP_OVER_HINT = ("必留内容共 {must}，超过目标 {target}。想剪成多长？"
+MUST_KEEP_OVER_HINT = ("剪辑列表共 {must}，超过目标 {target}。想剪成多长？"
                        "运行：aicut.py select {name} --target <秒>（建议 --target {suggest}）")
 INGEST_FAILED = "素材读不出来：{reason}"
 PRESET_MISSING = "找不到预设 {preset}（presets/{preset}.json），可用：{names}"
@@ -472,7 +472,7 @@ def cmd_select(args) -> None:
 def _report_selection(res: dict, name: str) -> None:
     missing, must_n = res["missing_must_topics"], res["stats"].get("must_keep", 0)
     ok(f"选段 {res['stats']['shots']} 镜 · {res['total']:.0f}s / 目标 {res['target']:.0f}s"
-       + (f" · 必留 {must_n} 段" if must_n else "")
+       + (f" · 剪辑列表 {must_n} 段" if must_n else "")
        + (f" · 未覆盖必留话题 {len(missing)}" if missing else ""))
     if res.get("over_target"):
         warn(MUST_KEEP_OVER_HINT.format(must=select.fmt_duration(res["must_keep_total"]),
@@ -658,9 +658,11 @@ def cmd_prepare(args) -> None:
         die(problem)
     if low := diskspace.shortfall(pdir, prepare_need(pdir)):
         die(low)  # KI-33：抽音轨 / 代理之前确认磁盘够（只算还没完成的，M5）
+    stamp_inputs = fingerprints.analysis_inputs(cfg(pdir))  # 开始时取指纹，成功后写这一份
     for step in readiness.PREPARE_STEPS:  # 每段计时进 work/timings.json（GL-19，诊断包会带上）
         with applog.stage(pdir / "work", step):
             globals()[f"cmd_{step}"](args)
+    readiness.write_analysis_stamp(pdir / "work", stamp_inputs)  # M13：全部成功才写戳（失败已 die，不会走到这里）
     ok("前期处理完成，可以去挑镜头了")
 
 

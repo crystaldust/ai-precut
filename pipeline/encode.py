@@ -26,7 +26,7 @@ def h264_args(kind: str) -> list[str]:
 
 # ------------------------------------------------------------------ 预检（GL-04）
 # 付费步骤（转写 / LLM）之前先确认本机真能用 VideoToolbox 出片，免得钱花了最后切片失败
-ENCODER_UNAVAILABLE = ("本机无法使用 VideoToolbox 硬件编码（{detail}），处理素材后也无法生成切片和预览，"
+ENCODER_UNAVAILABLE = ("本机无法使用 VideoToolbox 硬件编码（{detail}），分析后也无法生成切片和预览，"
                        "已在调用云端之前停下。请确认是 Apple 芯片 Mac 并重启电脑后再试；仍不行请导出诊断包发给开发者")
 PREFLIGHT_SOURCE = "color=c=black:s=320x240:r=30:d=0.1"
 PREFLIGHT_TIMEOUT_S = 20

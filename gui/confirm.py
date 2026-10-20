@@ -11,10 +11,19 @@ from datetime import datetime
 from pathlib import Path
 
 from gui import jobs, payloads
-from pipeline import questions, schema, select_rules
+from pipeline import fingerprints, questions, schema, select_rules
 
 RESELECT_TASK = "select"
 ANSWERS_NOT_OBJECT = "answers 必须是对象（{题目 id: 选项}）"
+
+
+def _stored_confirmed(work: Path) -> bool:
+    """草稿保存（body 没带 confirmed）沿用文件里原来的确认状态；文件坏了当没确认（KI-49 同款，不让保存 409）。"""
+    try:
+        stored = schema.read_json(work / questions.ANSWERS_FILE, default={})
+    except schema.CorruptJSON:
+        return False
+    return stored.get("confirmed") is True
 
 
 def save_answers(pdir: Path, name: str, body: dict) -> dict:
@@ -26,12 +35,13 @@ def save_answers(pdir: Path, name: str, body: dict) -> dict:
     if questions_def is None:
         raise FileNotFoundError(payloads.NO_QUESTIONS_MSG)
     answers = questions.normalize_answers(questions_def, raw)  # KI-49
-    confirmed = bool(body.get("confirmed", False))
+    confirmed = (body["confirmed"] is True) if "confirmed" in body else _stored_confirmed(work)
     schema.write_json(work / questions.ANSWERS_FILE, {
         "answers": answers, "rules": select_rules.rules_from_answers(answers, questions_def),
         "rules_version": select_rules.RULES_VERSION,  # KI-84
-        "confirmed": confirmed, "at": datetime.now().isoformat(timespec="seconds")})
-    if not confirmed:
+        "confirmed": confirmed, "questions_digest": fingerprints.file_digest(work / "questions.json"),
+        "at": datetime.now().isoformat(timespec="seconds")})
+    if body.get("confirmed") is not True:  # 只有显式确认才起选段；草稿保存不动原来的确认状态
         return {"ok": True, "job_id": None}
     try:  # select 是本地计算：不外发、不需要 Key，不走 prepare 的前置检查
         return {"ok": True, "job_id": jobs.start_job(name, RESELECT_TASK, [])}

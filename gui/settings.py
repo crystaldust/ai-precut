@@ -14,7 +14,7 @@ from pipeline import applog, consent, encode, readiness, secrets
 KEY_RE = re.compile(r"[\x21-\x7e]{8,512}")  # 可打印 ASCII、无空白
 
 NEED_CONSENT_MSG = "请先阅读并确认数据外发说明"
-NEED_KEYS_MSG = "还没有填写 API Key：{names}。请在「⚙ 设置 · API Key」里填写"
+NEED_KEYS_MSG = "还没有填写 API Key：{names}。请在「更多 → 设置 · API Key」里填写"
 UNKNOWN_PROVIDER_MSG = "未知的 Key 类型"
 BAD_KEY_MSG = "Key 格式不对：应为 8–512 位、不含空格的英文字母 / 数字 / 符号"
 SAVE_FAILED_MSG = "保存失败：无法写入钥匙串或配置文件"

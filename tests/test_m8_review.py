@@ -113,9 +113,9 @@ def test_corrupt_answers_notice_says_reanswer(tmp_path):
     _w(work / "segments.json", "{坏")
     text = "\n".join(notices.project_warnings(work))
     line = next(w for w in text.splitlines() if "brief_answers.json" in w)
-    assert "确认与提问" in line and "重新作答" in line and "处理素材" not in line
+    assert "④ 定标准" in line and "重新作答" in line and "处理素材" not in line
     seg_line = next(w for w in text.splitlines() if "segments.json" in w)
-    assert "处理素材" in seg_line
+    assert "② 分析" in seg_line
 
 
 # ---------------------------------------------------------------- MEDIUM 3：容器里没有时长

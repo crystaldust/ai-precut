@@ -14,30 +14,31 @@ import json
 import re
 from pathlib import Path
 
-from pipeline import classify, review, schema, select_rules, shot_sub
+from pipeline import classify, fingerprints, review, schema, select_rules, shot_sub
 
 HARD_TYPES = {"金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑"}
 MIN_SHOT = 1.5      # 最短镜头
 MAX_SHOT = 25.0     # 最长镜头，超过就截断（访谈镜头可以长一点）
-MUST_KEEP_REASON = "剪辑师标记必留"
+MUST_KEEP_REASON = "剪辑列表里的片段"
 TOTAL_TOLERANCE = 1.10       # PRD FR-7：总时长 ±10%
 TARGET_ROUND_STEP = 5        # 建议目标时长向上取整到 5 秒
 MUST_KEEP_EDGE_TOLERANCE = 0.2  # 秒：必留段没被分镜表覆盖的总时长只容许帧/取整误差
 _EPS = 1e-6
-MUST_KEEP_OVER_WARNING = "必留内容共 {must}，超过目标 {target}：已全部保留，请重新设定成片时长"
+MUST_KEEP_OVER_WARNING = "剪辑列表共 {must}，超过目标 {target}：已全部保留，请重新设定成片时长"
 TOTAL_OVER_WARNING = "成片 {total} 超出目标 {target} 的 +10%"
-MUST_KEEP_EMPTY_WARNING = "必留段 {ids} 时长为 0，无法进片：请检查转写时间码，或在「浏览素材」取消★"
-BUDGET_LEGACY_WARNING = "话题数据是旧版本，没能按新目标重新分配话题时长；重新运行 score（或「处理素材」）后再选段"
-MUST_KEEP_MISSING = "分镜表缺少 {n} 段必留内容：{items}；{remedy}"
-MUST_KEEP_REMEDY_MANUAL = "在分镜表里加回，或在「浏览素材」取消★后再出片"
-MUST_KEEP_REMEDY_SELECTED = "重新选段（「改目标时长」或重新「处理素材」）后再出片，或在「浏览素材」取消★"
+MUST_KEEP_EMPTY_WARNING = "剪辑列表里的片段 {ids} 时长为 0，无法进片：请检查转写时间码，或在「③ 看素材」把它移出剪辑列表"
+BUDGET_LEGACY_WARNING = "话题数据是旧版本，没能按新目标重新分配话题时长；重新运行 score（或在「② 分析」点「重新分析」）后再选段"
+MUST_KEEP_MISSING = "分镜表缺少 {n} 段剪辑列表里的片段：{items}；{remedy}"
+MUST_KEEP_LOST_ERROR = "剪辑列表里的片段未进片：{ids}"
+MUST_KEEP_REMEDY_MANUAL = "在分镜表里加回，或在「③ 看素材」把它移出剪辑列表后再出片"
+MUST_KEEP_REMEDY_SELECTED = "重新选段（在「⑤ 看结果」改目标时长或重新选段）后再出片，或在「③ 看素材」把它移出剪辑列表"
 MUST_KEEP_MISSING_SHOWN = 5  # 报错里最多列几段
 MUST_LINE_TOO_SHORT = "指定必须保留的原话「{line}」所在的句子不足 {min} 秒，没能单独成镜"
 MUST_LINE_NOT_COVERED = "指定必须保留的原话「{line}」没能完整进片：请在分镜表里手动调整这一镜的入出点"
 COVER_TOLERANCE = 0.01   # 秒：出入点取两位小数的误差
 MUST_TOPIC_UNMATCHED = "必留话题「{topic}」对不上任何话题，已忽略"
 EXCLUDE_TOPIC_UNMATCHED = "排除话题「{topic}」对不上任何话题，没有排除任何内容"
-ANSWER_UNMATCHED = "答案「{label}」不在当前的决策问题里（问题可能已重新生成），已忽略：请到「确认与提问」重新作答"
+ANSWER_UNMATCHED = "答案「{label}」不在当前的决策问题里（问题可能已重新生成），已忽略：请到「④ 定标准」重新作答"
 # 结尾关键词（D4）：只收「动作已经发生」的说法；「走进」「谢谢」这类泛词会把任意镜头挪到片尾（KI-02）
 END_KEYWORDS = {
     "sign": ("签合同", "签字", "签约", "签了", "缴费", "交钱", "转账", "付款", "刷卡"),
@@ -47,7 +48,7 @@ EMOTION_MIN_REL_DB = 1.0   # 情绪结尾：音量至少高于中位 1dB 才算�
 ENDING_SILENCE_WARNING = "结尾选了「留白」：程序不会自动加空镜，请在剪映里手动补"
 ENDING_NOT_FOUND_WARNING = "结尾偏好「{label}」没找到合适的镜头，结尾保持时间顺序：可在分镜表里手动调整"
 ENDING_LABELS = {"sign": "签约 / 缴费", "leave": "离开", "emotion": "最有力的句子", "info": "最后一个关键信息"}
-OVERRIDES_STALE_WARNING = "{n} 条人工裁决对应的句子在重新分析后变了，已不套用：{ids}；请在「浏览素材」重新标"
+OVERRIDES_STALE_WARNING = "{n} 条人工裁决对应的句子在重新分析后变了，已不套用：{ids}；请在「③ 看素材」重新标"
 
 
 class SelectionError(RuntimeError):
@@ -222,7 +223,7 @@ def _must_keep_report(segments: list[dict], shots: list[dict], covered: list[str
     skipped = [s["id"] for s in must if not _has_length(s)]
     lost = [i for i in must_ids if i not in used]
     if lost:
-        raise SelectionError(f"必留段未进片：{', '.join(lost)}")
+        raise SelectionError(MUST_KEEP_LOST_ERROR.format(ids=", ".join(lost)))
     must_total = round(sum(x["dur"] for x in shots if x.get("must_keep")), 2)
     for topic in dict.fromkeys(x["topic"] for x in shots if x.get("must_keep")):
         if topic not in covered:
@@ -581,6 +582,10 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
         *, questions_path: Path | None = None, title: str = "",
         material: str = "", weights: dict | None = None,
         calibration: dict | None = None, target: float | None = None) -> dict:
+    # M13 D3：输入指纹在选段开始前取（选段过程中被改的输入，选完后要显示为「需要更新」）；
+    # target 用传进来的值，而不是重读 project.json（cmd_select 选段成功后才保存新目标）
+    inputs = fingerprints.selection_inputs(
+        out_dir, {"target_duration": target, "calibration": calibration})
     scored = schema.read_json(scored_path)
     scored_segments = schema.require_key(scored, "segments", scored_path)  # 结构不对 → CorruptJSON
     # 答案 / 题目坏了不能当「没答」：CorruptJSON（带文件名）由调用方给人话（M8 审查）
@@ -618,7 +623,7 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
     lines = select_rules.parse_must_lines((calibration or {}).get("must_lines"))
     rules = {**rules, "must_lines": list(dict.fromkeys(
         [*select_rules.parse_must_lines(rules.get("must_lines")), *lines]))}
-    result = select(segments, topics, rules, target, weights)
+    result = {**select(segments, topics, rules, target, weights), "inputs": inputs}
     if extra_warnings:
         result = {**result, "warnings": [*result["warnings"], *extra_warnings]}
 

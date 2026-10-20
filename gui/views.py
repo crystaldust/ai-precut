@@ -10,7 +10,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from gui import jobs
+from gui import jobs, wizard
 from pipeline import media_io, notices, proc, schema, select, usage
 
 PRESET_CORRUPT_MSG = "已跳过预设「{name}」：{reason}"
@@ -81,7 +81,20 @@ def project_state(pdir: Path, name: str) -> dict:
         "has_transcript": (work / "transcript.md").exists(),
         "llm_usage": usage.summary(work),  # KI-32：项目信息行显示已用 tokens
         "job": jobs.project_job(name),  # 切回正在跑任务的项目时，界面据此重新显示进度
+        "wizard": wizard.derive(wizard.collect(pdir, cfg, name)),  # M13：六步向导的步骤状态
+        "busy": jobs.busy_view(),  # 全局正在跑的任务（任务胶囊）
     }
+
+
+def _step_of(pdir: Path, cfg: dict) -> dict | None:
+    """项目栏的「当前步骤」；project.json 损坏 / 读不出 → None（列表不能因为一个坏项目失败）。"""
+    if not cfg:
+        return None
+    try:
+        facts = wizard.collect(pdir, cfg, cfg.get("name", pdir.name), digests=False)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):  # 坏数据族：列表不能 500
+        return None
+    return wizard.step_label(wizard.derive(facts))
 
 
 def projects_list(root: Path) -> list[dict]:
@@ -91,7 +104,7 @@ def projects_list(root: Path) -> list[dict]:
         pdir = f.parent
         vs = sorted([d.name for d in (pdir / "output").glob("v*") if d.is_dir()])
         items.append({"name": c.get("name", pdir.name), "title": c.get("title", ""),
-                      "preset": c.get("preset", ""), "versions": vs})
+                      "preset": c.get("preset", ""), "versions": vs, "step": _step_of(pdir, c)})
     return items
 
 

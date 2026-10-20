@@ -28,8 +28,9 @@ from pipeline import applog, proc, schema, secrets
 
 JOB_COMMANDS = {"prepare": ["prepare"], "build": ["build"], "select": ["select"],
                 "export": ["export"], "questions": ["questions", "--force"]}  # KI-86：确认页重新出题
-TASK_LABELS = {"prepare": "处理素材", "build": "生成成片", "select": "重新选段",
-               "export": "导出 Windows 剪映包", "questions": "重新生成决策问题"}
+# M13：任务名词统一到向导的步骤名（PRD §12）；JOB_CONFLICT_MSG / 遗留任务提示 / 任务胶囊都用它
+TASK_LABELS = {"prepare": "分析", "build": "生成新版本", "select": "重新选段",
+               "export": "生成 Windows 剪映包", "questions": "重新出题"}
 MAX_ACTIVE_JOBS = 1          # 重任务全局串行：ffmpeg / ASR 吃满资源，也避免重复计费
 CANCEL_GRACE_S = 5.0         # SIGTERM 后等这么久仍未退出就 SIGKILL
 SHORT_CMD_TIMEOUT_S = 60     # 短命令（新建项目等）的超时
@@ -53,11 +54,12 @@ JOB_CANCEL_NOTE = "[取消] 正在停止任务…"
 JOB_EXIT_NOTE = "[退出码] {code}"
 SHORT_CMD_TIMEOUT_MSG = "[错误] 命令超时（{s} 秒没有完成），请重试"
 SHORT_CMD_START_FAILED = "[错误] 无法执行命令：{exc}"
-NO_TIMELINE_MSG = "这一版还没有时间线，先生成成片"
+NO_TIMELINE_MSG = "这一版还没有时间线，先在「⑥ 导出」生成新版本"
 
 LOG = applog.get("job")  # app.log 只记任务要点（起止、退出码、行数、错误行），不记普通输出（GL-19）
 LOGGED_PREFIXES = ("[错误]", "[x]", "[!]", "Traceback")  # 只有这些行进 app.log；正文可能含文稿 / 片名
 LOGGED_LINE_MAX = 300
+ERROR_PREFIX = "[x]"  # aicut.die() 输出的失败行
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 
@@ -136,6 +138,40 @@ def project_job(project: str) -> dict | None:
         return {"id": job_id, "task": JOBS[job_id]["task"]}
 
 
+def busy_view() -> dict | None:
+    """全局正在跑的任务（任务胶囊 / 启动类按钮置灰用）：{id, task, project, label}；没有则 None。"""
+    job_id = active_job()
+    if job_id is None:
+        return None
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None or job["status"] != "running":  # 取到 id 之后刚好结束
+            return None
+        return {"id": job_id, "task": job["task"], "project": job["project"],
+                "label": TASK_LABELS.get(job["task"], job["task"])}
+
+
+def _last_error_line(log: list[str]) -> str | None:
+    """日志里最后一条 `[x]` 行（去掉前缀）；② 页失败时当原因显示。"""
+    for line in reversed(log):
+        text = line.strip()
+        if text.startswith(ERROR_PREFIX):
+            return text[len(ERROR_PREFIX):].strip() or None
+    return None
+
+
+def project_job_detail(project: str, task: str | None = None) -> dict | None:
+    """这个项目最近一个任务（运行中或已结束，可按任务名过滤）：{id, task, started, status, last_error}。"""
+    with JOBS_LOCK:
+        mine = [(jid, j) for jid, j in JOBS.items()
+                if j["project"] == project and (task is None or j["task"] == task)]
+        if not mine:
+            return None
+        jid, job = max(mine, key=lambda item: item[1]["started"])
+        return {"id": jid, "task": job["task"], "started": job["started"],
+                "status": job["status"], "last_error": _last_error_line(job["log"])}
+
+
 def job_view(job_id: str) -> dict | None:
     """给界面的任务快照：显式挑字段，绝不能把 Popen 序列化出去。"""
     with JOBS_LOCK:
@@ -143,6 +179,7 @@ def job_view(job_id: str) -> dict | None:
         if job is None:
             return None
         view = {k: job[k] for k in PUBLIC_FIELDS}
+        view["elapsed_s"] = max(0, round((job.get("ended") or time.time()) - job["started"]))
         trimmed = job.get("trimmed", 0)
         view["log"] = ([JOB_LOG_TRIMMED.format(n=trimmed)] if trimmed else []) + list(job["log"])
         return view
@@ -250,6 +287,7 @@ def _finish_job(job_id: str, code: int, note: str | None = None) -> None:
         else:
             job["status"] = "done" if code == 0 else "failed"
         job["exit"] = code
+        job["ended"] = time.time()
         job["popen"] = None
         _append_locked(job, JOB_EXIT_NOTE.format(code=code))
         _clear_marker()

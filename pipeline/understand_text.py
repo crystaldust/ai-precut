@@ -23,7 +23,7 @@ from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError, describe
 
 PROMPT_VERSION = 1  # 提示词 / 输出格式改了就加一：旧结果按「输入变了」失效（KI-32）
 ANNOTATE_RETRIES = 2  # 每批在客户端 HTTP 重试之外，再整批/补漏重试的次数（覆盖 JSON 解析失败、漏 id）
-ANNOTATION_RETRY_HINT = "结果已保存；检查网络/额度后重新运行「处理素材」，只会重跑这 {n} 句"
+ANNOTATION_RETRY_HINT = "结果已保存；检查网络/额度后在「② 分析」点「重新分析」，只会重跑这 {n} 句"
 ANNOTATE_BACKOFF = (2.0, 5.0)  # 批次重试前等待的秒数（第 1 次、第 2 次…）
 ANNOTATION_MISSING_ERROR = "模型漏标 {n} 句"
 ANNOTATION_SHAPE_ERROR = "标注结果结构异常：{detail}"

@@ -135,7 +135,7 @@ def test_failed_job_status_and_exit_code(gui_server, jobs, monkeypatch):
     assert job["status"] == "failed" and job["exit"] == 2
     assert job["log"][-1] == "[退出码] 2"
     assert job["project"] == "p1" and job["task"] == "build"
-    assert set(job) == {"status", "log", "exit", "task", "project"}  # 绝不序列化 Popen
+    assert set(job) == {"status", "log", "exit", "task", "project", "elapsed_s"}  # 绝不序列化 Popen
 
 
 def test_start_failure_is_reported_not_ghost(gui_server, jobs, monkeypatch):
@@ -520,7 +520,7 @@ def test_projects_endpoint_reports_stale_job(gui_server, jobs, tmp_path):
         status, body, _ = call(gui_server, "GET", "/api/projects")
         stale = json.loads(body)["stale_job"]
         assert status == 200 and stale["pid"] == orphan.pid and stale["project"] == "old"
-        assert stale["task"] == "处理素材" and str(orphan.pid) in stale["message"]
+        assert stale["task"] == "分析" and str(orphan.pid) in stale["message"]
     finally:
         orphan.kill()
         orphan.wait()
@@ -539,3 +539,99 @@ def test_job_failure_notes_are_redacted(gui_server, jobs, monkeypatch):  # 审�
     assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] != "running")
     log = "\n".join(get_job(gui_server, data["job_id"])[1]["log"])
     assert key not in log and "无法启动任务" in log
+
+
+# ---------------------------------------------------------------- M13 T7：elapsed / busy / 新名词
+def _fake_clock(monkeypatch, jobs, now):
+    """只替换 gui.jobs 看到的 time（不动全局 time 模块，免得 wait_for 的超时判断也被冻住）。"""
+    import types
+    stub = types.SimpleNamespace(time=now, monotonic=time.monotonic, sleep=time.sleep)
+    monkeypatch.setattr(jobs, "time", stub)
+
+
+def _finish_quick(gs, jobs, monkeypatch, argv, task="select"):
+    make_project(gs.root)
+    fake_command(monkeypatch, jobs, argv)
+    job_id = jobs.start_job("p1", task)
+    assert wait_for(lambda: get_job(gs, job_id)[1]["status"] != "running")
+    return job_id
+
+
+def test_task_labels_use_wizard_terms(jobs):
+    assert jobs.TASK_LABELS == {"prepare": "分析", "build": "生成新版本", "select": "重新选段",
+                                "export": "生成 Windows 剪映包", "questions": "重新出题"}
+
+
+def test_conflict_message_uses_new_label(gui_server, jobs, monkeypatch):
+    make_project(gui_server.root)
+    fake_command(monkeypatch, jobs, LONG)
+    jobs.start_job("p1", "prepare")  # 绕过 prepare 的告知 / Key 前置检查，这里只看冲突文案
+    status, data = post_job(gui_server, task="select")
+    assert status == 409 and "p1 · 分析" in data["error"]
+
+
+def test_job_view_elapsed_grows_while_running_and_freezes_after(gui_server, jobs, monkeypatch):
+    make_project(gui_server.root)
+    fake_command(monkeypatch, jobs, LONG)
+    clock = {"now": 1000.0}
+    _fake_clock(monkeypatch, jobs, lambda: clock["now"])
+    status, data = post_job(gui_server, task="select")
+    assert get_job(gui_server, data["job_id"])[1]["elapsed_s"] == 0
+    clock["now"] = 1042.4
+    assert get_job(gui_server, data["job_id"])[1]["elapsed_s"] == 42
+    jobs.cancel_job(data["job_id"])
+    assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] == "cancelled")
+    frozen = get_job(gui_server, data["job_id"])[1]["elapsed_s"]
+    clock["now"] = 9999.0
+    assert get_job(gui_server, data["job_id"])[1]["elapsed_s"] == frozen
+
+
+def test_busy_view_none_without_jobs_and_describes_running(gui_server, jobs, monkeypatch):
+    assert jobs.busy_view() is None
+    make_project(gui_server.root)
+    fake_command(monkeypatch, jobs, LONG)
+    _, data = post_job(gui_server, task="build")
+    assert jobs.busy_view() == {"id": data["job_id"], "task": "build", "project": "p1",
+                                "label": "生成新版本"}
+
+
+def test_busy_view_none_after_finish(gui_server, jobs, monkeypatch):
+    _finish_quick(gui_server, jobs, monkeypatch, [sys.executable, "-c", "print('ok')"])
+    assert jobs.busy_view() is None
+
+
+def test_project_job_detail_none_for_unknown_project(gui_server, jobs):
+    assert jobs.project_job_detail("p1") is None
+
+
+def test_project_job_detail_running_and_filter_by_task(gui_server, jobs, monkeypatch):
+    make_project(gui_server.root)
+    fake_command(monkeypatch, jobs, LONG)
+    job_id = jobs.start_job("p1", "prepare")
+    detail = jobs.project_job_detail("p1")
+    assert detail["id"] == job_id and detail["task"] == "prepare"
+    assert detail["status"] == "running" and isinstance(detail["started"], float)
+    assert detail["last_error"] is None
+    assert jobs.project_job_detail("p1", task="build") is None
+    assert jobs.project_job_detail("other") is None
+
+
+def test_project_job_detail_keeps_last_error_line_after_failure(gui_server, jobs, monkeypatch):
+    script = "print('[x] 第一个错误'); print('普通行'); print('[x] AI 理解失败：网络不通'); print('[退出码]')"
+    jid = _finish_quick(gui_server, jobs, monkeypatch,
+                        [sys.executable, "-c", script + "; import sys; sys.exit(1)"], task="prepare")
+    detail = jobs.project_job_detail("p1", task="prepare")
+    assert detail["id"] == jid and detail["status"] == "failed"
+    assert detail["last_error"] == "AI 理解失败：网络不通"
+
+
+def test_project_job_detail_picks_latest_job(gui_server, jobs, monkeypatch):
+    make_project(gui_server.root)
+    ids = []
+    for started in (100.0, 200.0):
+        _fake_clock(monkeypatch, jobs, lambda s=started: s)
+        fake_command(monkeypatch, jobs, [sys.executable, "-c", "print('x')"])
+        _, data = post_job(gui_server, task="select")
+        ids.append(data["job_id"])
+        assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] == "done")
+    assert jobs.project_job_detail("p1")["id"] == ids[1]

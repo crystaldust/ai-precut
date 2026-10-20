@@ -49,6 +49,44 @@ def test_plain_save_does_not_start_job(gui_server, monkeypatch):
     assert seen == [] and jobs.JOBS == {}
 
 
+def _stored(pdir):
+    return json.loads((pdir / "work/brief_answers.json").read_text(encoding="utf-8"))
+
+
+def test_save_writes_questions_digest(gui_server):
+    from pipeline import fingerprints
+    pdir = _project(gui_server)
+    _save(gui_server, answers={"q1": "签字"})
+    assert _stored(pdir)["questions_digest"] == fingerprints.file_digest(pdir / "work/questions.json")
+
+
+def test_draft_without_confirmed_key_keeps_stored_confirmed_and_starts_nothing(gui_server, monkeypatch):
+    from gui import jobs
+    pdir = _project(gui_server)
+    (pdir / "work/brief_answers.json").write_text(
+        json.dumps({"answers": {"q1": "签字"}, "confirmed": True}), encoding="utf-8")
+    seen = fake_command(monkeypatch, jobs, QUICK)
+    status, data = _save(gui_server, answers={"q1": "全部"})
+    assert status == 200 and data["job_id"] is None
+    assert seen == [] and _stored(pdir)["confirmed"] is True
+    assert _stored(pdir)["answers"] == {"q1": "全部"}
+
+
+def test_explicit_confirmed_false_cancels_confirmation(gui_server):
+    pdir = _project(gui_server)
+    (pdir / "work/brief_answers.json").write_text(
+        json.dumps({"answers": {}, "confirmed": True}), encoding="utf-8")
+    _save(gui_server, answers={"q1": "全部"}, confirmed=False)
+    assert _stored(pdir)["confirmed"] is False
+
+
+def test_draft_with_corrupt_stored_answers_still_saves(gui_server):
+    pdir = _project(gui_server)
+    (pdir / "work/brief_answers.json").write_text("{坏", encoding="utf-8")
+    status, _ = _save(gui_server, answers={"q1": "全部"})
+    assert status == 200 and _stored(pdir)["confirmed"] is False
+
+
 def test_confirm_save_conflict_keeps_answers(gui_server, monkeypatch):
     from gui import jobs
     pdir = _project(gui_server)

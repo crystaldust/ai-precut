@@ -20,8 +20,8 @@ DROPPED_SHOWN = 5  # 提示里最多列几个镜头 id
 SNAPSHOT_FILE = "shots_snapshot.json"  # 与 pipeline.clips.SNAPSHOT_FILE 一致（出片时存的分镜表）
 EXPORT_NO_SNAPSHOT = "无法确认这一版是否含已标为不可用的片段（这一版没有留存分镜表），请生成新版本"
 EXPORT_BAD_SNAPSHOT = "无法确认这一版是否含已标为不可用的片段（这一版留存的分镜表已损坏），请生成新版本"
-MUST_KEEP_LOST = ("剔除含「不可用」片段的镜头 {shot} 后，必留片段 {must}（{when}）会丢失：它和不可用片段 {bad} "
-                  "在同一个镜头里。请先在分镜表里把这个镜头拆成两镜，只留下必留的部分")
+MUST_KEEP_LOST = ("剔除含「不可用」片段的镜头 {shot} 后，剪辑列表里的片段 {must}（{when}）会丢失：它和不可用片段 {bad} "
+                  "在同一个镜头里。请先在分镜表里把这个镜头拆成两镜，只留下剪辑列表里的部分")
 BAD_DATA = "分析结果或人工裁决读不出来，无法核对「不可用」片段：{detail}"
 LOG = applog.get("gui")
 

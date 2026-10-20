@@ -32,7 +32,7 @@ from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
 from pipeline import applog, proc, schema, shots_store  # noqa: E402
 from gui import (  # noqa: E402
-    desktop, jobs, maintenance, media, project_routes, session, settings, support, views,
+    desktop, jobs, maintenance, media, prefs, project_routes, session, settings, support, views,
 )
 from gui.static_files import STATIC_FILES  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
@@ -70,7 +70,7 @@ PAGE_CSP = ("default-src 'self'; script-src 'self'; "
 MAX_BODY_BYTES = 2 * 1024 * 1024  # 请求体上限：分镜表再大也到不了 2 MB
 REQUEST_TIMEOUT_S = 60            # 单次 socket 读写超时，慢速/半开连接不会永久占住线程
 NO_EXPORT_MSG = "这一版还没有导出 Windows 剪映包"
-INTERNAL_ERROR_MSG = "服务内部错误，请重试；如果反复出现请点左下角「导出诊断包」发给开发"
+INTERNAL_ERROR_MSG = "服务内部错误，请重试；如果反复出现请点「更多 → 导出诊断包」发给开发"
 LOG = applog.get("gui")
 
 
@@ -320,7 +320,7 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/health":
             return self._json(views.health_payload())
 
-        if (hit := settings.handle_get(p) or support.handle_get(p)
+        if (hit := settings.handle_get(p) or support.handle_get(p) or prefs.handle_get(p)
                 or maintenance.handle_get(p, q, existing_project)) is not None:
             return self._json(hit[1], hit[0])
 
@@ -383,11 +383,11 @@ class Handler(BaseHTTPRequestHandler):
         except BadRequest as exc:
             return self._json({"error": str(exc)}, exc.code)
 
-        if (hit := settings.handle_post(p, body)) is not None:
+        if (hit := settings.handle_post(p, body) or prefs.handle_post(p, body)) is not None:
             return self._json(hit[1], hit[0])
         if (hit := support.handle_post(p, body, diagnostics_project)
                 or maintenance.handle_post(p, body, existing_project)
-                or project_routes.handle_post(p, body, existing_project)
+                or project_routes.handle_post(p, body, existing_project, PRESETS)
                 or desktop.handle_post(p, body, existing_project, self.server.server_address[1])) is not None:
             return self._json(hit[1], hit[0])
 
@@ -407,8 +407,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": f"未知预设：{preset}"}, 400)
             # --x=value 形式：以 - 开头的值不会被 argparse 当成选项
             # GL-20：--no-input，绝不停在 input() 上
+            try:  # M13：新建时就带上剪辑偏好（信息 / 情绪、观众、指定原话）
+                cal_args = project_routes.new_project_args(body.get("calibration"))
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
             args = ["new", name, "--no-input", f"--material={material}", f"--preset={preset}",
-                    f"--title={title}"]
+                    f"--title={title}", *cal_args]
             if body.get("target") is not None:  # GUI 总是传，CLI 就不会停在 input() 上
                 try:
                     args.append(f"--target={schema.check_target_duration(body['target'])}")

@@ -67,7 +67,7 @@ def test_prepare_failed_stage_recorded_and_stops(cli_env, monkeypatch):
         aicut.main(["prepare", "p1"])
     timings = json.loads((pdir / "work/timings.json").read_text(encoding="utf-8"))
     assert timings["ingest"]["ok"] is True and timings["transcribe"]["ok"] is False
-    assert calls == ["cmd_ingest"]
+    assert calls == ["cmd_ingest", "cmd_junk"]  # D10：浏览小样（junk）排在转写前
 
 
 def test_build_records_clip_preview_draft_timings(cli_env, monkeypatch, tmp_path):

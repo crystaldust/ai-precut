@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import notices, questions, review, schema, select
+from pipeline import notices, questions, review, schema, select, topic_names
 
 NO_SCORED_MSG = "还没有三档判定，先跑 analyze/text/score"
 NO_QUESTIONS_MSG = "还没有决策问题，先跑 questions"
@@ -57,9 +57,12 @@ def browse(pdir: Path, name: str) -> dict:
     except Exception:  # noqa: BLE001
         material_duration = 0.0
 
+    names = topic_names.load(work)  # P3：只改显示，topic_raw 仍是匹配键
     for s in segments:
         s["inCut"] = in_cut(s)
         s["dur"] = round(s["end"] - s["start"], 2)
+        s["topic_raw"] = s.get("topic")
+        s["topic"] = topic_names.display(s.get("topic"), names)
 
     return {
         "project": {"name": cfg.get("name", name), "title": cfg.get("title", name),
@@ -69,7 +72,8 @@ def browse(pdir: Path, name: str) -> dict:
         "summary": summary,
         "counts": {k: sum(1 for s in segments if s["level"] == v)
                    for k, v in (("waste", 1), ("pending", 2), ("usable", 3))},
-        "topics": sorted(topics.values(), key=lambda t: -t["duration"]),
+        "topics": sorted(({**t, "topic_raw": t["name"], "name": topic_names.display(t["name"], names)}
+                          for t in topics.values()), key=lambda t: -t["duration"]),
         "segments": segments,
         "has_overrides": bool(overrides),
         "warnings": notices.project_warnings(work),  # 损坏文件 / 兜底等，页面顶部警告条显示
@@ -86,7 +90,13 @@ def confirm(pdir: Path) -> dict:
         stored, unreadable = schema.read_json(work / "brief_answers.json", default={}), False
     except schema.CorruptJSON:  # KI-49：答案读不出来 → 清空让剪辑师重答，页面照常打开
         stored, unreadable = {}, True
+    scored = _jload(work / "segments_scored.json", {})
+    names = topic_names.load(work)
+    topics = [{"topic": topic_names.display(t["name"], names), "topic_raw": t["name"]}
+              for t in (scored.get("topics") if isinstance(scored, dict) else None) or []
+              if isinstance(t, dict) and isinstance(t.get("name"), str)]
     return {"questions": q.get("questions") or [], "fallback": q.get("fallback", False),
+            "topics": topics,
             "summary": summary, "answers": questions.normalize_answers(q, stored.get("answers")),
             "confirmed": stored.get("confirmed", False), "answers_unreadable": unreadable,
             "stale_questions": questions.has_legacy_focus(q), "stale_hint": STALE_QUESTIONS_HINT,  # KI-86

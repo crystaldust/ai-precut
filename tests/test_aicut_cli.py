@@ -88,8 +88,8 @@ def _project(projects, transcript=False):
     return pdir
 
 
-STAGES = ("cmd_ingest", "cmd_transcribe", "cmd_analyze", "cmd_text", "cmd_junk", "cmd_scenes",
-          "cmd_quality", "cmd_score", "cmd_summary", "cmd_questions", "cmd_select", "cmd_brief")
+STAGES = ("cmd_ingest", "cmd_junk", "cmd_transcribe", "cmd_analyze", "cmd_scenes", "cmd_quality",
+          "cmd_text", "cmd_score", "cmd_summary", "cmd_questions", "cmd_select", "cmd_brief")
 
 
 def _record_stages(monkeypatch):
@@ -140,6 +140,52 @@ def test_prepare_always_runs_text_when_keys_present(cli_env, monkeypatch):
     aicut.main(["prepare", "p1"])
     assert "cmd_text" in calls and calls == list(STAGES)
 
+
+def test_prepare_writes_analysis_stamp_on_success(cli_env, monkeypatch):
+    from pipeline import fingerprints
+    projects, _ = cli_env
+    pdir = _project(projects, transcript=True)
+    cal = {"tone": "info", "audience": "家长", "must_lines": ""}
+    cfg = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    (pdir / "project.json").write_text(json.dumps({**cfg, "calibration": cal, "preset": "测试预设"}),
+                                       encoding="utf-8")
+    aicut.secrets.set("deepseek", "sk-abcdefghijkl")
+    _record_stages(monkeypatch)
+    aicut.main(["prepare", "p1"])
+    stamp = json.loads((pdir / "work/analysis_inputs.json").read_text(encoding="utf-8"))
+    assert stamp == fingerprints.analysis_inputs({"calibration": cal, "preset": "测试预设"})
+
+
+def test_prepare_stamp_is_taken_at_start_not_end(cli_env, monkeypatch):
+    from pipeline import fingerprints
+    projects, _ = cli_env
+    pdir = _project(projects, transcript=True)
+    cfg = json.loads((pdir / "project.json").read_text(encoding="utf-8"))
+    start_cal = {"tone": "info", "audience": "", "must_lines": ""}
+    (pdir / "project.json").write_text(json.dumps({**cfg, "calibration": start_cal}), encoding="utf-8")
+    aicut.secrets.set("deepseek", "sk-abcdefghijkl")
+    _record_stages(monkeypatch)
+
+    def edit_midway(args):  # 分析过程中剪辑师改了偏好
+        (pdir / "project.json").write_text(json.dumps({**cfg, "calibration": {"tone": "emotion"}}),
+                                           encoding="utf-8")
+
+    monkeypatch.setattr(aicut, "cmd_text", edit_midway)
+    aicut.main(["prepare", "p1"])
+    stamp = json.loads((pdir / "work/analysis_inputs.json").read_text(encoding="utf-8"))
+    assert stamp == fingerprints.analysis_inputs({"calibration": start_cal, "preset": "纪实3min"})  # 迁移补上的默认预设
+
+
+def test_prepare_failure_keeps_old_stamp(cli_env, monkeypatch):
+    projects, _ = cli_env
+    pdir = _project(projects, transcript=True)
+    (pdir / "work/analysis_inputs.json").write_text('{"old": "1"}', encoding="utf-8")
+    aicut.secrets.set("deepseek", "sk-abcdefghijkl")
+    _record_stages(monkeypatch)
+    monkeypatch.setattr(aicut, "cmd_text", lambda a: aicut.die("理解失败"))
+    with pytest.raises(SystemExit):
+        aicut.main(["prepare", "p1"])
+    assert json.loads((pdir / "work/analysis_inputs.json").read_text(encoding="utf-8")) == {"old": "1"}
 
 
 # ---------------------------------------------------------------- 审查修复 2：命令行也要先确认外发说明（MEDIUM-5）

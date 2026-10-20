@@ -24,7 +24,8 @@ def test_projects_list_reports_versions_and_ignores_stray_files(tmp_path):
     _project(tmp_path, "a", versions=("v1", "v2"), title="甲", extra_files=("v3",))
     (tmp_path / "not_a_project").mkdir()
     items = views.projects_list(tmp_path)
-    assert items == [{"name": "a", "title": "甲", "preset": "纪实3min", "versions": ["v1", "v2"]}]
+    assert items == [{"name": "a", "title": "甲", "preset": "纪实3min", "versions": ["v1", "v2"],
+                      "step": {"n": 2, "label": "分析"}}]
 
 
 def test_projects_list_tolerates_corrupt_project_json(tmp_path):
@@ -32,7 +33,7 @@ def test_projects_list_tolerates_corrupt_project_json(tmp_path):
     pdir.mkdir()
     (pdir / "project.json").write_text("{坏", encoding="utf-8")
     assert views.projects_list(tmp_path) == [{"name": "bad", "title": "", "preset": "",
-                                              "versions": []}]
+                                              "versions": [], "step": None}]
 
 
 def test_versions_sorted_numerically_newest_first(tmp_path):
@@ -69,3 +70,23 @@ def test_health_payload_without_ffmpeg(monkeypatch):
         AssertionError("没有 ffmpeg 时不能去跑它")))
     h = views.health_payload()
     assert h["ffmpeg"] is None and h["ffmpeg_version"] == ""
+
+
+def test_projects_list_step_survives_corrupt_data_exceptions(tmp_path, monkeypatch):
+    from gui import wizard
+    _project(tmp_path, "a", title="甲")
+    for exc in (TypeError("x"), KeyError("k"), ValueError("v"), AttributeError("a"), OSError("o")):
+        def boom(*a, **k):
+            raise exc
+        monkeypatch.setattr(wizard, "collect", boom)
+        assert views.projects_list(tmp_path)[0]["step"] is None
+
+
+def test_wizard_collect_has_no_side_effects_on_unmarked_files(tmp_path):
+    from gui import wizard
+    from pipeline import media_io
+    pdir = _project(tmp_path, "a", title="甲")
+    (pdir / "work").mkdir()
+    (pdir / "work/proxy.mp4").write_bytes(b"legacy")
+    wizard.collect(pdir, {"material": "/v/a.mov"}, "a")
+    assert not media_io.done_marker(pdir / "work/proxy.mp4").exists()
