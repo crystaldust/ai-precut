@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 
 from pipeline.pyver import require_supported_python; require_supported_python()  # noqa: E702 先于新语法
-from pipeline import (applog, build_documentary, classify, cloud, consent, diskspace, encode, export_draft,  # noqa: E402
+from pipeline import (applog, build_documentary, classify, cloud, consent, diskspace, encode, exclusions, export_draft,  # noqa: E402
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
                       select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
                       usage)
@@ -493,6 +493,11 @@ def cmd_export(args) -> None:
             die("找不到时间线，先跑 select 与 build_documentary，或指定 --timeline")
         timeline = candidates[0]
         info(f"使用最新时间线：{timeline.relative_to(pdir)}")
+    try:  # KI-93 / P6：这一版含后来标成「不可用」的片段（或无法确认）→ 不能再导出
+        if n := exclusions.timeline_hits(pdir / "work", timeline.parent):
+            die(exclusions.EXPORT_BLOCKED.format(n=n))
+    except exclusions.ExclusionError as exc:
+        die(str(exc))
     try:  # 清理缓存删掉的切片按这一版的分镜表补切（审查修复 H2）
         clips.restore_missing(pdir, timeline, Path(cfg(pdir)["material"]))
     except (clips.ClipsUnavailable, media_io.MediaError) as exc:
@@ -582,6 +587,14 @@ def cmd_build(args) -> None:
         die(str(exc))
     if missing:
         die(select.describe_missing(missing, from_selection=shots_file != pdir / "shots.json"))
+    try:  # KI-93：手动 / 旧分镜表里含「不可用」片段的镜头出片前再剔一次
+        shots, dropped = exclusions.filter_shots(pdir / "work", shots)
+    except exclusions.ExclusionError as exc:
+        die(str(exc))
+    if dropped:
+        warn(exclusions.DROPPED_WARNING.format(n=len(dropped), ids="、".join(dropped[:exclusions.DROPPED_SHOWN])))
+        if not shots:
+            die(exclusions.ALL_DROPPED)
     if low := diskspace.shortfall(pdir, build_need(pdir, c, shots, args.version)):
         die(low)  # KI-33：切片 / 预览之前确认磁盘够（只算要写的，M5）
 

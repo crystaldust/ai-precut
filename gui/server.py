@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
 from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
-from pipeline import applog, proc, schema  # noqa: E402
+from pipeline import applog, proc, schema, shots_store  # noqa: E402
 from gui import (  # noqa: E402
     desktop, jobs, maintenance, media, project_routes, session, settings, support, views,
 )
@@ -449,9 +449,10 @@ class Handler(BaseHTTPRequestHandler):
                 clean = schema.clean_shots(shots)
             except ValueError as exc:
                 return self._json({"error": str(exc)}, 400)
-            jdump(pdir / "shots.json", {"project": jload(pdir / "project.json", {}).get("title", name),
-                                        "source": jload(pdir / "project.json", {}).get("material", ""),
-                                        "shots": clean})
+            with shots_store.LOCK:  # 与「标记不可用」移除镜头共用一把锁，防丢更新
+                jdump(pdir / "shots.json", {"project": jload(pdir / "project.json", {}).get("title", name),
+                                            "source": jload(pdir / "project.json", {}).get("material", ""),
+                                            "shots": clean})
             return self._json({"ok": True, "count": len(clean)})
 
         if p == "/api/job":

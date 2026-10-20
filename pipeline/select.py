@@ -166,7 +166,7 @@ def uncovered_must_keep(segments: list[dict], shots: list[dict]) -> list[dict]:
     """GL-25：按时间核对分镜表（in/out）是否覆盖每个必留段，返回没覆盖到的段。"""
     spans = _merge_spans([(float(s["in"]), float(s["out"])) for s in shots])
     missing = []
-    for seg in (s for s in segments if s.get("must_keep")):
+    for seg in (s for s in segments if s.get("must_keep") and not s.get("unusable")):
         start, end = float(seg["start"]), float(seg["end"])
         covered = sum(max(0.0, min(end, b) - max(start, a)) for a, b in spans)
         if (end - start) - covered > MUST_KEEP_EDGE_TOLERANCE + _EPS:
@@ -309,6 +309,8 @@ def _uncovered_lines(hits: list[dict], shots: list[dict], segments: list[dict]) 
 
 def select(segments: list[dict], topics: list[dict], rules: dict,
            target: float, weights: dict | None = None) -> dict:
+    # KI-93 / D13：「不可用」段一开始就拿掉——不进话题池、不补时长、不被指定原话强拉、不进未采用清单
+    segments = [s for s in segments if not s.get("unusable")]
     # 旧版存下的规则可能是中文描述（ending「微信缴费完成」、pacing「紧凑快剪」）：先归一
     rules = {**rules, "ending": select_rules.norm_ending(rules.get("ending")),
              "pacing": select_rules.norm_pacing(rules.get("pacing"))}

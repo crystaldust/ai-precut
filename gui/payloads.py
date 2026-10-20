@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import notices, questions, review, schema
+from pipeline import notices, questions, review, schema, select
 
 NO_SCORED_MSG = "还没有三档判定，先跑 analyze/text/score"
 NO_QUESTIONS_MSG = "还没有决策问题，先跑 questions"
@@ -91,3 +91,17 @@ def confirm(pdir: Path) -> dict:
             "confirmed": stored.get("confirmed", False), "answers_unreadable": unreadable,
             "stale_questions": questions.has_legacy_focus(q), "stale_hint": STALE_QUESTIONS_HINT,  # KI-86
             "warnings": notices.project_warnings(work)}
+
+
+def clip_list(segments: list[dict], target: float) -> dict:
+    """剪辑列表（D14）：必留且可用的段，按加入顺序；合计 / 超出 / 建议时长在服务端算，与选段同一规则。"""
+    marked = sorted((s for s in segments if s.get("must_keep") and not s.get("unusable")),
+                    key=lambda s: str(s.get("must_at") or ""))
+    items = [{"id": s["id"], "start": s["start"], "end": s["end"], "dur": round(s["end"] - s["start"], 2),
+              "topic": s.get("topic"), "text": s.get("text", "")} for s in marked]
+    total = round(sum(i["dur"] for i in items), 2)
+    over = total > target
+    step = select.TARGET_ROUND_STEP
+    return {"items": items, "total": total, "target": target, "over_target": over,
+            "over_by": round(total - target, 2) if over else 0,
+            "suggested_target": int(-(-total // step) * step) if over else None}
