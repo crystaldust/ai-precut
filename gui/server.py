@@ -30,9 +30,9 @@ sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
 from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
-from pipeline import applog, proc, review, schema, style  # noqa: E402
+from pipeline import applog, proc, schema  # noqa: E402
 from gui import (  # noqa: E402
-    confirm, desktop, jobs, maintenance, media, payloads, session, settings, support, views,
+    desktop, jobs, maintenance, media, project_routes, session, settings, support, views,
 )
 from gui.static_files import STATIC_FILES  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
@@ -331,40 +331,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/presets":
             return self._json(views.presets_payload(PRESETS))
 
-        if p == "/api/browse":
-            name = q.get("project", [""])[0]
-            try:
-                return self._json(payloads.browse(project_path(name), name))
-            except FileNotFoundError as exc:
-                return self._json({"error": str(exc)}, 404)
-            except (review.OverridesCorrupt, schema.CorruptJSON) as exc:  # 必须在 ValueError 之前
-                return self._json({"error": str(exc)}, 409)
-            except (ValueError, OSError) as exc:
-                return self._json({"error": str(exc)}, 400)
-
-        if p == "/api/calibrate":
-            name = q.get("project", [""])[0]
-            try:
-                cfg = schema.load(existing_project(name) / "project.json")
-            except FileNotFoundError as exc:
-                return self._json({"error": str(exc)}, 404)
-            except schema.SchemaTooNew as exc:
-                return self._json({"error": str(exc)}, 409)
-            except (ValueError, OSError) as exc:
-                return self._json({"error": str(exc)}, 400)
-            return self._json({"calibration": style.normalize(cfg.get("calibration")),
-                               "directive": style.directive(cfg.get("calibration"))})
-
-        if p == "/api/confirm":
-            name = q.get("project", [""])[0]
-            try:
-                return self._json(payloads.confirm(project_path(name)))
-            except FileNotFoundError as exc:
-                return self._json({"error": str(exc)}, 404)
-            except schema.CorruptJSON as exc:  # 必须在 ValueError 之前
-                return self._json({"error": str(exc)}, 409)
-            except ValueError as exc:
-                return self._json({"error": str(exc)}, 400)
+        if (hit := project_routes.handle_get(p, q, project_path, existing_project)) is not None:
+            return self._json(hit[1], hit[0])
 
         if p == "/api/state":
             name = q.get("project", [""])[0]
@@ -419,6 +387,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(hit[1], hit[0])
         if (hit := support.handle_post(p, body, diagnostics_project)
                 or maintenance.handle_post(p, body, existing_project)
+                or project_routes.handle_post(p, body, existing_project)
                 or desktop.handle_post(p, body, existing_project, self.server.server_address[1])) is not None:
             return self._json(hit[1], hit[0])
 
@@ -493,54 +462,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": jobs.cancel_job(p[len("/api/job/"):-len("/cancel")])})
             except KeyError:
                 return self._json({"error": "job not found"}, 404)
-
-        if p == "/api/calibrate":
-            try:
-                pdir = existing_project(body.get("project", ""))
-                cfg = schema.load(pdir / "project.json")
-            except FileNotFoundError as exc:
-                return self._json({"error": str(exc)}, 404)
-            except schema.SchemaTooNew as exc:
-                return self._json({"error": str(exc)}, 409)
-            except (ValueError, OSError) as exc:
-                return self._json({"error": str(exc)}, 400)
-            calibration = style.normalize(body.get("calibration") or {})
-            schema.update_project(pdir / "project.json", lambda c: {**c, "calibration": calibration})
-            return self._json({"ok": True, "directive": style.directive(calibration)})
-
-        if p == "/api/confirm/answers":
-            try:  # KI-05：「保存并确认」后服务端自动起重新选段任务
-                return self._json(confirm.save_answers(existing_project(body.get("project", "")),
-                                                       body.get("project", ""), body))
-            except schema.CorruptJSON as exc:  # 必须在 ValueError 之前
-                return self._json({"error": str(exc)}, 409)
-            except FileNotFoundError as exc:
-                return self._json({"error": str(exc)}, 404)
-            except ValueError as exc:
-                return self._json({"error": str(exc)}, 400)
-
-        if p in ("/api/browse/level", "/api/browse/must"):
-            name = body.get("project", "")
-            sid = body.get("id", "")
-            try:
-                pdir = existing_project(name)
-            except FileNotFoundError as exc:
-                return self._json({"error": str(exc)}, 404)
-            except ValueError as exc:
-                return self._json({"error": str(exc)}, 400)
-            if not sid:
-                return self._json({"error": "缺少 id"}, 400)
-            work = pdir / "work"
-            try:
-                if p.endswith("level"):
-                    review.set_level(work, sid, int(body.get("level")))
-                else:
-                    review.set_must(work, sid, bool(body.get("must")))
-            except review.OverridesCorrupt as exc:  # 必须在 ValueError 之前
-                return self._json({"error": str(exc)}, 409)
-            except (ValueError, TypeError) as exc:
-                return self._json({"error": str(exc)}, 400)
-            return self._json({"ok": True})
 
         if p == "/api/open":
             name = body.get("project", "")
