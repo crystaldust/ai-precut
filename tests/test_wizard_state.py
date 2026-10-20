@@ -263,3 +263,130 @@ def test_projects_list_items_have_step(gui_server):
     data = json.loads(call(gui_server, "GET", "/api/projects")[1])
     steps = {p["name"]: p["step"] for p in data["projects"]}
     assert steps["p1"] == {"n": 2, "label": "分析"} and steps["bad"] is None
+
+
+# ---------------------------------------------------------------- M14 T7：⑤⑥ 的事实（规则尚未启用）
+PREVIEW_FACTS = ("preview_inputs_now", "preview_saved", "preview_complete", "preview_fresh",
+                 "has_versions", "exported_current")
+TABLE = [{"id": "a", "in": 1, "out": 5, "sub": "甲"}]
+
+
+def _stage_preview(pdir, inputs=None, *, complete=True):
+    from pipeline import media_io, outputs
+    staging = outputs.staging_dir(pdir)
+    staging.mkdir(parents=True, exist_ok=True)
+    if complete:
+        with media_io.atomic_output(staging / "preview.mp4") as tmp:
+            tmp.write_bytes(b"x")
+    else:
+        (staging / "preview.mp4").write_bytes(b"x")  # 没有完成标记
+    outputs.write_stamp(staging, inputs if inputs is not None
+                        else fingerprints.preview_inputs(pdir, _cfg(pdir)), 1, 4.0)
+
+
+def _tree(pdir):
+    return sorted((str(p.relative_to(pdir)), p.stat().st_mtime_ns) for p in pdir.rglob("*") if p.is_file())
+
+
+def test_collect_preview_facts_on_empty_project(tmp_path):
+    pdir = make_project(tmp_path)
+    f = wizard.collect(pdir, _cfg(pdir), "p1")
+    assert set(PREVIEW_FACTS) <= set(f)
+    assert (f["preview_saved"], f["preview_complete"], f["preview_fresh"],
+            f["has_versions"], f["exported_current"]) == (None, False, False, False, False)
+    assert f["preview_inputs_now"] == fingerprints.preview_inputs(pdir, _cfg(pdir))
+
+
+def test_collect_preview_fresh_when_stamp_matches_and_file_complete(tmp_path):
+    pdir = make_project(tmp_path, shots=TABLE)
+    _stage_preview(pdir)
+    f = wizard.collect(pdir, _cfg(pdir), "p1")
+    assert f["preview_fresh"] is True and f["preview_complete"] is True
+    assert f["preview_saved"] == f["preview_inputs_now"]
+
+
+def test_collect_preview_outdated_after_table_change(tmp_path):
+    pdir = make_project(tmp_path, shots=TABLE)
+    _stage_preview(pdir)
+    (pdir / "shots.json").write_text(json.dumps({"shots": [{**TABLE[0], "sub": "改"}]}), encoding="utf-8")
+    f = wizard.collect(pdir, _cfg(pdir), "p1")
+    assert f["preview_fresh"] is False and f["preview_saved"] is not None
+
+
+def test_collect_preview_without_done_marker_is_not_fresh_and_nothing_is_written(tmp_path):
+    pdir = make_project(tmp_path, shots=TABLE)
+    _stage_preview(pdir, complete=False)
+    before = _tree(pdir)
+    f = wizard.collect(pdir, _cfg(pdir), "p1")
+    assert f["preview_complete"] is False and f["preview_fresh"] is False
+    assert _tree(pdir) == before            # 不认领旧文件：状态判定不写盘
+
+
+def test_collect_empty_table_is_never_fresh(tmp_path):
+    pdir = make_project(tmp_path)
+    _stage_preview(pdir)
+    assert wizard.collect(pdir, _cfg(pdir), "p1")["preview_fresh"] is False
+
+
+def test_collect_corrupt_shots_json_is_not_fresh_and_does_not_raise(tmp_path):
+    pdir = make_project(tmp_path, shots=TABLE)
+    _stage_preview(pdir)
+    (pdir / "shots.json").write_text("{坏", encoding="utf-8")
+    f = wizard.collect(pdir, _cfg(pdir), "p1")
+    assert f["preview_fresh"] is False and f["exported_current"] is False
+
+
+def test_collect_corrupt_stamp_means_no_saved_inputs(tmp_path):
+    from pipeline import outputs
+    pdir = make_project(tmp_path, shots=TABLE)
+    _stage_preview(pdir)
+    (outputs.staging_dir(pdir) / "preview.json").write_text("{坏", encoding="utf-8")
+    f = wizard.collect(pdir, _cfg(pdir), "p1")
+    assert f["preview_saved"] is None and f["preview_fresh"] is False
+
+
+def test_collect_has_versions_and_exported_current(tmp_path):
+    pdir = make_project(tmp_path, shots=TABLE)
+    now = fingerprints.preview_inputs(pdir, _cfg(pdir))
+    v1 = pdir / "output" / "v1"
+    v1.mkdir(parents=True)
+    (v1 / "timeline.json").write_text("{}", encoding="utf-8")
+    f = wizard.collect(pdir, _cfg(pdir), "p1")
+    assert f["has_versions"] is True and f["exported_current"] is False      # 旧版本没有 preview.json
+    (v1 / "preview.json").write_text(json.dumps({"inputs": {**now, "table": "old"}}), encoding="utf-8")
+    assert wizard.collect(pdir, _cfg(pdir), "p1")["exported_current"] is False
+    v2 = pdir / "output" / "v2"
+    v2.mkdir()
+    (v2 / "timeline.json").write_text("{}", encoding="utf-8")
+    (v2 / "preview.json").write_text(json.dumps({"inputs": now}), encoding="utf-8")
+    assert wizard.collect(pdir, _cfg(pdir), "p1")["exported_current"] is True
+
+
+def test_collect_light_mode_skips_preview_facts_entirely(tmp_path, monkeypatch):
+    """项目列表（digests=False）每个项目都走一遍：不能为了 derive 暂时用不上的事实去算指纹。"""
+    pdir = make_project(tmp_path, shots=TABLE)
+    _stage_preview(pdir)
+    (pdir / "output" / "v1").mkdir(parents=True)
+    calls = []
+    monkeypatch.setattr(fingerprints, "preview_inputs", lambda *a, **k: calls.append(1))
+    f = wizard.collect(pdir, _cfg(pdir), "p1", digests=False)
+    assert calls == []
+    assert {k: f[k] for k in wizard.PREVIEW_FACTS_OFF} == wizard.PREVIEW_FACTS_OFF
+    assert f["has_versions"] is True and f["analysis_inputs"] is None
+
+
+def test_collect_uses_caller_supplied_preview_inputs_without_recomputing(tmp_path, monkeypatch):
+    pdir = make_project(tmp_path, shots=TABLE)
+    _stage_preview(pdir)
+    now = fingerprints.preview_inputs(pdir, _cfg(pdir))
+    calls = []
+    monkeypatch.setattr(fingerprints, "preview_inputs", lambda *a, **k: calls.append(1))
+    f = wizard.collect(pdir, _cfg(pdir), "p1", preview_inputs=now)
+    assert calls == [] and f["preview_fresh"] is True
+
+
+def test_derive_ignores_preview_facts_until_rules_are_enabled():
+    plain = wizard.derive(F(analysis_done=True, answers_confirmed=True))
+    with_facts = wizard.derive(F(analysis_done=True, answers_confirmed=True, preview_fresh=True,
+                                 has_versions=True, exported_current=True))
+    assert plain == with_facts

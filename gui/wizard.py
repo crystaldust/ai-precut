@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from gui import analysis, jobs
-from pipeline import fingerprints, questions, readiness, schema
+from pipeline import fingerprints, media_io, outputs, questions, readiness, schema
 
 STEPS = (("new", 1, "新建"), ("analyze", 2, "分析"), ("browse", 3, "看素材"),
          ("criteria", 4, "定标准"), ("result", 5, "看结果"), ("export", 6, "导出"))
@@ -42,8 +42,30 @@ def is_legacy(pdir: Path, confirmed: bool) -> bool:
     return not confirmed and (_has_versions(Path(pdir)) or (Path(pdir) / "shots.json").exists())
 
 
-def collect(pdir: Path, cfg: dict, name: str, *, digests: bool = True) -> dict:
-    """读盘得到 facts（只读；任何文件坏了都当没有）。digests=False 跳过三个指纹（项目列表用）。"""
+PREVIEW_FACTS_OFF = {"preview_inputs_now": None, "preview_saved": None, "preview_complete": False,
+                     "preview_fresh": False, "exported_current": False}  # 读不出时的保守取值：都当作没有
+
+
+def _preview_facts(pdir: Path, cfg: dict, now: dict | None = None) -> dict:
+    """⑤⑥ 的事实（M14 T7；derive 先不读，规则在 M14b / M14c 启用）。只读：不认领旧文件、不写盘；坏了都当没有。"""
+    try:
+        now = now if now is not None else fingerprints.preview_inputs(pdir, cfg)
+        stamp = outputs.read_stamp(outputs.staging_dir(pdir))
+        saved = stamp["inputs"] if stamp else None
+        complete = media_io.is_complete(outputs.staging_dir(pdir) / outputs.PREVIEW_FILE)
+        has_table = now["table"] not in ("", fingerprints.CORRUPT)  # 空表 / 读不出的表永远不算「预览片是最新的」
+        return {"preview_inputs_now": now, "preview_saved": saved, "preview_complete": complete,
+                "preview_fresh": bool(has_table and saved is not None and saved == now and complete),
+                "exported_current": bool(has_table and outputs.matching_version(pdir, now) is not None)}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):  # 坏数据族：项目列表不能 500
+        return dict(PREVIEW_FACTS_OFF)
+
+
+def collect(pdir: Path, cfg: dict, name: str, *, digests: bool = True,
+            preview_inputs: dict | None = None) -> dict:
+    """读盘得到 facts（只读；任何文件坏了都当没有）。digests=False 跳过所有指纹（项目列表用，预览事实取保守值）。
+
+    preview_inputs：调用方已算好的预览输入指纹（一次 /api/state 请求只算一遍）。"""
     pdir = Path(pdir)
     work = pdir / "work"
     job = jobs.project_job(name)
@@ -65,6 +87,8 @@ def collect(pdir: Path, cfg: dict, name: str, *, digests: bool = True) -> dict:
         "legacy": is_legacy(pdir, confirmed),
         "selection_inputs_saved": saved_inputs if isinstance(saved_inputs, dict) else None,
         "selection_inputs_now": fingerprints.selection_inputs(work, cfg) if digests else None,
+        "has_versions": _has_versions(pdir),
+        **(_preview_facts(pdir, cfg, preview_inputs) if digests else PREVIEW_FACTS_OFF),
     }
 
 

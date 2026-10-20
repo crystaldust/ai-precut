@@ -30,9 +30,10 @@ sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
 from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
-from pipeline import applog, proc, schema, shots_store  # noqa: E402
+from pipeline import applog, outputs, proc, schema, shots_store  # noqa: E402
 from gui import (  # noqa: E402
-    jobs, maintenance, media, prefs, project_routes, session, settings, support, views,
+    jianying, jobs, maintenance, media, opener, prefs, project_routes, result_routes, session, settings,
+    support, views,
 )
 from gui.static_files import STATIC_FILES  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
@@ -330,7 +331,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/presets":
             return self._json(views.presets_payload(PRESETS))
 
-        if (hit := project_routes.handle_get(p, q, project_path, existing_project)) is not None:
+        if (hit := project_routes.handle_get(p, q, project_path, existing_project)
+                or result_routes.handle_get(p, q, existing_project)) is not None:
             return self._json(hit[1], hit[0])
 
         if p == "/api/state":
@@ -366,6 +368,8 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as exc:
                     return self._json({"error": str(exc)}, 400)
                 return self._serve_media(pdir / "output" / version / "preview.mp4", pdir)
+            if len(parts) == 2 and parts[1] == result_routes.CURRENT_PREVIEW:  # ⑤ 的暂存预览片（不是某个版本）
+                return self._serve_media(result_routes.current_preview(pdir), pdir)
             return self._json({"error": "not found"}, 404)
 
         return self._json({"error": "not found"}, 404)
@@ -386,7 +390,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(hit[1], hit[0])
         if (hit := support.handle_post(p, body, diagnostics_project)
                 or maintenance.handle_post(p, body, existing_project)
-                or project_routes.handle_post(p, body, existing_project, PRESETS)) is not None:
+                or project_routes.handle_post(p, body, existing_project, PRESETS)
+                or result_routes.handle_post(p, body, existing_project)) is not None:
             return self._json(hit[1], hit[0])
 
         if p == "/api/new":
@@ -491,12 +496,19 @@ class Handler(BaseHTTPRequestHandler):
                 zip_path = jobs.windows_zip(pdir, version, title)
                 if not zip_path.is_file():
                     return self._json({"error": NO_EXPORT_MSG}, 404)
-                subprocess.run(["open", "-R", str(zip_path)], capture_output=True)
-            elif target == "jianying":
-                subprocess.run(["open", "-a", "/Applications/VideoFusion-macOS.app"],
-                               capture_output=True)
+                if blocked := outputs.export_block(pdir, version)[1]:  # KI-100：含不可用片段的版本不能定位 Windows 包
+                    return self._json({"error": blocked}, 409)
+                open_args = ["-R", str(zip_path)]
+            elif target == "jianying":  # KI-98：只打开检测到的剪映，没装就明说
+                if (app := jianying.find(refresh=True)) is None:
+                    return self._json({"error": jianying.NOT_FOUND_MSG}, 404)
+                open_args = ["-a", str(app)]
             else:
-                subprocess.run(["open", str(pdir)], capture_output=True)
+                open_args = [str(pdir)]
+            try:
+                opener.run_open(open_args)
+            except opener.OpenFailed as exc:
+                return self._json({"error": str(exc)}, 500)
             return self._json({"ok": True})
 
         return self._json({"error": "not found"}, 404)

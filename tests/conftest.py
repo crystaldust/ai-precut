@@ -140,6 +140,16 @@ def _no_real_jianying_version(request, monkeypatch):
         return
     from pipeline import jy_version
     monkeypatch.setattr(jy_version, "installed_version", lambda *a: None)
+    monkeypatch.setattr(jy_version, "find_app", lambda *a, **k: None)  # KI-98：绝不在测试里对真实系统做检测
+
+
+@pytest.fixture(autouse=True)
+def _fresh_jianying_cache():
+    """剪辑台进程内缓存了「剪映装没装」60 秒：每个测试开始 / 结束都清掉，免得串测试。"""
+    from gui import jianying
+    jianying.reset_cache()
+    yield
+    jianying.reset_cache()
 
 
 def fake_ensure_preview(vdir, tl_hash, seen=None):

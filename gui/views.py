@@ -10,8 +10,10 @@ import subprocess
 import time
 from pathlib import Path
 
-from gui import jobs, wizard
-from pipeline import fingerprints, media_io, notices, outputs, proc, schema, select, usage
+from gui import jianying, jobs, wizard
+from pipeline import (
+    exclusions, fingerprints, media_io, notices, outputs, proc, review, schema, select, shots_store, usage,
+)
 
 PRESET_CORRUPT_MSG = "已跳过预设「{name}」：{reason}"
 FFMPEG_VERSION_TIMEOUT_S = 5
@@ -23,23 +25,47 @@ def jload(p: Path, default=None):
     return schema.read_json_lenient(p, default)
 
 
-def _versions(pdir: Path, cfg: dict, name: str) -> list[dict]:
-    versions = []
-    for d in outputs.version_dirs(pdir):  # 已完成的 v<数字>；不含暂存 / 点目录 / 没有时间线的残目录
-        tl = jload(d / "timeline.json", {})
-        total = 0.0
-        if tl.get("video"):
-            total = max((s["timeline_in"] + s["out"] - s["in"]) for s in tl["video"])
-        versions.append({
-            "name": d.name,
-            "preview": media_io.complete_or_adopt(d / "preview.mp4"),
-            "shots": len(tl.get("video", [])),
-            "duration": round(total, 1),
-            "draft": f"{cfg.get('title', name)}_{d.name}",
-            "mtime": time.strftime("%m-%d %H:%M", time.localtime(d.stat().st_mtime)),
-            **jobs.windows_export_state(pdir, d.name, cfg.get("title")),
-        })
-    return list(reversed(versions))
+def _version_card(pdir: Path, cfg: dict, name: str, d: Path, now_inputs: dict, marked: list | None) -> dict:
+    """一张版本卡片的数据；全部宽松读（坏文件只让对应字段变空，不能让 /api/state 失败）。"""
+    shots, duration = outputs.version_facts(d)
+    exports = outputs.read_exports(d)
+    legacy = exports is None  # 改版前生成的版本没有 export.json：照旧显示草稿名，界面注明「改版前生成」
+    stamp = outputs.read_stamp(d)
+    hits, blocked = outputs.export_block(pdir, d.name, marked)  # KI-100：含不可用片段（或无法确认）
+    return {
+        "name": d.name,
+        "preview": media_io.complete_or_adopt(d / "preview.mp4"),
+        "shots": shots,
+        "duration": duration,
+        # KI-102：只有真的装进过 Mac 剪映（export.json.mac）才给草稿名；--no-draft 的新版本剪映里没有这份草稿
+        "draft": f"{cfg.get('title', name)}_{d.name}" if legacy or exports.get("mac") else None,
+        "mtime": time.strftime("%m-%d %H:%M", time.localtime(d.stat().st_mtime)),
+        "exports": exports,
+        "legacy": legacy,
+        "current": stamp is not None and stamp["inputs"] == now_inputs,  # E6：这一版就是当前分镜表
+        "has_snapshot": (d / "shots_snapshot.json").is_file(),
+        "unusable_hits": hits,
+        "blocked": blocked,
+        **jobs.windows_export_state(pdir, d.name, cfg.get("title")),
+    }
+
+
+def _marked_spans(pdir: Path) -> list | None:
+    """标为不可用的片段（所有版本卡片共用一次读取）；读不出 → None，让每张卡片自己报「无法确认」。"""
+    try:
+        return exclusions.spans(pdir / "work")
+    except (review.OverridesCorrupt, schema.CorruptJSON, KeyError, TypeError, ValueError):
+        return None
+
+
+def _versions(pdir: Path, cfg: dict, name: str, now_inputs: dict | None = None) -> list[dict]:
+    dirs = outputs.version_dirs(pdir)  # 已完成的 v<数字>；不含暂存 / 点目录 / 没有时间线的残目录
+    if not dirs:
+        return []
+    if now_inputs is None:
+        now_inputs = fingerprints.preview_inputs(pdir, cfg)
+    marked = _marked_spans(pdir)
+    return [_version_card(pdir, cfg, name, d, now_inputs, marked) for d in reversed(dirs)]
 
 
 def project_state(pdir: Path, name: str) -> dict:
@@ -51,9 +77,10 @@ def project_state(pdir: Path, name: str) -> dict:
     material = cfg.get("material") or None  # KI-62：素材换过的音轨 / 代理不算完成
     manual = jload(pdir / "shots.json", {}).get("shots", [])
     selected = jload(work / "shots-selected.json", {}).get("shots", [])
+    inputs = fingerprints.preview_inputs(pdir, cfg)  # 一次请求只算一遍：版本卡片、预览状态、步骤状态共用
     return {
         "project": cfg,
-        "versions": _versions(pdir, cfg, name),
+        "versions": _versions(pdir, cfg, name, inputs),
         "segments": jload(work / "segments.json", {}).get("segments", []),
         # 没有手存分镜表时用选段结果预填；有就不覆盖（M2）
         "shots": manual or selected,
@@ -66,8 +93,11 @@ def project_state(pdir: Path, name: str) -> dict:
         "has_transcript": (work / "transcript.md").exists(),
         "llm_usage": usage.summary(work),  # KI-32：项目信息行显示已用 tokens
         "job": jobs.project_job(name),  # 切回正在跑任务的项目时，界面据此重新显示进度
-        "wizard": wizard.derive(wizard.collect(pdir, cfg, name)),  # M13：六步向导的步骤状态
+        "wizard": wizard.derive(wizard.collect(pdir, cfg, name, preview_inputs=inputs)),  # M13：六步向导的步骤状态
         "busy": jobs.busy_view(),  # 全局正在跑的任务（任务胶囊）
+        "manual": shots_store.manual_changes(pdir),  # M14：手动改了几处（不抛）
+        "preview": {"status": outputs.preview_state(pdir, cfg, inputs)["status"]},  # 暂存预览片是不是当前分镜表的
+        "jianying": {"installed": jianying.installed()},  # KI-98：没装就不显示「打开剪映」
     }
 
 

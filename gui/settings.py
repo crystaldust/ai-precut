@@ -9,13 +9,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from pipeline import applog, consent, encode, readiness, secrets, to_jianying
+from pipeline import applog, consent, encode, outputs, readiness, schema, secrets, to_jianying
 
 KEY_RE = re.compile(r"[\x21-\x7e]{8,512}")  # 可打印 ASCII、无空白
 
 NEED_CONSENT_MSG = "请先阅读并确认数据外发说明"
 NEED_KEYS_MSG = "还没有填写 API Key：{names}。请在「更多 → 设置 · API Key」里填写"
 JIANYING_RUNNING_MSG = "剪映正在运行，请先完全退出（Cmd+Q）再导出到 Mac 剪映"
+EXPORT_BLOCKED_NEED = "export_blocked"
 UNKNOWN_PROVIDER_MSG = "未知的 Key 类型"
 BAD_KEY_MSG = "Key 格式不对：应为 8–512 位、不含空格的英文字母 / 数字 / 符号"
 SAVE_FAILED_MSG = "保存失败：无法写入钥匙串或配置文件"
@@ -64,8 +65,15 @@ def check_build_ready(_pdir: Path, body: dict) -> None:
         raise PrepareBlocked("close_jianying", JIANYING_RUNNING_MSG)
 
 
+def check_export_ready(pdir: Path, body: dict) -> None:
+    """生成 Windows 包：含不可用片段（或无法确认）的版本不能再生成（KI-100，⚑Q3）。"""
+    _, blocked = outputs.export_block(pdir, schema.check_version(body.get("version")))
+    if blocked:
+        raise PrepareBlocked(EXPORT_BLOCKED_NEED, blocked)
+
+
 READY_CHECKS = {"prepare": check_prepare_ready, "questions": check_questions_ready}
-BODY_READY_CHECKS = {"build": check_build_ready}  # 要看请求内容的检查
+BODY_READY_CHECKS = {"build": check_build_ready, "export": check_export_ready}  # 要看请求内容的检查
 
 
 def check_ready(pdir: Path, task: str, body: dict | None = None) -> None:

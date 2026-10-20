@@ -19,6 +19,26 @@ DEFAULT_TARGET_S = 175  # 项目没写目标时长时的默认值（与选段一
 _jload = schema.read_json_lenient
 
 
+IN_CUT_OVERLAP_S = 1.0   # 与某一镜重叠超过这么久算「已进片」
+COVER_EPS_S = 0.01       # 整段落在某一镜内（含取整误差）也算已进片
+
+
+def in_cut(seg: dict, shots: list[dict]) -> bool:
+    """这一段是否已经在分镜表里（③ 看素材的「已用」与 ⑤ 的未采用清单共用这一条规则）。
+
+    与某一镜重叠超过 IN_CUT_OVERLAP_S 秒，或整段落在某一镜内。第二条是为不足 1 秒的短句：
+    它再怎么被完整用进片，重叠也不可能超过 1 秒，只按第一条会被误报成「没用上 / 未采用」。
+    """
+    start, end = float(seg["start"]), float(seg["end"])
+    for sh in shots:
+        lo, hi = float(sh["in"]), float(sh["out"])
+        if min(end, hi) - max(start, lo) > IN_CUT_OVERLAP_S:
+            return True
+        if lo - COVER_EPS_S <= start and end <= hi + COVER_EPS_S:
+            return True
+    return False
+
+
 def browse(pdir: Path, name: str) -> dict:
     cfg = schema.read_json(pdir / "project.json", default={})  # 损坏 → CorruptJSON → 409（KI-21）
     try:
@@ -36,10 +56,6 @@ def browse(pdir: Path, name: str) -> dict:
     # KI-99：已用 / 未用以「当前分镜表」为准：手动的优先，没有就用 AI 选段的结果（同 views.project_state）
     shots = (_jload(pdir / "shots.json", {}).get("shots") or
              _jload(work / "shots-selected.json", {}).get("shots") or [])
-
-    def in_cut(s):
-        return any(max(0, min(s["end"], sh["in"] + sh["out"] - sh["in"]) -
-                       max(s["start"], sh["in"])) > 1.0 for sh in shots)
 
     # 统计按当前（含人工裁决后的）分档重算：先清零，scored 里存的值不能再叠加一次（审查修复 M9）
     topics = {t["name"]: {**t, "count": 0, "duration": 0.0, "usable_dur": 0.0}
@@ -62,7 +78,7 @@ def browse(pdir: Path, name: str) -> dict:
 
     names = topic_names.load(work)  # P3：只改显示，topic_raw 仍是匹配键
     for s in segments:
-        s["inCut"] = in_cut(s)
+        s["inCut"] = in_cut(s, shots)
         s["dur"] = round(s["end"] - s["start"], 2)
         s["topic_raw"] = s.get("topic")
         s["topic"] = topic_names.display(s.get("topic"), names)
@@ -116,6 +132,9 @@ def _applied_segments(work: Path, scored) -> list[dict]:
     for i, seg in enumerate(listed):
         _check_segment(i, seg)
     return review.apply(listed, review.load(work))  # overrides 损坏 → OverridesCorrupt → 409
+
+
+applied_segments = _applied_segments  # 公开别名：⑤ 看结果与 ④ 用同一份裁决后的分段
 
 
 def _clip(text) -> str:

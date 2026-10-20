@@ -95,17 +95,18 @@ def filter_shots(workdir: Path, shots: list[dict]) -> tuple[list[dict], list[str
     return kept, dropped
 
 
-def timeline_hits(workdir: Path, vdir: Path) -> int:
+def timeline_hits(workdir: Path, vdir: Path, marked: list[Span] | None = None) -> int:
     """某一版（输出目录 vdir）出片时的分镜表里，有几镜含不可用片段。
 
     时间线里的 in/out 是切片内时间，不是素材时间：要看出片时存下的分镜表快照。
     项目里有不可用标记、而这一版的快照缺失 / 损坏 → 无法确认，失败即关闭（ExclusionError）。
-    没有任何不可用标记 → 不需要快照，返回 0。
+    没有任何不可用标记 → 不需要快照，返回 0。marked：调用方已读好的 spans(workdir)（列版本卡片时只读一遍）。
     """
-    try:
-        marked = spans(workdir)
-    except (review.OverridesCorrupt, schema.CorruptJSON, KeyError, TypeError, ValueError) as exc:
-        raise ExclusionError(BAD_DATA.format(detail=exc)) from exc
+    if marked is None:
+        try:
+            marked = spans(workdir)
+        except (review.OverridesCorrupt, schema.CorruptJSON, KeyError, TypeError, ValueError) as exc:
+            raise ExclusionError(BAD_DATA.format(detail=exc)) from exc
     if not marked:
         return 0
     path = Path(vdir) / SNAPSHOT_FILE

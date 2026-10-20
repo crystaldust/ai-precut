@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from pipeline import export_draft, fingerprints, media_io, project_lock, schema, shots_store
+from pipeline import exclusions, export_draft, fingerprints, media_io, project_lock, schema, shots_store
 
 PACKAGING = "生成草稿并打包（媒体要拷一遍，几分钟）…"
 PREVIEW_DIR = "preview"                     # output/preview：当前分镜表的预览片暂存（不是版本）
@@ -91,14 +91,14 @@ def read_stamp(d: Path) -> dict | None:
     return data if isinstance(data, dict) and isinstance(data.get("inputs"), dict) else None
 
 
-def preview_state(pdir: Path, cfg: dict) -> dict:
+def preview_state(pdir: Path, cfg: dict, now: dict | None = None) -> dict:
     """暂存预览片相对「当前分镜表」的状态：none / fresh / outdated（outdated 带变了的分项名）。
 
-    只读：不用 complete_or_adopt（状态判定不能写盘）。
+    只读：不用 complete_or_adopt（状态判定不能写盘）。now：调用方已算好的 preview_inputs。
     """
     d = staging_dir(pdir)
     stamp = read_stamp(d)
-    now = fingerprints.preview_inputs(pdir, cfg)
+    now = now if now is not None else fingerprints.preview_inputs(pdir, cfg)
     meta = {"at": None, "duration": None, "shots": None}
     if stamp is None or not media_io.is_complete(d / PREVIEW_FILE) or not now["table"]:
         return {"status": "none", "reasons": [], **meta}
@@ -272,3 +272,29 @@ def build_args(pdir: Path, body: dict, cfg: dict) -> list[str]:
             raise ValueError(ALREADY_IN_JIANYING.format(draft=mac.get("draft", version)))
         extra += ["--version", version]
     return [*extra, *(["--windows", "--no-draft"] if target == "windows" else [])]
+
+
+def version_facts(vdir: Path) -> tuple[int, float]:
+    """版本卡片 / 对比用：(镜头数, 总时长秒)，从时间线读；读不出当作空（只用于显示）。"""
+    tl = schema.read_json_lenient(Path(vdir) / "timeline.json", {})
+    video = tl.get("video") if isinstance(tl, dict) else None
+    if not isinstance(video, list) or not video:
+        return 0, 0.0
+    try:
+        total = max(s["timeline_in"] + s["out"] - s["in"] for s in video)
+    except (KeyError, TypeError):
+        return len(video), 0.0
+    return len(video), round(total, 1)
+
+
+def export_block(pdir: Path, version: str, marked: list | None = None) -> tuple[int | None, str | None]:
+    """这一版能不能生成 / 定位 Windows 包（KI-100，⚑Q3）→ (含不可用片段的镜头数 | None, 拦截原因 | None)。
+
+    没有任何不可用标记时不读快照（/api/state 每次轮询都会问）；有标记而无法确认（快照缺失 / 损坏）→ (None, 原因)。
+    marked：调用方已读好的不可用片段（exclusions.spans），省得每个版本重读一遍分析结果。
+    """
+    try:
+        hits = exclusions.timeline_hits(Path(pdir) / "work", Path(pdir) / "output" / version, marked)
+    except exclusions.ExclusionError as exc:
+        return None, str(exc)
+    return hits, (exclusions.EXPORT_BLOCKED.format(n=hits) if hits else None)
