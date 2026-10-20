@@ -147,3 +147,5 @@
 | KI-98 | 「打开剪映」硬编码 `/Applications/VideoFusion-macOS.app`，任何时候都可点；剪映装在别处时无提示 | `gui/server.py:566` | open |
 | KI-99 | `/api/browse` 判断已用 / 未用只看手动 `shots.json`：没有手动分镜表时所有片段都显示「未用」 | `gui/payloads.py:35-39` | fixed `d65c994`（没有手动分镜表时以 `work/shots-selected.json` 为准，手动的优先） |
 | KI-100 | 事后标「不可用」不会让已落盘的产物失效：旧版本的 Windows zip、预览片、已进剪映草稿库的 Mac 草稿仍可打开 / 定位，界面也不提示（FR-11「所有版本均不出现」） | `gui/static/`（版本卡片）；`gui/server.py`（`/api/open target=export`） | open（M14：⑥ 版本卡片提示这一版含不可用片段） |
+| KI-101 | 未采用清单无法给出「因重复」原因：选段没有任何去重判断（只有话题未入选 / 超出话题预算 / 不在候选池），PRD FR-8 列的「重复」无数据来源 | `pipeline/select.py`（unused 生成处） | open（改选段算法，需另立项） |
+| KI-102 | `--no-draft` 出的版本卡片也显示「Mac 剪映草稿名」，剪映草稿库里其实没有这份草稿 | `gui/views.py`（版本数据）；`gui/static/step-export.js` | open（M14） |
