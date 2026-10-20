@@ -31,3 +31,5 @@
 | GL-23 | 前端镜头 id 重复（删一个再加一个）→ 切片互相覆盖，成片重复内容 | `gui/static/index.html:388` | fixed `624e979` |
 | GL-24 | 画面过暗分支把必留话题段、标注失败的待定段直接判废片（与 GL-09 同类静默丢弃） | `pipeline/classify.py:82-83` | fixed `ebabfcc` |
 | GL-25 | build 不检查分镜表是否含全部必留段；GUI 手存的 `shots.json` 优先于 `shots-selected.json`，漏必留照样出片 | `aicut.py:531-536` | fixed `ebabfcc` |
+| GL-26 | 界面没有步骤：选中项目后 9 个按钮全亮，未分析就能点生成成片 / 确认与提问；处理素材、生成成片各 3 个入口且效果不同；偏好 / 浏览 / 确认 3 个独立窗口互不联动（浏览页标必留不重选，生成时才被拒；确认后主页不刷新）。改为六步项目向导（PRD §4.1，[界面流程 v2](界面流程-v2.md)） | `gui/static/index.html`、`index.js`、`browse.*`、`confirm.*`、`calibrate.*` | open（设计稿评审中） |
+| GL-27 | 未采用清单与一键加回（FR-8，P0）后台有数据（`selection.json` 的 `unused`），界面上没有，闸门 B 无从执行 | `gui/static/`；`gui/payloads.py` | open（设计稿评审中） |
