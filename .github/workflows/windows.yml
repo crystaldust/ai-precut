@@ -1,0 +1,62 @@
+name: windows
+
+# 里程碑 16：Windows 上运行。Task 1 只有「验证」作业（ffmpeg / 编码器 / keyring / webview 探针）
+# 和一个允许失败的「test」作业（此时 Windows 上 import fcntl 必失败）。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.4"
+      - run: uv python install 3.12
+      - run: uv sync
+      - name: 下载并自检 ffmpeg（SHA256 钉死）
+        run: uv run python packaging/fetch_ffmpeg_win.py
+      - name: 编码器探针（h264_mf / libopenh264，各编 5 秒 1080p）
+        run: uv run python packaging/ci_probe_win.py
+      - name: keyring 读写删（服务名 ai-cut-ci，不是 ai-cut）
+        run: uv run python packaging/ci_probe_win.py --keyring
+      - name: pywebview 渲染器可导入
+        run: uv run python -c "import webview, webview.platforms.edgechromium, clr_loader; print('webview ok')"
+
+  # Task 8 完成后删掉 continue-on-error（目前 Windows 上 fcntl 等 POSIX 依赖会让测试失败）
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    continue-on-error: true
+    env:
+      AI_CUT_SECRETS: file
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.4"
+      - run: uv python install 3.12
+      - run: uv sync --group dev
+      - run: uv run python packaging/fetch_ffmpeg_win.py
+      - run: uv run pytest -p no:cacheprovider
