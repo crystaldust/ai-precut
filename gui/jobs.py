@@ -126,6 +126,11 @@ def active_job(project: str | None = None) -> str | None:
     return None
 
 
+def project_running_locked(project: str) -> bool:
+    """这个项目有没有任务在跑。调用方必须已持有 JOBS_LOCK（Lock 不可重入，不能再调 active_job）。"""
+    return any(JOBS[jid]["project"] == project for jid in _running_locked())
+
+
 def project_job(project: str) -> dict | None:
     """这个项目正在跑的任务 {id, task}；没有则 None。"""
     job_id = active_job(project)

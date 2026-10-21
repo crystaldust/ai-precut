@@ -149,7 +149,7 @@ def test_project_settings_open_ignored_if_project_switched_meanwhile():
 def test_project_settings_save_after_switch_closes_modal_and_leaves_state_alone():
     out = in_project("""await openProjectSettings();
       __respond = (m, p) => { if (p.startsWith('/api/project/settings')) state.project = '别的项目'; return respond(m, p); };
-      const before = state.data.project.title; await saveProjectSettings();
+      el('#psMin').value = '2'; el('#psSec').value = '55'; const before = state.data.project.title; await saveProjectSettings();
       return [el('#mask').classList.contains('on'), state.data.project.title === before];""",
                      {"POST /api/project/settings": {"ok": True, "project": {"name": "新项目", "title": "改了"},
                                                       "wizard": DONE_WIZARD}})
@@ -160,7 +160,7 @@ def test_project_settings_save_moves_view_off_a_step_that_became_locked():
     locked = wizard(analyze="stale", browse=("locked", "先完成「② 分析」", None))
     locked["next"] = "analyze"
     out = in_project("""await go('analyze'); state.view = 'browse';
-      await openProjectSettings(); await saveProjectSettings(); return state.view;""",
+      await openProjectSettings(); el('#psMin').value = '2'; el('#psSec').value = '55'; await saveProjectSettings(); return state.view;""",
                      {"POST /api/project/settings": {"ok": True, "project": NEW_STATE["project"], "wizard": locked}})
     assert out == "analyze"
 
@@ -188,7 +188,7 @@ def test_prefs_load_failure_is_visible():
 
 
 def test_project_settings_list_reload_failure_is_visible():
-    out = in_project("""await openProjectSettings(); await saveProjectSettings(); await tick(); await tick();
+    out = in_project("""await openProjectSettings(); el('#psMin').value = '2'; el('#psSec').value = '55'; await saveProjectSettings(); await tick(); await tick();
       return el('#toast').textContent;""",
                      {"POST /api/project/settings": {"ok": True, "project": NEW_STATE["project"], "wizard": NEW_WIZARD},
                       "GET /api/projects": [500, {"error": "项目列表读不出来"}]})

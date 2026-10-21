@@ -6,13 +6,14 @@
 """
 from __future__ import annotations
 
+import contextlib
 import re
 from pathlib import Path
 from typing import Callable
 
 from gui import analysis, confirm, jobs, payloads, wizard
 from pipeline import (
-    applog, exclusions, review, schema, select_rules, shots_store, style, topic_names,
+    applog, exclusions, fingerprints, project_lock, review, schema, select_rules, shots_store, style, topic_names,
 )
 
 LOG = applog.get("gui")
@@ -33,6 +34,7 @@ BAD_TONE_MSG = "剪辑偏好 tone 只能是：{allowed}"
 BAD_CALIBRATION_FIELD_MSG = "剪辑偏好里的 {field} 必须是文字，且不能含控制字符"
 UNKNOWN_PRESET_MSG = "未知预设：{preset}"
 NOTHING_TO_CHANGE_MSG = "没有要修改的内容"
+TARGET_BUSY_MSG = "正在处理这个项目，完成后再改时长"  # 选段任务会在结束时写 project.json，并发改会被覆盖
 TOPIC_ARGS_MSG = "name 和 display 都必须是文字"
 TOPIC_NOT_FOUND_MSG = "找不到话题「{name}」：先完成分析"
 TOPIC_DISPLAY_TOO_LONG_MSG = "话题名最多 {max} 个字"
@@ -162,13 +164,15 @@ def _project_for_write(body: dict, existing: Lookup) -> tuple[int, dict] | tuple
 
 
 def _post_project_settings(body: dict, existing: Lookup, presets: Path) -> tuple[int, dict]:
-    """项目设置：片名 / 预设 / 剪辑偏好。不动 target_duration（KI-92：目标时长在 ⑤ 里改）。"""
+    """项目设置：片名 / 预设 / 剪辑偏好 / 目标时长（KI-104：①③ 改只保存，⑤ 标需要更新）。"""
     got = _project_for_write(body, existing)
     if isinstance(got[0], int):
         return got
     pdir, _ = got
     changes, platform = {}, None
     try:
+        if "target" in body:  # null / bool / 列表等一律走 check_target_duration 的 400，不当成「没给」
+            changes["target_duration"] = schema.check_target_duration(body["target"])
         if "title" in body:
             title = body["title"]
             changes["title"] = schema.check_title(title.strip() if isinstance(title, str) else title)
@@ -190,17 +194,44 @@ def _post_project_settings(body: dict, existing: Lookup, presets: Path) -> tuple
         return 400, {"error": str(exc)}
     if not changes and given is None:
         return 400, {"error": NOTHING_TO_CHANGE_MSG}
+    return _write_settings(body, existing, changes, platform, given)
 
-    def mutate(cur: dict) -> dict:
-        out = {**cur, **changes, **({"platform": platform} if platform else {})}
-        if given is not None:  # 只改给出的字段，其余沿用
-            out["calibration"] = style.normalize({**(cur.get("calibration") or {}), **given})
-        return out
 
-    cfg = schema.update_project(pdir / "project.json", mutate)
+def _write_settings(body: dict, existing: Lookup, changes: dict, platform: str | None,
+                    given: dict | None) -> tuple[int, dict]:
+    """改时长要和「有没有任务在跑」原子完成（KI-104）：在 JOBS_LOCK 内检查并写盘，start_job 同拿这把锁，
+    所以写入期间不会有新任务插进来；再用项目共享锁挡住终端里的 aicut select / 遗留子进程。
+    锁顺序 JOBS_LOCK → 项目锁（非阻塞）→ project.json 文件锁；反方向没有人持文件锁再拿 JOBS_LOCK。"""
     name = body["project"]
-    return 200, {"ok": True, "project": cfg,
-                 "wizard": wizard.derive(wizard.collect(pdir, cfg, name))}
+    with contextlib.ExitStack() as stack:
+        if "target_duration" in changes:
+            stack.enter_context(jobs.JOBS_LOCK)
+            got = _project_for_write(body, existing)  # 在锁内重读，和当前值比
+            if isinstance(got[0], int):
+                return got
+            pdir, cur = got
+            if changes["target_duration"] == fingerprints.target_of(cur):  # 没改：当作没给，不拦
+                changes = {k: v for k, v in changes.items() if k != "target_duration"}
+            elif jobs.project_running_locked(name):
+                return 409, {"error": TARGET_BUSY_MSG}
+            else:
+                try:
+                    stack.enter_context(project_lock.exclusive(pdir))
+                except project_lock.Busy:
+                    return 409, {"error": TARGET_BUSY_MSG}
+        else:
+            pdir = existing(name)
+
+        def mutate(cur: dict) -> dict:
+            out = {**cur, **changes, **({"platform": platform} if platform else {})}
+            if given is not None:  # 只改给出的字段，其余沿用
+                out["calibration"] = style.normalize({**(cur.get("calibration") or {}), **given})
+            return out
+
+        cfg = schema.update_project(pdir / "project.json", mutate) if (changes or given is not None) \
+            else schema.load(pdir / "project.json")
+    # 锁外再派生向导（collect 里会取 JOBS_LOCK）
+    return 200, {"ok": True, "project": cfg, "wizard": wizard.derive(wizard.collect(pdir, cfg, name))}
 
 
 def _post_topic_rename(body: dict, existing: Lookup) -> tuple[int, dict]:

@@ -86,7 +86,7 @@ async function enterBrowse(){
   }
   if(gen !== browseGen || project !== state.project || state.view !== 'browse') return;
   const segs = (data.segments || []).map((s, i) => ({...s, _i: i}));
-  state.browse = {gen, project, data, segs, clip: data.clip_list, view: 'time', filter: 'all',
+  state.browse = {gen, project, data, segs, clip: data.clip_list, view: 'time', filter: 'all', targetEditing: false,
                   sel: new Set(), selAnchor: null, batchBusy: false, cur: null, stopAt: null, cueEnd: null, lastT: null, shown: [], undo: [], note: null, groups: [],
                   confirmed: new Map(segs.map(s => [s.id, snap(s)]))};
   const pv = $('#bPv');
@@ -210,7 +210,8 @@ async function resyncBrowse(){
     Object.assign(s, f);
     b.confirmed.set(s.id, snap(s));
   });
-  if(!pendingCount()) b.clip = data.clip_list;
+  b.targetOverride = null;   // 重读成功：以服务端为准（别处改过也一样），不再需要本地覆盖
+  if(!pendingCount()) adoptClip(b, data.clip_list);
   renderDensity(); renderList(); renderFilters(); renderNote(); renderClipPanel(pendingCount() ? localClip() : undefined);
 }
 // 标记之后只改这一行：class、按钮字、档位标签、依据——不重画列表

@@ -138,7 +138,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | GET | `/api/job/<id>` | 任务进度（轮询，含日志）：`{status: running/done/failed/cancelled, log, exit, task, project}` |
 | GET | `/api/config` | 设置页：是否已确认数据外发说明 + 两种 Key 的状态（只给掩码） |
 | POST | `/api/new` | 新建项目（可带 `calibration` 剪辑偏好，创建后直接开始分析） |
-| POST | `/api/project/settings` | 项目设置：片名 / 预设（白名单）/ 剪辑偏好；响应带最新 `wizard`（改偏好会让 ② 变 ⚠） |
+| POST | `/api/project/settings` | 项目设置：片名 / 预设（白名单）/ 剪辑偏好 / 目标时长 `target`（KI-104；项目有任务在跑时改时长回 409）；响应带最新 `wizard`（改偏好会让 ② 变 ⚠，改时长会让 ⑤ 变「需要更新」） |
 | POST | `/api/pick` | 弹 macOS 选文件对话框，返回路径（浏览器拿不到本地路径，必须走这里） |
 | POST | `/api/shots?project=` | 保存分镜表 |
 | POST | `/api/browse/must` | S：放入 / 移出剪辑列表 `{project, id, must}`；与「不可用」互斥，响应带 `cleared`、`segment`、`clip_list`、`wizard` |

@@ -245,6 +245,8 @@ pre.notices{white-space:pre-wrap;font-size:12px;line-height:1.5;max-height:60vh;
 .b-panel h3{margin:0 0 4px;font-size:14px}
 .b-panel .n{color:var(--accent);font-weight:400;font-size:12px}
 .b-panel .p-sum{color:var(--muted)}
+.b-panel .p-sum button,.p-over button{margin:2px 0 2px 6px;padding:2px 8px}
+.b-panel .p-sum input{width:56px}
 .p-bar{height:6px;background:#12141a;border-radius:3px;overflow:hidden;margin:6px 0}
 .p-bar i{display:block;height:100%;background:var(--accent)}
 .p-bar.over i{background:var(--warn)}

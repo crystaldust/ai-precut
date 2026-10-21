@@ -150,3 +150,4 @@
 | KI-101 | 未采用清单无法给出「因重复」原因：选段没有任何去重判断（只有话题未入选 / 超出话题预算 / 不在候选池），PRD FR-8 列的「重复」无数据来源 | `pipeline/select.py`（unused 生成处） | open（改选段算法，需另立项） |
 | KI-102 | `--no-draft` 出的版本卡片也显示「Mac 剪映草稿名」，剪映草稿库里其实没有这份草稿 | `gui/views.py`（版本数据）；`gui/static/step-export.js` | fixed `1f63524` + `6d812f7`（`export.json` 记录真实导出物，草稿名只在导出过 Mac 的版本上显示；改版前的版本标「改版前生成，未记录是否导入过」） |
 | KI-103 | ③ 看素材只能逐段放入剪辑列表 / 改标记（逐个按 S 或点「＋ 剪辑列表」），段多时太慢（2026-10-21 用户反馈） | `gui/static/batch-select.js`、`step-browse.js`、`cliplist.js`；`gui/browse_batch.py`；`pipeline/review.py` | fixed `d899c9e`（勾选框 + Shift 连选、全选当前筛选；批量放入 / 移出剪辑列表、标为可用 / 废片 / 不可用，一个原子请求；Z 整批撤销） |
+| KI-104 | 成片时长只能在 ① 新建时填、⑤ 看结果才能再改：③ 发现剪辑列表超出目标也只能先走到 ⑤；项目设置不动时长（KI-92 当时的约定）（2026-10-21 用户反馈） | `gui/project_routes.py`（`_post_project_settings`）；`gui/static/project-form.js`、`cliplist.js` | fixed（提交号待回填）（①= 项目设置与 ③ 剪辑列表面板可改时长、③ 超目标一键采用建议值；只保存，⑤ 标需要更新；有任务在跑时拒绝改时长） |

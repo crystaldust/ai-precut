@@ -23,10 +23,12 @@ const COPY_SETTINGS_TITLE_PROJECT = '项目设置';
 const COPY_SETTINGS_PREFS_TITLE = '剪辑偏好';
 const COPY_SETTINGS_SAVE = '保存';
 const COPY_SETTINGS_SAVED = '项目设置已保存';
+const COPY_TARGET_SAVED_STALE = '已保存。⑤ 看结果需要重新选段才会按新时长出分镜表';
 const COPY_SETTINGS_NOTE = '分析之后改了剪辑偏好或预设：「② 分析」会标为「需要更新」，不会自动重跑。';
 const COPY_CREATED = '项目已创建';
 const TARGET_MIN_SEC = 10, TARGET_MAX_SEC = 3600;  // 与 pipeline/schema.py 的 TARGET_MIN / TARGET_MAX 一致
 const MUST_LINES_MAX = 3;                          // 与 gui/project_routes.py 的 MUST_LINES_MAX 一致
+const DEFAULT_TARGET_SEC = 175;                    // 与 pipeline/fingerprints.py 的 DEFAULT_TARGET_S 一致：旧项目没存时长时的默认
 const DEFAULT_TONE = 'info';                       // P4：新建默认「信息」
 
 /* 时长输入：分 + 秒两个框，任意时长（10 秒–60 分钟），不受预设限制 */
@@ -47,6 +49,11 @@ function readDuration(prefix){
   return total >= TARGET_MIN_SEC && total <= TARGET_MAX_SEC ? total : 0;
 }
 function markTargetTouched(){ state.npTouched = true; }
+// 保存了新时长后的提示：⑤ 已有选段（被标成需要更新）时说清楚还得重新选段（KI-104；项目设置与 ③ 面板共用）
+function targetSavedNote(wiz, changed, plain = COPY_SETTINGS_SAVED){
+  const stale = ((wiz && wiz.steps) || []).some(st => st.key === 'result' && st.status === 'stale');
+  return changed && stale ? COPY_TARGET_SAVED_STALE : plain;
+}
 /* ---------------- 剪辑偏好字段（新建与项目设置共用，prefix 区分 id） ---------------- */
 function prefsFieldsHtml(prefix, cal){
   const tone = cal.tone || DEFAULT_TONE;
@@ -154,6 +161,7 @@ async function openProjectSettings(){
   if(project !== state.project) return;
   const options = presets.map(p=>`<option value="${esc(p.key)}"${p.key === cfg.preset ? ' selected' : ''}>${esc(p.name)} · ${esc(p.platform)}</option>`).join('');
   showModal(COPY_SETTINGS_TITLE_PROJECT, `
+    <div class="field"><label>${esc(COPY_NEW_TARGET_LABEL)}</label>${durationFields('ps', num(cfg.target_duration) || DEFAULT_TARGET_SEC)}</div>
     <div class="field"><label>片名（会显示在剪映草稿上）</label><input id="psTitle" value="${esc(cfg.title || '')}"></div>
     <div class="field"><label>风格预设</label><select id="psPreset">${options}</select>${presetWarningsHtml(warnings)}</div>
     <h3>${esc(COPY_SETTINGS_PREFS_TITLE)}</h3>
@@ -166,15 +174,21 @@ async function saveProjectSettings(){
   const project = state.project;
   const calibration = readCalibration('ps');
   if(!project || !calibration) return;
+  const target = readDuration('ps');
+  if(!target){ toast(COPY_TARGET_RANGE); return; }
+  const was = Math.round(num(state.data?.project?.target_duration)) || DEFAULT_TARGET_SEC;
+  const changed = target !== was;  // 没改就不带 target：不打扰进行中的任务
   let r;
   try{
     r = await postJson('/api/project/settings', {project, title: $('#psTitle').value.trim(),
-                                                  preset: $('#psPreset').value, calibration});
+                                                  preset: $('#psPreset').value, calibration,
+                                                  ...(changed ? {target} : {})});
   }catch(e){ toast(e.message, TOAST_ERROR_MS); return; }
   if(project !== state.project){ closeModal(); return; }  // 保存期间切走了项目：不把别人的状态画进当前页面
   state.data = {...state.data, project: r.project, wizard: r.wizard};  // ② 可能因此变成「需要更新」
   state.view = resolveView(r.wizard, state.view);  // 当前页若因此不可用了，和刷新一样回到下一步
-  closeModal(); renderChrome(); renderView(); toast(COPY_SETTINGS_SAVED);
+  closeModal(); renderChrome(); renderView(); toast(targetSavedNote(r.wizard, changed));
+  if(changed && state.view === 'browse') resyncBrowse();  // ③ 的剪辑列表面板显示的目标要跟着变
   loadProjects().catch(e=>toast(e.message, TOAST_ERROR_MS));
 }
 

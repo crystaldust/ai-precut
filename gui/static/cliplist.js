@@ -10,6 +10,13 @@ const COPY_LIST_EMPTY = '还没有片段：选中一段，按 S 放进来';
 const COPY_LIST_REMOVE = '移出剪辑列表';
 const COPY_OVER = '已超出目标 {over}，进片时全部保留';
 const COPY_OVER_SUGGEST = '，建议把目标改为 {suggested}';
+const COPY_LIST_SUM_EDIT = '合计 {total} / 目标';   // KI-104：编辑态后面接分 + 秒输入框
+const COPY_CLIP_TARGET_CHANGE = '改';
+const COPY_CLIP_TARGET_OK = '确定';
+const COPY_CLIP_TARGET_CANCEL = '取消';
+const COPY_CLIP_TARGET_APPLY = '改为 {suggested}';
+const COPY_CLIP_TARGET_SAVED = '成片时长已保存';
+const TARGET_INPUT_IDS = ['clipTgtMin', 'clipTgtSec'];
 const COPY_CLEARED_UNUSABLE = '已取消不可用并放入剪辑列表';
 const COPY_CLEARED_LIST = '已移出剪辑列表并标为不可用';
 const COPY_REMOVED_SHOTS = '已从分镜表移除 {n} 镜';
@@ -105,7 +112,7 @@ async function applyMark(seg, change, kind, path, body, opts = {}){
   if(err){ failMark(b, seg, err.message); return false; }
   confirmMarks(b, seg, change, r);
   if(!q.n && r.segment) MARK_FIELDS.forEach(k => { if(k in r.segment) seg[k] = r.segment[k]; });  // 后面还有排队的请求时不覆盖它的乐观值
-  if(r.clip_list) b.clip = r.clip_list;
+  if(r.clip_list) adoptClip(b, r.clip_list);
   applyWizard(r.wizard);
   if(entry){ entry.done = true; entry.removed = kind === 'unusable' && Array.isArray(r.removed_shots) ? r.removed_shots : []; }
   refreshSeg(seg);
@@ -215,14 +222,29 @@ function clipItemHtml(it, b){
     + `${esc(String(it.text ?? '').slice(0, 24))}</span>`
     + `<button class="ghost" data-act="removeClip" data-i="${num(i)}" title="${esc(COPY_LIST_REMOVE)}" aria-label="${esc(COPY_LIST_REMOVE)}">✕</button></li>`;
 }
+// KI-104：目标时长在面板里就地改（分 + 秒）；保存走 /api/project/settings，逻辑在 clip-target.js
+function clipSumHtml(clip, b){
+  const total = num(clip.total), target = num(clip.target);
+  if(b.targetEditing) return `${esc(COPY_LIST_SUM_EDIT.replace('{total}', fmtLong(total)))} ${durationFields('clipTgt', target)}`
+    + `<button class="primary" data-act="applyClipTarget" data-starts-job>${esc(COPY_CLIP_TARGET_OK)}</button>`
+    + `<button class="ghost" data-act="cancelClipTarget">${esc(COPY_CLIP_TARGET_CANCEL)}</button>`;
+  return `${esc(COPY_LIST_SUM.replace('{total}', fmtLong(total)).replace('{target}', fmtLong(target)))} `
+    + `<button class="ghost" data-act="editClipTarget" data-starts-job>${esc(COPY_CLIP_TARGET_CHANGE)}</button>`;
+}
+function clipOverHtml(clip){
+  if(!clip.over_target) return '';
+  const suggest = num(clip.suggested_target);
+  const text = COPY_OVER.replace('{over}', fmtLong(num(clip.over_by)))
+    + (suggest ? COPY_OVER_SUGGEST.replace('{suggested}', fmtLong(suggest)) : '');
+  const apply = suggest && !pendingCount() ? ` <button class="primary" data-act="applyClipSuggested" data-starts-job>${esc(COPY_CLIP_TARGET_APPLY.replace('{suggested}', fmtLong(suggest)))}</button>` : '';
+  return `<div class="p-over">${esc(text)}${apply}</div>`;
+}
 function panelHtml(clip, b){
   const items = clip.items || [], total = num(clip.total), target = num(clip.target);
   const pct = target > 0 ? Math.min(PERCENT_MAX, total / target * PERCENT_MAX) : 0;
-  const over = clip.over_target
-    ? `<div class="p-over">${esc(COPY_OVER.replace('{over}', fmtLong(num(clip.over_by)))
-        + (clip.suggested_target ? COPY_OVER_SUGGEST.replace('{suggested}', fmtLong(num(clip.suggested_target))) : ''))}</div>` : '';
+  const over = clipOverHtml(clip);
   return `<h3>${esc(COPY_LIST_TITLE)} <span class="n">${esc(COPY_LIST_COUNT.replace('{n}', items.length))}</span></h3>`
-    + `<div class="p-sum">${esc(COPY_LIST_SUM.replace('{total}', fmtLong(total)).replace('{target}', fmtLong(target)))}</div>`
+    + `<div class="p-sum">${clipSumHtml(clip, b)}</div>`
     + `<div class="p-bar${clip.over_target ? ' over' : ''}"><i style="width:${pct.toFixed(1)}%"></i></div>${over}`
     + (items.length ? `<ul>${items.map(it => clipItemHtml(it, b)).join('')}</ul>`
                     : `<div class="hint">${esc(COPY_LIST_EMPTY)}</div>`);
@@ -230,10 +252,67 @@ function panelHtml(clip, b){
 function renderClipPanel(clip){
   const b = bs();
   if(!b) return;
+  const typed = b.targetEditing ? ['Min', 'Sec'].map(k => [k, $('#clipTgt' + k)?.value]) : [];   // 编辑态被别的响应重画：输入的值不能丢
+  const ae = document.activeElement;
+  const focus = ae && TARGET_INPUT_IDS.includes(ae.id) ? {id: ae.id, start: ae.selectionStart, end: ae.selectionEnd} : null;
   $('#bPanel').innerHTML = panelHtml(clip || b.clip || {items: [], total: 0, target: 0}, b);
+  typed.forEach(([k, v]) => { const input = $('#clipTgt' + k); if(input && v !== undefined) input.value = v; });
+  if(focus && b.targetEditing) restoreTargetFocus(focus);
+  applyBusyGuard();   // 刚画出来的「改」「确定」「改为…」：有任务在跑就置灰
+}
+// 重画会让正在输入的框失焦：把焦点和光标放回去（number 输入框读不到光标，会得到 null，就只还焦点）
+function restoreTargetFocus(f){
+  const input = $('#' + f.id);
+  if(!input) return;
+  input.focus();
+  if(f.start == null) return;
+  try{ input.selectionStart = f.start; input.selectionEnd = f.end; }catch(e){ /* 不支持光标的输入类型 */ }
+}
+
+/* ---------------- 改目标时长（KI-104） ---------------- */
+// 保存在途（b.savingTarget，按项目区分）：重复点「确定」「改为…」不再发第二个请求
+// 保存成功后立刻把新目标写进 b.clip，并记 b.targetOverride：晚到的旧标记响应 / 重读失败都不会把它改回旧值，
+// 直到重读成功为止（成功就以服务端为准）
+function clipWithTarget(clip, target){
+  const total = num(clip.total), over = total > target;
+  return {...clip, target, over_target: over, over_by: over ? total - target : 0};   // 建议值原样留着：不超出时面板不显示它，再改回超出时还能用
+}
+function adoptClip(b, clip){ b.clip = b.targetOverride ? clipWithTarget(clip, b.targetOverride) : clip; }
+function repaintPanel(){ renderClipPanel(pendingCount() ? localClip() : undefined); }
+function editClipTarget(){ const b = bs(); if(b){ b.targetEditing = true; repaintPanel(); } }
+function cancelClipTarget(){ const b = bs(); if(b){ b.targetEditing = false; repaintPanel(); } }
+async function saveClipTarget(sec){
+  const b = bs();
+  if(!b || b.savingTarget) return false;
+  b.savingTarget = true;
+  let r;
+  try{ r = await postJson('/api/project/settings', {project: b.project, target: sec}); }
+  catch(e){ if(bs() === b) toast(e.message, TOAST_ERROR_MS); return false; }   // 失败：编辑态与输入都保留
+  finally{ b.savingTarget = false; }
+  if(bs() !== b) return false;                       // 保存期间切走了项目：不把别人的状态画进当前页面
+  state.data = {...state.data, project: r.project};
+  applyWizard(r.wizard);                              // ⑤ 可能因此变成「需要更新」
+  b.targetEditing = false;
+  b.targetOverride = sec;
+  b.clip = clipWithTarget(b.clip || {items: [], total: 0}, sec);
+  repaintPanel();
+  toast(targetSavedNote(r.wizard, true, COPY_CLIP_TARGET_SAVED));
+  resyncBrowse();                                     // 面板的目标 / 超出 / 建议来自服务端的 clip_list
+  return true;
+}
+async function applyClipTarget(){
+  const t = readDuration('clipTgt');
+  if(!t){ toast(COPY_TARGET_RANGE); return false; }
+  return saveClipTarget(t);
+}
+async function applyClipSuggested(){
+  const clip = bs()?.clip, suggest = clip?.over_target ? num(clip.suggested_target) : 0;
+  return suggest ? saveClipTarget(suggest) : false;
 }
 
 Object.assign(ACTIONS, {
+  editClipTarget: ()=>editClipTarget(), cancelClipTarget: ()=>cancelClipTarget(),
+  applyClipTarget: ()=>applyClipTarget(), applyClipSuggested: ()=>applyClipSuggested(),
   toggleListIdx: el => { const b = bs(); return b && toggleList(b.segs[num(el.dataset.i)]); },
   markUnusableIdx: el => { const b = bs(); return b && markUnusable(b.segs[num(el.dataset.i)]); },
   jumpClip: el => jumpSeg(num(el.dataset.i)),

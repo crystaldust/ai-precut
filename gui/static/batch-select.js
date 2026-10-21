@@ -154,7 +154,7 @@ async function sendBatch(b, rows, extra, entry){
     confirmMarks(b, seg, change, {segment: src});
     if(src && !queueOf(seg.id).n) MARK_FIELDS.forEach(k => { if(k in src) seg[k] = src[k]; });
   });
-  if(r.clip_list) b.clip = r.clip_list;
+  if(r.clip_list) adoptClip(b, r.clip_list);
   applyWizard(r.wizard);
   if(entry){ entry.done = true; entry.removed = Array.isArray(r.removed_shots) ? r.removed_shots : []; }
   paintSegs(rows); repaintBatch();

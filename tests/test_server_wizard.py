@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """M13 T9b：新建带偏好、项目设置、话题显示名（P3）。"""
 import json
+import os
 
 import pytest
 
@@ -154,6 +155,181 @@ def test_settings_changing_tone_makes_finished_analysis_stale(gui_server, preset
     status, data = post(gui_server, "/api/project/settings", {"project": "p1", "calibration": {"tone": "info"}})
     analyze = next(s for s in data["wizard"]["steps"] if s["key"] == "analyze")
     assert status == 200 and analyze["status"] == wizard.STALE
+
+
+# ---------------------------------------------------------------- KI-104：设置里改目标时长
+def fake_job(project):
+    """与 jobs.start_job 登记的结构一致的「正在跑」条目（cancel=False：teardown 会取消它）。"""
+    return {"status": "running", "log": [], "exit": None, "started": 0.0, "task": "select", "project": project,
+            "popen": None, "cancel": False, "thread": None, "out_lines": 0}
+
+
+def _target_of(gs):
+    return project_json(gs)["target_duration"]
+
+
+@pytest.mark.parametrize("value,expected", [(10, 10), (175, 175), (3600, 3600), (180.4, 180), ("200", 200)])
+def test_settings_target_is_saved_and_returned(gui_server, presets, value, expected):
+    _settings_project(gui_server)
+    status, data = post(gui_server, "/api/project/settings", {"project": "p1", "target": value})
+    assert status == 200 and data["project"]["target_duration"] == expected
+    assert _target_of(gui_server) == expected
+    assert project_json(gui_server)["title"] == "p1"  # 只改时长，其余沿用
+
+
+@pytest.mark.parametrize("value", [9, 3601, "abc", True, False, None, [175], {"a": 1}, float("nan"), -5, ""])
+def test_settings_bad_target_is_400_and_leaves_file_untouched(gui_server, presets, value):
+    _settings_project(gui_server)
+    before = (gui_server.root / "p1/project.json").read_bytes()
+    status, data = post(gui_server, "/api/project/settings", {"project": "p1", "title": "新", "target": value})
+    assert status == 400 and "10" in data["error"] and "3600" in data["error"]
+    assert (gui_server.root / "p1/project.json").read_bytes() == before
+
+
+def test_settings_target_with_other_fields_saves_all(gui_server, presets):
+    _settings_project(gui_server)
+    status, _ = post(gui_server, "/api/project/settings",
+                     {"project": "p1", "title": "新片名", "target": 120, "calibration": {"tone": "info"}})
+    cfg = project_json(gui_server)
+    assert status == 200 and cfg["title"] == "新片名" and cfg["target_duration"] == 120
+    assert cfg["calibration"]["tone"] == "info"
+
+
+def test_settings_target_missing_project_is_404(gui_server, presets):
+    assert post(gui_server, "/api/project/settings", {"project": "nope", "target": 120})[0] == 404
+
+
+def test_settings_target_while_project_job_runs_is_409_but_title_is_fine(gui_server, presets, monkeypatch):
+    from gui import project_routes
+    _settings_project(gui_server)
+    monkeypatch.setitem(project_routes.jobs.JOBS, "j1", fake_job("p1"))
+    before = (gui_server.root / "p1/project.json").read_bytes()
+    status, data = post(gui_server, "/api/project/settings", {"project": "p1", "target": 120})
+    assert status == 409 and data["error"] == project_routes.TARGET_BUSY_MSG
+    assert (gui_server.root / "p1/project.json").read_bytes() == before
+    status, data = post(gui_server, "/api/project/settings", {"project": "p1", "title": "照常改"})
+    assert status == 200 and project_json(gui_server)["title"] == "照常改"
+
+
+def test_settings_target_other_projects_job_does_not_block(gui_server, presets, monkeypatch):
+    from gui import project_routes
+    _settings_project(gui_server)
+    monkeypatch.setitem(project_routes.jobs.JOBS, "j1", fake_job("other"))
+    assert post(gui_server, "/api/project/settings", {"project": "p1", "target": 120})[0] == 200
+
+
+def test_settings_target_guard_and_write_happen_inside_jobs_lock(gui_server, presets, monkeypatch):
+    from gui import project_routes
+    _settings_project(gui_server)
+    seen = {}
+    real_running, real_update = project_routes.jobs.project_running_locked, project_routes.schema.update_project
+
+    def spy_running(project):
+        seen["check"] = project_routes.jobs.JOBS_LOCK.locked()
+        return real_running(project)
+
+    def spy_update(path, mutate):
+        seen["write"] = project_routes.jobs.JOBS_LOCK.locked()
+        return real_update(path, mutate)
+
+    monkeypatch.setattr(project_routes.jobs, "project_running_locked", spy_running)
+    monkeypatch.setattr(project_routes.schema, "update_project", spy_update)
+    assert post(gui_server, "/api/project/settings", {"project": "p1", "target": 120})[0] == 200
+    assert seen == {"check": True, "write": True}
+
+
+def test_settings_target_is_409_when_another_process_holds_the_project(gui_server, presets):
+    """终端里的 aicut select / 遗留子进程持有项目共享锁时，改时长回 409。"""
+    import fcntl
+    from gui import project_routes
+    pdir = _settings_project(gui_server)
+    fd = os.open(pdir / ".aicut-busy.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_SH)
+    try:
+        before = (pdir / "project.json").read_bytes()
+        status, data = post(gui_server, "/api/project/settings", {"project": "p1", "target": 120})
+        assert status == 409 and data["error"] == project_routes.TARGET_BUSY_MSG
+        assert (pdir / "project.json").read_bytes() == before
+        assert post(gui_server, "/api/project/settings", {"project": "p1", "title": "照常改"})[0] == 200
+    finally:
+        os.close(fd)
+
+
+def test_settings_target_does_not_keep_the_project_lock_after_returning(gui_server, presets):
+    """剪辑台进程自己不长期持有项目锁：改完时长后别人（清理缓存 / 再改一次）立刻拿得到独占锁。"""
+    from pipeline import project_lock
+    pdir = _settings_project(gui_server)
+    assert post(gui_server, "/api/project/settings", {"project": "p1", "target": 120})[0] == 200
+    with project_lock.exclusive(pdir):
+        pass
+    assert post(gui_server, "/api/project/settings", {"project": "p1", "target": 130})[0] == 200
+
+
+def test_settings_same_target_while_job_runs_is_200_not_409(gui_server, presets, monkeypatch):
+    from gui import project_routes
+    _settings_project(gui_server)
+    monkeypatch.setitem(project_routes.jobs.JOBS, "j1", fake_job("p1"))
+    before = (gui_server.root / "p1/project.json").read_bytes()
+    status, data = post(gui_server, "/api/project/settings", {"project": "p1", "target": 99})
+    assert status == 200 and data["project"]["target_duration"] == 99 and len(data["wizard"]["steps"]) == 6
+    assert (gui_server.root / "p1/project.json").read_bytes() == before
+
+
+def test_settings_same_target_plus_title_while_job_runs_saves_title(gui_server, presets, monkeypatch):
+    from gui import project_routes
+    _settings_project(gui_server)
+    monkeypatch.setitem(project_routes.jobs.JOBS, "j1", fake_job("p1"))
+    status, _ = post(gui_server, "/api/project/settings", {"project": "p1", "target": 99, "title": "新名"})
+    assert status == 200 and project_json(gui_server)["title"] == "新名" and _target_of(gui_server) == 99
+
+
+def test_settings_title_and_changed_target_while_job_runs_writes_nothing(gui_server, presets, monkeypatch):
+    from gui import project_routes
+    _settings_project(gui_server)
+    monkeypatch.setitem(project_routes.jobs.JOBS, "j1", fake_job("p1"))
+    before = (gui_server.root / "p1/project.json").read_bytes()
+    status, data = post(gui_server, "/api/project/settings", {"project": "p1", "title": "不该写", "target": 120})
+    assert status == 409 and data["error"] == project_routes.TARGET_BUSY_MSG
+    assert (gui_server.root / "p1/project.json").read_bytes() == before
+
+
+def _selected_project(gs, monkeypatch):
+    """分析完成、答案确认、已有选段（带 inputs 指纹）的项目。"""
+    from pipeline import media_io, questions
+    monkeypatch.setattr(media_io, "is_complete", lambda p, **k: p.exists())
+    pdir = _settings_project(gs)
+    for rel in ("work/proxy.mp4", "work/segments_scored.json", "work/content_summary.json", "work/questions.json"):
+        (pdir / rel).write_bytes(b"{}" if rel.endswith(".json") else b"x")
+    cfg = project_json(gs)
+    work = pdir / "work"
+    (work / "analysis_inputs.json").write_text(json.dumps(fingerprints.analysis_inputs(cfg)), encoding="utf-8")
+    (work / questions.ANSWERS_FILE).write_text(json.dumps(
+        {"confirmed": True, "questions_digest": fingerprints.file_digest(work / "questions.json")}), encoding="utf-8")
+    (work / "selection.json").write_text(json.dumps(
+        {"inputs": fingerprints.selection_inputs(work, cfg)}), encoding="utf-8")
+    return pdir
+
+
+def test_settings_target_marks_existing_selection_stale_with_target_reason(gui_server, presets, monkeypatch):
+    _selected_project(gui_server, monkeypatch)
+    status, data = post(gui_server, "/api/project/settings", {"project": "p1", "target": 123})
+    result = next(s for s in data["wizard"]["steps"] if s["key"] == "result")
+    assert status == 200 and result["status"] == wizard.STALE and result["reasons"] == ["target"]
+    assert "目标时长改过了" in result["banner"]
+
+
+def test_settings_same_target_keeps_selection_fresh(gui_server, presets, monkeypatch):
+    _selected_project(gui_server, monkeypatch)
+    status, data = post(gui_server, "/api/project/settings", {"project": "p1", "target": 99})
+    result = next(s for s in data["wizard"]["steps"] if s["key"] == "result")
+    assert status == 200 and result["status"] != wizard.STALE
+
+
+def test_settings_target_without_selection_is_not_stale(gui_server, presets):
+    _settings_project(gui_server)
+    status, data = post(gui_server, "/api/project/settings", {"project": "p1", "target": 123})
+    result = next(s for s in data["wizard"]["steps"] if s["key"] == "result")
+    assert status == 200 and result["status"] != wizard.STALE and result["reasons"] == []
 
 
 def test_settings_requires_session(gui_server, presets):
