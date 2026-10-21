@@ -50,12 +50,13 @@
 
 **M15（时长随时可改）** — ①（= 项目设置）、③ 剪辑列表面板、⑤ 看结果都能改成片时长，不用离开当前步；③ 超目标时一键采用建议时长。已定：①③ 与项目设置里改只保存，⑤ 标「需要更新 · 目标时长改过了」，不自动重新选段；⑤ 保持改完即重新选段；手动改过分镜表时重新选段先询问（KI-95）。不做：②④⑥ 加入口；①③ 改完自动重选；范围仍 10 秒–60 分钟。
 
+**M16（Windows 上运行）** — 剪辑台 App 在 Windows 10/11 x64 上跑通全流程（WebView2 界面、钥匙串用凭据管理器、Windows 剪映草稿目录直装、可取消任务、预览片与导出）。已定（2026-10-21）：同一套 Python + pywebview 加平台适配层；Windows 包只在 Windows 上构建，用 GitHub Actions Windows runner 产出，Mac 不负责交叉打包；ffmpeg 用 LGPL 预编译构建并钉 SHA256、随包附源码；第一版交付解压即用的 zip，安装程序随后。先做最小验证（WebView2 冻结后可开窗、LGPL ffmpeg 有可用 H.264 编码器且剪映能播、keyring 可读写），不通过则回来改方案。不做：Windows ARM、代码签名、自动更新。
+
 **Out of scope**
 - Intel / universal2 构建、Developer ID 签名与公证 — PRD §13 已决定不做
 - 自动更新 — PRD §8 列为 P2
 - 登记册以外的新功能 — 不自行扩大范围
 - 界面改版不改选段 / 分析算法本身 — 只改流程、入口与呈现；算法问题另登记
-- App 本身在 Windows 上运行（安装包、WebView2、路径编码）— 待确认，见 Open Questions
 
 ## Delivery Milestones
 <!-- Status: pending | in-progress | complete -->
@@ -77,10 +78,11 @@
 | 13 | 向导：从新建到定标准 | 剪辑师按步骤条走：首次打开告知 + 填 Key → 新建（含剪辑偏好）即开始分析 → 看人话进度 → 看素材时用 S 快速挑进剪辑列表、标不可用 → 定标准（确认分析、裁决待定、答题）后生成分镜表；没走到的步骤点不了，往回改下游标「需要更新」；名词统一；项目栏自动隐藏；快捷键可自定义 | GL-26（①–④ 与框架）KI-93 KI-96 KI-97 | complete（待放行检查 #13–#19） | [plan](../PRPs/plans/m13-wizard-setup-to-criteria.plan.md) · [report](../PRPs/reports/m13-wizard-setup-to-criteria-report.md) · `9a705c3`..`efeb92b` |
 | 14 | 向导：看结果与导出 | 看结果里能改时长、改分镜表、手动生成预览片、从未采用清单加回；手动改过后重新选段先询问、可恢复 AI 选段；预览片看过才能导出；导出 Mac / Windows 生成新版本，可对比两版、回到某一版；「打开剪映」只在可用时出现 | GL-26（⑤⑥）GL-27 KI-94 KI-95 KI-98（含 M13 留下的 KI-100；另登记 KI-101 open、KI-102 fixed） | complete（待放行检查 #19–#24） | [plan](../PRPs/plans/m14-wizard-result-export.plan.md) · [report](../PRPs/reports/m14-wizard-result-export-report.md) · `1f63524` `6972b5c` `aa18643` `6d812f7` |
 | 15 | 时长随时可改 | ①（项目设置）、③、⑤ 任一处都能改成片时长，不用离开当前步；③ 超目标一键采用建议时长；①③ 改后 ⑤ 标「需要更新」，重新选段时手动改过的先问 | KI-104 | complete（放行检查 #26 已通过） | [plan](../PRPs/plans/m15-target-anytime.plan.md) · [report](../PRPs/reports/m15-target-anytime-report.md) |
+| 16 | Windows 上运行 | 剪辑师在 Windows 10/11 上解压即用，走完「填 Key → 新建 → 分析 → 选段 → 预览片 → 导出进 Windows 剪映」，剪映能打开并播放；任务可取消、不留孤儿进程；Windows 包由 CI 在 Windows 上构建 | PRD §13 平台 / 分发；PROGRESS 5.6 | pending | — |
 
 ## Open Questions
 
-- [ ] App 本身是否需要在 Windows 上运行？当前理解：只需导出的草稿能在 Windows 剪映打开（GL-14 覆盖）；若需要，另增 Windows 打包类阻断项。
+- [x] App 本身是否需要在 Windows 上运行 — 2026-10-21 已定：需要，见 M16；Windows 包只在 Windows（CI）上构建。
 - [x] KI-41：已决定降为 P2，将来本地实现（PRD v1.2）。
 - [x] KI-40：样本与测量方法、FR-5 验收已在 PRD v1.2 修订。
 
