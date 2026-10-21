@@ -78,7 +78,7 @@
 | 13 | 向导：从新建到定标准 | 剪辑师按步骤条走：首次打开告知 + 填 Key → 新建（含剪辑偏好）即开始分析 → 看人话进度 → 看素材时用 S 快速挑进剪辑列表、标不可用 → 定标准（确认分析、裁决待定、答题）后生成分镜表；没走到的步骤点不了，往回改下游标「需要更新」；名词统一；项目栏自动隐藏；快捷键可自定义 | GL-26（①–④ 与框架）KI-93 KI-96 KI-97 | complete（待放行检查 #13–#19） | [plan](../PRPs/plans/m13-wizard-setup-to-criteria.plan.md) · [report](../PRPs/reports/m13-wizard-setup-to-criteria-report.md) · `9a705c3`..`efeb92b` |
 | 14 | 向导：看结果与导出 | 看结果里能改时长、改分镜表、手动生成预览片、从未采用清单加回；手动改过后重新选段先询问、可恢复 AI 选段；预览片看过才能导出；导出 Mac / Windows 生成新版本，可对比两版、回到某一版；「打开剪映」只在可用时出现 | GL-26（⑤⑥）GL-27 KI-94 KI-95 KI-98（含 M13 留下的 KI-100；另登记 KI-101 open、KI-102 fixed） | complete（待放行检查 #19–#24） | [plan](../PRPs/plans/m14-wizard-result-export.plan.md) · [report](../PRPs/reports/m14-wizard-result-export-report.md) · `1f63524` `6972b5c` `aa18643` `6d812f7` |
 | 15 | 时长随时可改 | ①（项目设置）、③、⑤ 任一处都能改成片时长，不用离开当前步；③ 超目标一键采用建议时长；①③ 改后 ⑤ 标「需要更新」，重新选段时手动改过的先问 | KI-104 | complete（放行检查 #26 已通过） | [plan](../PRPs/plans/m15-target-anytime.plan.md) · [report](../PRPs/reports/m15-target-anytime-report.md) |
-| 16 | Windows 上运行 | 剪辑师在 Windows 10/11 上解压即用，走完「填 Key → 新建 → 分析 → 选段 → 预览片 → 导出进 Windows 剪映」，剪映能打开并播放；任务可取消、不留孤儿进程；Windows 包由 CI 在 Windows 上构建 | PRD §13 平台 / 分发；PROGRESS 5.6 | pending | — |
+| 16 | Windows 上运行 | 剪辑师在 Windows 10/11 上解压即用，走完「填 Key → 新建 → 分析 → 选段 → 预览片 → 导出进 Windows 剪映」，剪映能打开并播放；任务可取消、不留孤儿进程；Windows 包由 CI 在 Windows 上构建 | PRD §13 平台 / 分发；PROGRESS 5.6 | in-progress | [plan](../PRPs/plans/m16-windows-runtime.plan.md) |
 
 ## Open Questions
 
