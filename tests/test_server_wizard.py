@@ -240,11 +240,11 @@ def test_settings_target_guard_and_write_happen_inside_jobs_lock(gui_server, pre
 
 def test_settings_target_is_409_when_another_process_holds_the_project(gui_server, presets):
     """终端里的 aicut select / 遗留子进程持有项目共享锁时，改时长回 409。"""
-    import fcntl
     from gui import project_routes
+    from pipeline import filelock
     pdir = _settings_project(gui_server)
     fd = os.open(pdir / ".aicut-busy.lock", os.O_RDWR | os.O_CREAT, 0o600)
-    fcntl.flock(fd, fcntl.LOCK_SH)
+    filelock.flock(fd, filelock.LOCK_SH)
     try:
         before = (pdir / "project.json").read_bytes()
         status, data = post(gui_server, "/api/project/settings", {"project": "p1", "target": 120})

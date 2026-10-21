@@ -47,19 +47,18 @@ def test_shots_save_allowed_while_other_task_runs(gui_server, monkeypatch):
 
 def test_shots_save_waits_for_cross_process_lock(gui_server):
     """另一个进程（aicut select --manual=replace）持有文件锁时，保存要等，而不是写进去被吞掉。"""
-    import fcntl
     import os
     import threading
-    from pipeline import shots_store
+    from pipeline import filelock, shots_store
     pdir = make_project(gui_server.root, shots=AI)
     fd = os.open(pdir / shots_store.FILE_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
-    fcntl.flock(fd, fcntl.LOCK_EX)
+    filelock.flock(fd, filelock.LOCK_EX)
     result = []
     t = threading.Thread(target=lambda: result.append(_shots_post(gui_server, [])[0]))
     t.start()
     t.join(0.4)
     assert result == [] and t.is_alive()
-    fcntl.flock(fd, fcntl.LOCK_UN)
+    filelock.flock(fd, filelock.LOCK_UN)
     os.close(fd)
     t.join(5)
     assert result == [200]

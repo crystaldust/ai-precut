@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import contextlib
 import copy
-import fcntl
 import glob
 import json
 import logging
@@ -22,6 +21,8 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterator
+
+from pipeline import filelock
 
 CURRENT_SCHEMA = 2
 # 中间产物（segments_text / segments_scored / selection / timeline）的格式版本（KI-37）。
@@ -223,13 +224,13 @@ def lock_path(path: Path) -> Path:
 
 @contextlib.contextmanager
 def locked(path: Path) -> Iterator[None]:
-    """跨进程互斥（fcntl.flock，进程退出自动释放）；文件系统不支持时退回进程内锁并记 warning。"""
+    """跨进程互斥（filelock.flock，进程退出自动释放）；文件系统不支持时退回进程内锁并记 warning。"""
     lp = lock_path(path)
     lp.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(lp, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), LOCK_MODE)  # 不跟随符号链接（L16）
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            filelock.flock(fd, filelock.LOCK_EX)
         except OSError as exc:
             _LOG.warning(LOCK_UNSUPPORTED, exc, Path(path).name)
             with _FALLBACK_LOCK:
@@ -238,7 +239,7 @@ def locked(path: Path) -> Iterator[None]:
         try:
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            filelock.flock(fd, filelock.LOCK_UN)
     finally:
         os.close(fd)
 

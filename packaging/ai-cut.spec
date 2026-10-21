@@ -29,7 +29,7 @@ hidden = [
     "pipeline.applog", "pipeline.asr_state", "pipeline.brief", "pipeline.build_documentary",
     "pipeline.cache", "pipeline.classify", "pipeline.cli_args", "pipeline.clips",
     "pipeline.cloud", "pipeline.config_cli", "pipeline.consent", "pipeline.diagnostics",
-    "pipeline.diskspace", "pipeline.encode", "pipeline.exclusions", "pipeline.export_draft", "pipeline.export_flow",
+    "pipeline.diskspace", "pipeline.encode", "pipeline.exclusions", "pipeline.export_draft", "pipeline.export_flow", "pipeline.filelock",
     "pipeline.fingerprints", "pipeline.format_transcript",
     "pipeline.junk_detect", "pipeline.jy_env", "pipeline.jy_version", "pipeline.llm",
     "pipeline.media_io", "pipeline.notices", "pipeline.outputs", "pipeline.proc", "pipeline.project_cli",

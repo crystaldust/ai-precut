@@ -1,5 +1,4 @@
 """手动分镜表存储（M14 E7 / E9 / E11）：线程锁 + 跨进程文件锁、基线、覆盖前备份。"""
-import fcntl
 import json
 import os
 import stat
@@ -8,7 +7,7 @@ import time
 
 import pytest
 
-from pipeline import schema, shots_store
+from pipeline import filelock, schema, shots_store
 
 
 def _sh(i, a, b, sub="字幕"):
@@ -52,7 +51,7 @@ def test_locked_blocks_while_another_open_file_holds_flock(tmp_path):
     """跨进程的等价物：flock 按打开的文件描述符算，另一个 fd 持锁时 locked() 必须等。"""
     pdir = _project(tmp_path)
     holder = os.open(pdir / shots_store.FILE_LOCK, os.O_RDWR | os.O_CREAT, 0o600)
-    fcntl.flock(holder, fcntl.LOCK_EX)
+    filelock.flock(holder, filelock.LOCK_EX)
     got = threading.Event()
 
     def worker():
@@ -62,7 +61,7 @@ def test_locked_blocks_while_another_open_file_holds_flock(tmp_path):
     t = threading.Thread(target=worker)
     t.start()
     assert not got.wait(0.3)
-    fcntl.flock(holder, fcntl.LOCK_UN)
+    filelock.flock(holder, filelock.LOCK_UN)
     os.close(holder)
     assert got.wait(5)
     t.join(5)
@@ -73,7 +72,7 @@ def test_locked_warns_and_proceeds_when_flock_unsupported(tmp_path, monkeypatch,
 
     def boom(fd, op):
         raise OSError("not supported")
-    monkeypatch.setattr(shots_store.fcntl, "flock", boom)
+    monkeypatch.setattr(shots_store.filelock, "flock", boom)
     with caplog.at_level("WARNING"):
         with shots_store.locked(pdir):
             ran = True
@@ -229,11 +228,13 @@ def test_concurrent_save_and_replace_never_lose_an_edit(tmp_path):
 def _hold_flock_in_subprocess(pdir):
     import subprocess
     import sys
-    code = ("import fcntl, os, sys\n"
+    root = str(__import__("pathlib").Path(__file__).resolve().parent.parent)
+    code = ("import os, sys; sys.path.insert(0, %r)\n"
+            "from pipeline import filelock\n"
             "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\n"
-            "fcntl.flock(fd, fcntl.LOCK_EX)\n"
+            "filelock.flock(fd, filelock.LOCK_EX)\n"
             "print('ready', flush=True)\n"
-            "sys.stdin.readline()\n")
+            "sys.stdin.readline()\n" % root)
     p = subprocess.Popen([sys.executable, "-c", code, str(pdir / shots_store.FILE_LOCK)],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     assert p.stdout.readline().strip() == "ready"

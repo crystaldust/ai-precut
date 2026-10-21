@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import logging
 import os
 import re
@@ -23,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from pipeline import schema, shot_diff
+from pipeline import filelock, schema, shot_diff
 
 FILE_LOCK = ".aicut-shots.lock"
 LOCK_MODE = 0o600
@@ -60,20 +59,20 @@ def thread_lock(pdir: Path) -> threading.Lock:
         return _THREAD_LOCKS.setdefault(key, threading.Lock())
 
 
-def _flock_bounded(fd: int, pdir: Path) -> None:
-    """flock(LOCK_NB) + 有限重试；文件系统不支持 flock 时只记 warning 放行。"""
+def _flock_bounded(fd: int, pdir: Path) -> bool:
+    """flock(LOCK_NB) + 有限重试；文件系统不支持 flock 时只记 warning 放行。返回是否真的持有锁。"""
     deadline = time.monotonic() + BUSY_TIMEOUT_S
     while True:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return
+            filelock.flock(fd, filelock.LOCK_EX | filelock.LOCK_NB)
+            return True
         except BlockingIOError:
             if time.monotonic() >= deadline:
                 raise Busy(BUSY_MSG) from None
             time.sleep(BUSY_POLL_S)
         except OSError as exc:
             _LOG.warning(LOCK_UNSUPPORTED, exc, Path(pdir).name)
-            return
+            return False
 
 
 @contextlib.contextmanager
@@ -88,10 +87,16 @@ def locked(pdir: Path) -> Iterator[None]:
         raise Busy(BUSY_MSG)
     try:
         fd = os.open(Path(pdir) / FILE_LOCK, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), LOCK_MODE)
+        held = False
         try:
-            _flock_bounded(fd, pdir)
+            held = _flock_bounded(fd, pdir)
             yield
         finally:
+            if held:
+                try:  # 显式解锁（Windows 关句柄后释放是异步的）；失败不掩盖原异常
+                    filelock.flock(fd, filelock.LOCK_UN)
+                except OSError as exc:
+                    _LOG.debug("解锁失败（忽略）：%s", exc)
             os.close(fd)  # 关闭即释放
     finally:
         lock.release()

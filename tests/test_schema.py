@@ -360,10 +360,10 @@ def test_update_returns_new_value_and_keeps_lock_file_beside(tmp_path):
 
 
 def test_update_falls_back_when_flock_unsupported(tmp_path, monkeypatch):
-    import fcntl
+    from pipeline import filelock
     def nope(*a):
         raise OSError(45, "Operation not supported")
-    monkeypatch.setattr(fcntl, "flock", nope)
+    monkeypatch.setattr(filelock, "flock", nope)
     path = tmp_path / "project.json"
     schema.write_json(path, {"a": 1})
     assert schema.update(path, lambda c: {**c, "a": 2}) == {"a": 2}
