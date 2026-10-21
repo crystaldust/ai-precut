@@ -158,25 +158,35 @@ async function restoreSeg(seg, to, removed){
 async function nextUndo(b){
   while(b.undo.length){
     const e = b.undo.pop();
-    await queueOf(e.id).chain;
+    await (e.batch ? settleMarks() : queueOf(e.id).chain);   // 批量条目：等所有在途请求
     if(bs() !== b) return null;
+    if(e.batch){ if(!e.dropped) return {entry: e, seg: null}; continue; }
     const seg = b.segs.find(s => s.id === e.id);
     if(!e.dropped && seg) return {entry: e, seg};
   }
   return null;
 }
-async function undoLast(){
+// 连按 Z：撤销一条一条排队做完，后一条不会抢在前一条回来之前就发请求
+let undoTail = Promise.resolve();
+function undoLast(){
+  const run = undoTail.then(doUndo);
+  undoTail = run.then(() => {}, () => {});
+  return run;
+}
+async function doUndo(){
   const b = bs();
   if(!b) return false;
   const found = await nextUndo(b);
   if(bs() !== b) return false;
   if(!found){ toast(COPY_NOTHING_TO_UNDO); return false; }
   const {entry, seg} = found;
-  let ok = await restoreSeg(seg, entry.before, entry.removed);
-  if(!ok && bs() === b) ok = await restoreSeg(seg, entry.before, entry.removed);   // 重试一次
+  const redo = () => entry.batch ? undoBatch(b, entry) : restoreSeg(seg, entry.before, entry.removed);   // 批量条目在 batch-select.js
+  let ok = await redo();
+  if(!ok && bs() === b) ok = await redo();   // 重试一次
   if(bs() !== b) return false;
   if(!ok){ toast(COPY_UNDO_DROPPED, TOAST_ERROR_MS); return false; }              // 还是不行：丢掉这一条，不卡住后面的
-  setCurrent(seg); toast(b.note || COPY_UNDONE, TOAST_NOTE_MS); b.note = null;
+  if(seg) setCurrent(seg);
+  toast(b.note || COPY_UNDONE, TOAST_NOTE_MS); b.note = null;
   return true;
 }
 

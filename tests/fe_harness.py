@@ -15,7 +15,7 @@ NODE = shutil.which("node")
 
 # index.html 里的加载顺序，不含最后的 main.js（它只负责启动，测试里手动调用 boot()）
 SCRIPTS = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
-           "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "step-criteria.js",
+           "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js", "step-criteria.js",
            "criteria-analysis.js", "criteria-pending.js", "reselect.js", "result-table.js", "result-unused.js",
            "step-result.js", "step-export.js", "export-compare.js", "app.js"]
 
@@ -42,7 +42,7 @@ function mkEl(sel, parent){
       while(n){ if(a in n.attrs) return n; n = n.parent; }
       return null;
     },
-    contains(){ return false; }, focus(){}, pause(){}, play(){ return Promise.resolve(); },
+    contains(){ return false; }, focus(){}, blur(){ this.blurred = (this.blurred || 0) + 1; }, pause(){}, play(){ return Promise.resolve(); },
     querySelector(){ return null; }, querySelectorAll(){ return []; }};
   // innerHTML 的 setter：#stage / #modalBody 整块重画时，里面的 Key 输入框会被清空（和真 DOM 一样）
   Object.defineProperty(e, 'innerHTML', {get(){ return html; }, set(v){

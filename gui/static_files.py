@@ -9,7 +9,7 @@ STATIC_FILES = frozenset({
     "index.html", "app.css",
     "common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
     "shortcuts.js", "cliplist.js",
-    "project-form.js", "step-analyze.js", "step-browse.js", "step-criteria.js",
+    "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js", "step-criteria.js",
     "criteria-analysis.js", "criteria-pending.js",
     "reselect.js", "result-table.js", "result-unused.js", "step-result.js", "step-export.js", "export-compare.js", "app.js", "main.js",
 })

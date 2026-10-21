@@ -104,7 +104,7 @@
 ```
 gui/static/index.html   界面（原生 JS，无框架无构建；一个页面、一个窗口，六步都在 #stage 里切换）
         ↓ fetch
-gui/server.py           本地服务（127.0.0.1，只做转发和文件服务）；项目内容类接口在 gui/project_routes.py，
+gui/server.py           本地服务（127.0.0.1，只做转发和文件服务）；项目内容类接口在 gui/project_routes.py（③ 批量标记在 gui/browse_batch.py），
                         步骤状态 gui/wizard.py，⑤⑥ 的接口与数据 gui/result_routes.py / gui/result_payload.py，
                         剪映检测与打开 gui/jianying.py / gui/opener.py，分析进度 gui/analysis.py，界面偏好 gui/prefs.py，
                         任务子进程 gui/jobs.py，Key/告知 gui/settings.py
@@ -144,6 +144,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | POST | `/api/browse/must` | S：放入 / 移出剪辑列表 `{project, id, must}`；与「不可用」互斥，响应带 `cleared`、`segment`、`clip_list`、`wizard` |
 | POST | `/api/browse/level` | A / D：人工档位 `{project, id, level}`；`level: null` = 撤销人工档位；响应同上 |
 | POST | `/api/browse/unusable` | X：标 / 取消不可用；标记时会把手动分镜表里对应镜头移除（`removed_shots`，撤销时可 `restore_shots` 放回） |
+| POST | `/api/browse/batch` | ③ 批量标记 `{project, items:[{id, must_keep?, unusable?, level?}], restore_shots?}`（≤ 2000 条；`level: null` = 撤销人工档位）：整批成功或整批不写；响应 `segments`（这批各段最新状态）、`cleared`（`{id: 被清掉的标记}`）、`clip_list`、`wizard`、`removed_shots`、`restored`、`not_restored` |
 | POST | `/api/topics/rename` | 话题改名 `{project, name, display}`：只改显示名，选段 / 答案仍按原名匹配；`display` 为空 = 恢复原名；重名 / 超长 → 400 |
 | POST | `/api/confirm/answers` | ④ 保存答案 `{project, answers, confirmed?, manual?}`：不带 `confirmed` = 草稿（不动确认状态、不起任务）；`confirmed:true` 保存并起「重新选段」任务（`manual:'replace'|'keep'` 决定手动分镜表怎么处理；`job_id`，没能起来时 `job_error`）；响应带 `wizard` |
 | POST | `/api/result/restore-ai` | ⑤ 恢复为 AI 选段：备份并删除手动分镜表；没有手动表是空操作；没有 AI 选段 / 项目有任务在跑 → 409 |
@@ -199,6 +200,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | `project-form.js` | ① 新建项目、项目设置 |
 | `step-analyze.js` | ② 分析进度 |
 | `step-browse.js` | ③ 看素材页面（摘要、分布条、列表、筛选、播放器） |
+| `batch-select.js` | ③ 批量选择：勾选框、Shift 连选、全选（当前筛选）、操作栏、批量标记与整批撤销 |
 | `step-criteria.js` | ④ 页面骨架与加载、目录、决策问题（草稿自动保存）、闸门、档位修改 |
 | `criteria-analysis.js` | ④「分析对不对」：话题改名、关键信息、说话人、逐段改档位 |
 | `criteria-pending.js` | ④「裁决待定」：一次一段、A / D、先跳过、剩下的按 AI 建议、播放器 |

@@ -86,32 +86,48 @@ def _rekey(data: dict, segments: list[dict]) -> tuple[dict, set[str]]:
     return {**out, **{old: data[old] for old in kept}}, kept
 
 
+def _merge_item(data: dict, segments: list[dict] | None, segment_id: str, fields: dict,
+                exclusive: str | None) -> tuple[dict, str | None]:
+    """单条裁决的合并（_write 与 set_batch 共用）：data 须已 _rekey 过；纯函数，不读写文件。
+
+    → (新裁决表, 被顺带清掉的标记名或 None)。
+    """
+    prev = data.get(segment_id) if isinstance(data.get(segment_id), dict) else {}
+    cleared = None
+    if exclusive and prev.get(exclusive):  # ⚑P9：后按的生效，判断在锁内、_rekey 之后
+        fields = {**fields, exclusive: False}
+        cleared = exclusive
+    item = {**prev, **fields, "at": _now()}
+    if item.get("must_keep") is not True:  # 加入剪辑列表的顺序戳：只在 False→True 时记，关掉就清
+        item.pop("must_at", None)
+    elif not prev.get("must_keep"):
+        item["must_at"] = _now(precise=True)
+    anchor = next((_anchor_of(s) for s in segments or [] if s["id"] == segment_id), None)
+    if anchor:
+        item["anchor"] = anchor
+    return {**data, segment_id: item}, cleared
+
+
+def _rekeyed(workdir: Path) -> tuple[dict, list[dict] | None, set[str]]:
+    """读裁决并按当前句子 rekey → (裁决表, 当前句子或 None, 仍失效的键)。调用方须持 _LOCK。"""
+    data = load(workdir)
+    segments = _scored_segments(workdir)
+    stale: set[str] = set()
+    if segments:
+        data, stale = _rekey(data, segments)
+    return data, segments, stale
+
+
 def _write(workdir: Path, segment_id: str, fields: dict, exclusive: str | None = None) -> tuple[dict, str | None]:
     """锁内读改写。exclusive：本次要置 True 的互斥标记名；对方当前为 True 就在同一次写里清掉。
 
     → (新裁决表, 被顺带清掉的标记名或 None)。
     """
     with _LOCK:
-        data = load(workdir)
-        segments = _scored_segments(workdir)
-        if segments:
-            data, stale = _rekey(data, segments)
-            if segment_id in stale:  # 同 id 的旧裁决属于别的句子（已失效），新裁决不能继承它的字段
-                data = {k: v for k, v in data.items() if k != segment_id}
-        prev = data.get(segment_id) if isinstance(data.get(segment_id), dict) else {}
-        cleared = None
-        if exclusive and prev.get(exclusive):  # ⚑P9：后按的生效，判断在锁内、_rekey 之后
-            fields = {**fields, exclusive: False}
-            cleared = exclusive
-        item = {**prev, **fields, "at": _now()}
-        if item.get("must_keep") is not True:  # 加入剪辑列表的顺序戳：只在 False→True 时记，关掉就清
-            item.pop("must_at", None)
-        elif not prev.get("must_keep"):
-            item["must_at"] = _now(precise=True)
-        anchor = next((_anchor_of(s) for s in segments or [] if s["id"] == segment_id), None)
-        if anchor:
-            item["anchor"] = anchor
-        data = {**data, segment_id: item}
+        data, segments, stale = _rekeyed(workdir)
+        if segment_id in stale:  # 同 id 的旧裁决属于别的句子（已失效），新裁决不能继承它的字段
+            data = {k: v for k, v in data.items() if k != segment_id}
+        data, cleared = _merge_item(data, segments, segment_id, fields, exclusive)
         _save(workdir, data)
         return data, cleared
 
@@ -124,6 +140,83 @@ def set_level(workdir: Path, segment_id: str, level: int) -> dict:
 
 def _set_flag(workdir: Path, segment_id: str, field: str, flag: bool) -> tuple[dict, str | None]:
     return _write(workdir, segment_id, {field: bool(flag)}, EXCLUSIVE[field] if flag else None)
+
+
+BATCH_FIELDS = ("must_keep", "unusable", "level")
+BAD_BATCH_LIST_MSG = "批量标记需要至少一段"
+BAD_BATCH_ITEM_MSG = "批量标记第 {n} 条不对：{why}"
+DUP_BATCH_ID_MSG = "片段 {id} 在这批里出现了不止一次"
+BAD_LEVEL_MSG = "档位只能是 1（废片）、2（待定）、3（可用）或 null（撤销人工档位）"
+
+
+def check_batch(changes: object) -> list[dict]:
+    """批量写之前的全部校验（任一条不合法抛 ValueError，人话；此时什么都没写）。"""
+    if not isinstance(changes, list) or not changes:
+        raise ValueError(BAD_BATCH_LIST_MSG)
+    seen: set[str] = set()
+    for n, ch in enumerate(changes, 1):
+        def bad(why: str) -> ValueError:
+            return ValueError(BAD_BATCH_ITEM_MSG.format(n=n, why=why))
+        if not isinstance(ch, dict):
+            raise bad("必须是对象")
+        sid = ch.get("id")
+        if not isinstance(sid, str) or not sid:
+            raise bad("id 必须是非空文本")
+        if sid in seen:
+            raise ValueError(DUP_BATCH_ID_MSG.format(id=sid))
+        seen.add(sid)
+        if set(ch) - {"id", *BATCH_FIELDS}:
+            raise bad("含不认识的字段")
+        if not any(f in ch for f in BATCH_FIELDS):
+            raise bad("没有要修改的内容")
+        if any(f in ch and not isinstance(ch[f], bool) for f in ("must_keep", "unusable")):
+            raise bad("must_keep / unusable 必须是 true 或 false")
+        lv = ch.get("level")
+        if lv is not None and (isinstance(lv, bool) or not isinstance(lv, int) or lv not in LEVELS):
+            raise bad(BAD_LEVEL_MSG)
+        if ch.get("must_keep") is True and ch.get("unusable") is True:
+            raise bad("不能同时放入剪辑列表和标为不可用")
+    return changes
+
+
+def _unset_level_in(data: dict, segment_id: str) -> dict:
+    """把一条裁决里的人工档位去掉；条目只剩记账字段就整条删（同 unset_level）。"""
+    item = data.get(segment_id)
+    if not isinstance(item, dict) or "level" not in item:
+        return data
+    rest = {k: v for k, v in item.items() if k != "level"}
+    if set(rest) <= BOOKKEEPING_FIELDS:
+        return {k: v for k, v in data.items() if k != segment_id}
+    return {**data, segment_id: {**rest, "at": _now()}}
+
+
+def set_batch(workdir: Path, changes: list[dict]) -> tuple[dict, dict[str, str]]:
+    """批量写：一把锁、一次 load / rekey / save；每条规则同单段（互斥、must_at、锚点、失效旧裁决）。
+
+    change = {"id", "must_keep"?: bool, "unusable"?: bool, "level"?: 1|2|3|None}；level None = 撤销人工档位。
+    全部校验、全部合并算完才 _save 一次：任一条非法抛 ValueError，什么都不写。
+    → (新裁决表, {id: 被顺带清掉的标记名})。
+    """
+    check_batch(changes)
+    with _LOCK:
+        data, segments, stale = _rekeyed(workdir)
+        cleared: dict[str, str] = {}
+        for ch in changes:
+            sid = ch["id"]
+            fields = {f: ch[f] for f in ("must_keep", "unusable") if f in ch}
+            if ch.get("level") is not None:
+                fields["level"] = ch["level"]
+            if fields and sid in stale:  # 写新字段才丢失效旧裁决；只撤档位的行为同 unset_level
+                data = {k: v for k, v in data.items() if k != sid}
+            exclusive = next((EXCLUSIVE[f] for f, v in fields.items() if f in EXCLUSIVE and v), None)
+            if fields:
+                data, hit = _merge_item(data, segments, sid, fields, exclusive)
+                if hit:
+                    cleared[sid] = hit
+            if "level" in ch and ch["level"] is None:
+                data = _unset_level_in(data, sid)
+        _save(workdir, data)
+        return data, cleared
 
 
 def set_must(workdir: Path, segment_id: str, flag: bool) -> dict:

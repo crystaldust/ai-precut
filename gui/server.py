@@ -32,7 +32,7 @@ from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
 from pipeline import applog, outputs, proc, schema, shots_store  # noqa: E402
 from gui import (  # noqa: E402
-    jianying, jobs, maintenance, media, opener, prefs, project_routes, result_routes, session, settings,
+    browse_batch, jianying, jobs, maintenance, media, opener, prefs, project_routes, result_routes, session, settings,
     support, views,
 )
 from gui.static_files import STATIC_FILES  # noqa: E402
@@ -391,6 +391,7 @@ class Handler(BaseHTTPRequestHandler):
         if (hit := support.handle_post(p, body, diagnostics_project)
                 or maintenance.handle_post(p, body, existing_project)
                 or project_routes.handle_post(p, body, existing_project, PRESETS)
+                or browse_batch.handle_post(p, body, existing_project)
                 or result_routes.handle_post(p, body, existing_project)) is not None:
             return self._json(hit[1], hit[0])
 

@@ -34,7 +34,7 @@ JS_FILES = sorted(p.name for p in STATIC.glob("*.js"))
 MAX_JS_LINES = 400          # M13：每个前端脚本聚焦一件事
 INDEX_ENTRY = "main.js"     # 主页最后加载的启动脚本（所有 ACTIONS 注册都在它之前）
 INDEX_SCRIPT_ORDER = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js",
-                      "wizard.js", "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js",
+                      "wizard.js", "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js",
                       "step-criteria.js", "criteria-analysis.js", "criteria-pending.js", "reselect.js", "result-table.js", "result-unused.js",
                       "step-result.js", "step-export.js", "export-compare.js", "app.js", INDEX_ENTRY]
 

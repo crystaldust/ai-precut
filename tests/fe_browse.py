@@ -81,6 +81,20 @@ function sim(opts = {}){   // 模拟服务端：按请求改自己的一份状�
     }
     if (method !== 'POST' || !path.startsWith('/api/browse/')) return respond(method, path);
     if (opts.fail && opts.fail(path, body)) return [500, {error: '炸了'}];
+    if (path.endsWith('/batch')) {   // 批量接口：整批一起写，响应带这批各段最新状态
+      const cl = {}; let gone = [];
+      body.items.forEach(it => { const s = st[it.id], was = {...s};
+        if ('must_keep' in it) s.must_keep = it.must_keep;
+        if ('unusable' in it) s.unusable = it.unusable;
+        if (it.must_keep === true && was.unusable) { s.unusable = false; cl[it.id] = 'unusable'; }
+        if (it.unusable === true && was.must_keep) { s.must_keep = false; cl[it.id] = 'must_keep'; }
+        if (it.unusable === true) gone = opts.removed || [];
+        if (it.level === null) { s.level = s.base; s.override = false; s.level_reason = '原因'; }
+        else if ('level' in it) { s.level = it.level; s.override = true; s.level_reason = '人工改为' + it.level; } });
+      const n = (body.restore_shots || []).length;
+      return [200, {ok: true, segments: body.items.map(it => ({id: it.id, ...st[it.id]})), cleared: cl, clip_list: clipOf(),
+        wizard: SIM_WIZ, removed_shots: gone, restored: n, not_restored: 0}];
+    }
     const s = st[body.id]; let cleared = null, removed = [];
     if (path.endsWith('/must')) { if (body.must && s.unusable) { s.unusable = false; cleared = 'unusable'; } s.must_keep = body.must; }
     else if (path.endsWith('/unusable')) {

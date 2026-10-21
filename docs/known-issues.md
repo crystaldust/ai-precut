@@ -149,3 +149,4 @@
 | KI-100 | 事后标「不可用」不会让已落盘的产物失效：旧版本的 Windows zip、预览片、已进剪映草稿库的 Mac 草稿仍可打开 / 定位，界面也不提示（FR-11「所有版本均不出现」） | `gui/static/`（版本卡片）；`gui/server.py`（`/api/open target=export`） | fixed `1f63524` + `6d812f7`（版本卡片 `blocked` 标红并拦这一版 Windows 包的生成 / 在访达中显示；预览片仍可看、可对比；已进剪映草稿库的 Mac 草稿程序改不了，只提示） |
 | KI-101 | 未采用清单无法给出「因重复」原因：选段没有任何去重判断（只有话题未入选 / 超出话题预算 / 不在候选池），PRD FR-8 列的「重复」无数据来源 | `pipeline/select.py`（unused 生成处） | open（改选段算法，需另立项） |
 | KI-102 | `--no-draft` 出的版本卡片也显示「Mac 剪映草稿名」，剪映草稿库里其实没有这份草稿 | `gui/views.py`（版本数据）；`gui/static/step-export.js` | fixed `1f63524` + `6d812f7`（`export.json` 记录真实导出物，草稿名只在导出过 Mac 的版本上显示；改版前的版本标「改版前生成，未记录是否导入过」） |
+| KI-103 | ③ 看素材只能逐段放入剪辑列表 / 改标记（逐个按 S 或点「＋ 剪辑列表」），段多时太慢（2026-10-21 用户反馈） | `gui/static/batch-select.js`、`step-browse.js`、`cliplist.js`；`gui/browse_batch.py`；`pipeline/review.py` | fixed（提交号待回填）（勾选框 + Shift 连选、全选当前筛选；批量放入 / 移出剪辑列表、标为可用 / 废片 / 不可用，一个原子请求；Z 整批撤销） |

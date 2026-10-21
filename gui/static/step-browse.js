@@ -1,6 +1,7 @@
 // 剪辑台主页 · ③ 看素材（M13c）：摘要卡、分布条、片段列表（按时间 / 按话题 + 七个筛选）、播放器。
 // 标记（S / A / D / X / Z）与剪辑列表面板在 cliplist.js；快捷键在 shortcuts.js。
 // 页面骨架是固定的（viewBrowse 恒返回同一段 HTML，轮询刷新不会重画它）；内容由 enterBrowse 加载后分块填进去。
+// 勾选与批量操作在 batch-select.js。
 // 140 段要滚得动：筛选 / 换当前段 / 标记只切 class 和文字，不重画整张列表（只有切视图 / 切筛选才重画列表）。
 
 /* 界面文案：产品可直接改这里 */
@@ -42,7 +43,8 @@ let browseGen = 0;   // 每次进入 / 重置 +1：过期的加载结果一律�
 const BROWSE_SKELETON = `<div class="browse">
   <div class="b-top"><div class="card b-summary" id="bSummary"></div><div class="b-density" id="bDensity"></div></div>
   <div class="b-main">
-    <section class="b-left"><div class="b-bar" id="bFilters"></div><div class="b-note" id="bNote" role="status"></div><div class="b-list" id="bList"></div></section>
+    <section class="b-left"><div class="b-bar" id="bFilters"></div><div class="b-note" id="bNote" role="status"></div><div class="b-list" id="bList"></div>
+      <div class="b-batch" id="bBatch" hidden></div></section>
     <aside class="b-right"><video id="bPv" controls preload="metadata"></video><div class="b-now" id="bNow"></div>
       <div class="b-panel" id="bPanel"></div></aside>
   </div></div>`;
@@ -85,12 +87,12 @@ async function enterBrowse(){
   if(gen !== browseGen || project !== state.project || state.view !== 'browse') return;
   const segs = (data.segments || []).map((s, i) => ({...s, _i: i}));
   state.browse = {gen, project, data, segs, clip: data.clip_list, view: 'time', filter: 'all',
-                  cur: null, stopAt: null, cueEnd: null, lastT: null, shown: [], undo: [], note: null, groups: [],
+                  sel: new Set(), selAnchor: null, batchBusy: false, cur: null, stopAt: null, cueEnd: null, lastT: null, shown: [], undo: [], note: null, groups: [],
                   confirmed: new Map(segs.map(s => [s.id, snap(s)]))};
   const pv = $('#bPv');
   pv.src = '/media/' + encodeURIComponent(project) + '/proxy';
   wirePlayer(pv);
-  renderSummary(); renderDensity(); renderFilters(); renderList(); renderNow(); renderClipPanel(); renderNote();
+  renderSummary(); renderDensity(); renderList(); renderFilters(); renderNow(); renderClipPanel(); renderNote(); paintBatchBar();
 }
 
 /* ---------------- 摘要卡、分布条 ---------------- */
@@ -125,13 +127,14 @@ function renderFilters(){
   const chips = FILTERS.map(([k, label]) =>
     `<button data-act="setFilter" data-v="${esc(k)}"${b.filter === k ? ' class="on"' : ''}>`
     + `${esc(label)} ${b.segs.filter(FILTER_TESTS[k]).length}</button>`).join('');
-  $('#bFilters').innerHTML = `<span class="view-toggle">${view}</span><span class="chips">${chips}</span>`;
+  $('#bFilters').innerHTML = pickAllHtml() + `<span class="view-toggle">${view}</span><span class="chips">${chips}</span>`;
+  paintPickAll();
 }
 function rowHtml(s){
   const i = num(s._i), b = bs(), lv = num(s.level);
-  const cls = ['row', b && b.cur === i ? 'current' : '', s.must_keep ? 'in-list' : '', s.unusable ? 'unusable' : ''].filter(Boolean).join(' ');
+  const cls = ['row', b && b.cur === i ? 'current' : '', s.must_keep ? 'in-list' : '', s.unusable ? 'unusable' : '', b && b.sel.has(i) ? 'picked' : ''].filter(Boolean).join(' ');
   const flags = (s.visual_flags || []).filter(f => VISUAL_TAGS[f]).map(f => `<span class="vt">${esc(VISUAL_TAGS[f])}</span>`).join('');
-  return `<div class="${cls}" id="r${i}" data-act="jumpSeg" data-i="${num(i)}">`
+  return `<div class="${cls}" id="r${i}" data-act="jumpSeg" data-i="${num(i)}">${pickHtml(s)}`
     + `<div class="tc">${fmt(num(s.start))}</div>`
     + `<div class="lv lv${lv}" id="lv${i}">${esc(LEVEL_NAMES[lv] || '')}</div>`
     + `<div class="cat" title="${esc(s.topic || '')}">${esc(s.topic || '—')}</div>`
@@ -172,16 +175,17 @@ function renderList(){
     b.shown = [...groups.values()].flat().map(s => s._i);
   }
   list.scrollTop = keep;
+  pruneSelection(); paintPickAll();
 }
 function setView(v){
   const b = bs();
   if(!b || !['time', 'topic'].includes(v)) return;
-  b.view = v; renderFilters(); renderList();
+  b.view = v; clearSelection(); renderList(); renderFilters();
 }
 function setFilter(v){
   const b = bs();
   if(!b || !FILTER_TESTS[v]) return;
-  b.filter = v; renderFilters(); renderList(); renderNote();
+  b.filter = v; clearSelection(); renderList(); renderFilters(); renderNote();
 }
 // 当前段被标记后可能不再符合筛选：行不会消失（不重画列表），在列表上方轻轻提一句
 function renderNote(){
@@ -207,7 +211,7 @@ async function resyncBrowse(){
     b.confirmed.set(s.id, snap(s));
   });
   if(!pendingCount()) b.clip = data.clip_list;
-  renderDensity(); renderFilters(); renderList(); renderNote(); renderClipPanel(pendingCount() ? localClip() : undefined);
+  renderDensity(); renderList(); renderFilters(); renderNote(); renderClipPanel(pendingCount() ? localClip() : undefined);
 }
 // 标记之后只改这一行：class、按钮字、档位标签、依据——不重画列表
 function paintRow(s){
