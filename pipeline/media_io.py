@@ -20,7 +20,7 @@ import uuid
 from pathlib import Path
 from typing import Iterator
 
-from pipeline import schema
+from pipeline import plat, schema
 
 PARTIAL_TAG = ".partial-"          # M3 旧格式（与成品同目录）：只清理，不再生成
 PARTIAL_DIR = ".aicut-partial"     # KI-63：临时文件目录（与成品同一文件系统，os.replace 仍是原子的）
@@ -104,21 +104,9 @@ def _partial_path(dst: Path) -> Path:
     return d / f"{dst.stem}.{os.getpid()}.{uuid.uuid4().hex[:8]}{dst.suffix}"
 
 
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:  # 别的用户的进程：活着
-        return True
-    except (OSError, OverflowError):
-        return False
-    return True
-
-
 def _stale(pid: int) -> bool:
     """写者进程已不在才算残片；活着的不论多久都不删（长素材的代理可能写很久，审查修复 L21）。"""
-    return not _alive(pid)
+    return not plat.pid_alive(pid)
 
 
 def _clear_stale_partials(dst: Path) -> None:

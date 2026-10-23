@@ -550,3 +550,18 @@ def test_concurrent_writers_never_lose_partial_dir(tmp_path):  # 审查修复 M4
     for t in threads:
         t.join()
     assert errors == []
+
+
+def test_partial_staleness_uses_plat_pid_alive_not_os_kill(tmp_path, monkeypatch):
+    # Windows 上 os.kill(pid, 0) 会终止进程：写者存活探测必须走 plat.pid_alive
+    def boom(*a):
+        raise AssertionError("不能用 os.kill 探活")
+
+    seen = []
+    monkeypatch.setattr(mio.os, "kill", boom)
+    monkeypatch.setattr(mio.plat, "pid_alive", lambda pid: seen.append(pid) or pid == 111)
+    dead = _partial(tmp_path, f"proxy.{DEAD_PID}.deadbeef.mp4")
+    live = _partial(tmp_path, "proxy.111.cafebabe.mp4")
+    mio._clear_stale_partials(tmp_path / "proxy.mp4")
+    assert not dead.exists() and live.exists()
+    assert set(seen) == {DEAD_PID, 111}

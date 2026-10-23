@@ -7,6 +7,8 @@ import time
 import pytest
 
 from conftest import call, make_project
+from pipeline import plat, proctree
+from platform_marks import posix_only, win_only
 
 LONG = [sys.executable, "-c", "import time; print('go', flush=True); time.sleep(30)"]
 # 子进程再拉一个孙进程（模拟 aicut 拉起 ffmpeg），取消时两个都必须被杀
@@ -54,6 +56,8 @@ def post_job(gs, **body):
 
 def pid_alive(pid):
     import os
+    if plat.IS_WIN:  # Windows 上绝不能 os.kill(pid, 0)
+        return plat.pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -92,6 +96,7 @@ def test_second_job_conflicts_409(gui_server, jobs, monkeypatch):
 
 
 # ---------------------------------------------------------------- 取消
+@posix_only("进程组 + SIGTERM 取消")
 def test_cancel_kills_process_group(gui_server, jobs, monkeypatch):
     make_project(gui_server.root)
     fake_command(monkeypatch, jobs, GRANDCHILD)
@@ -109,6 +114,23 @@ def test_cancel_kills_process_group(gui_server, jobs, monkeypatch):
     fake_command(monkeypatch, jobs, [sys.executable, "-c", "print('ok')"])
     status, _ = post_job(gui_server, task="preview")
     assert status == 200  # 互斥已释放
+
+
+@win_only("Job Object 取消：子进程与孙进程都被 TerminateJobObject 结束")
+def test_cancel_kills_child_and_grandchild_via_job_object(gui_server, jobs, monkeypatch):
+    make_project(gui_server.root)
+    fake_command(monkeypatch, jobs, GRANDCHILD)
+    _, data = post_job(gui_server, task="preview")
+    job_id = data["job_id"]
+    assert wait_for(lambda: any(l.startswith("child") for l in get_job(gui_server, job_id)[1]["log"]))
+    grandchild = int(next(l for l in get_job(gui_server, job_id)[1]["log"]
+                          if l.startswith("child")).split()[1])
+    status, raw, _ = call(gui_server, "POST", f"/api/job/{job_id}/cancel", {})
+    assert status == 200 and json.loads(raw)["ok"] is True
+    assert wait_for(lambda: get_job(gui_server, job_id)[1]["status"] == "cancelled")
+    assert wait_for(lambda: not pid_alive(grandchild)), "孙进程（ffmpeg）也必须被杀"
+    fake_command(monkeypatch, jobs, [sys.executable, "-c", "print('ok')"])
+    assert post_job(gui_server, task="preview")[0] == 200  # 互斥已释放
 
 
 def test_cancel_unknown_job_404(gui_server):
@@ -182,8 +204,112 @@ def test_child_popen_flags(gui_server, jobs, monkeypatch):
     job_id = jobs.start_job("p1", "build")
     assert wait_for(lambda: jobs.JOBS[job_id]["status"] == "done")
     assert seen["stdin"] is subprocess.DEVNULL
-    assert seen["start_new_session"] is True
+    for key, value in proctree.spawn_kwargs().items():  # 进程树的启动参数由 proctree 决定，不再写死
+        assert seen[key] == value
     assert seen["env"]["PYTHONUNBUFFERED"] == "1"
+
+
+def test_child_popen_uses_proctree_spawn_kwargs_and_attaches(gui_server, jobs, monkeypatch):
+    seen, events = {}, []
+
+    class FakePopen:
+        pid = 0
+        returncode = None
+
+        def __init__(self, argv, **kw):
+            seen.update(kw)
+            self.stdout = iter([])
+
+        def wait(self):
+            return 0
+
+    tree = object()
+    monkeypatch.setattr(jobs.proctree, "spawn_kwargs", lambda: {"sentinel_flag": 7})
+    monkeypatch.setattr(jobs.proctree, "attach", lambda popen: events.append(("attach", popen)) or tree)
+    monkeypatch.setattr(jobs.proctree, "close", lambda t: events.append(("close", t)))
+    monkeypatch.setattr(jobs.subprocess, "Popen", FakePopen)
+    job_id = jobs.start_job("p1", "build")
+    assert wait_for(lambda: jobs.JOBS[job_id]["status"] == "done")
+    assert seen["sentinel_flag"] == 7
+    assert [e[0] for e in events] == ["attach", "close"]  # 起好立刻挂树；任务结束释放
+    assert events[1][1] is tree
+
+
+def test_attach_failure_kills_child_and_fails_job(gui_server, jobs, monkeypatch):
+    killed = []
+
+    class FakePopen:
+        pid = 0
+        returncode = None
+
+        def __init__(self, argv, **kw):
+            self.stdout = iter([])
+
+        def kill(self):
+            killed.append(1)
+
+        def wait(self, timeout=None):
+            return -9
+
+    def boom(popen):
+        raise ValueError("ctypes ArgumentError 之类：不止 OSError")
+
+    monkeypatch.setattr(jobs.proctree, "attach", boom)
+    monkeypatch.setattr(jobs.subprocess, "Popen", FakePopen)
+    job_id = jobs.start_job("p1", "build")
+    assert wait_for(lambda: jobs.JOBS[job_id]["status"] == "failed")
+    assert killed == [1]
+    assert any("无法启动任务" in l for l in jobs.JOBS[job_id]["log"])
+
+
+class BlockingPopen:
+    """stdout 一直阻塞到 release；用来测取消 / 关停时调用了 proctree 的哪些函数。"""
+    pid = 0
+    returncode = None
+
+    def __init__(self, argv=None, **kw):
+        import threading
+        self.release = threading.Event()
+        self.stdout = self
+
+    def __iter__(self):
+        self.release.wait(10)
+        return iter([])
+
+    def wait(self, timeout=None):
+        self.returncode = -15
+        return -15
+
+    def poll(self):
+        return None
+
+    def close(self):
+        pass
+
+
+def test_cancel_terminates_tree_then_kills_after_grace(gui_server, jobs, monkeypatch):
+    monkeypatch.setattr(jobs, "CANCEL_GRACE_S", 0.2)
+    calls, popens = [], []
+
+    def make(*a, **kw):
+        popens.append(BlockingPopen())
+        return popens[-1]
+
+    tree = object()
+    monkeypatch.setattr(jobs.subprocess, "Popen", make)
+    monkeypatch.setattr(jobs.proctree, "attach", lambda popen: tree)
+    monkeypatch.setattr(jobs.proctree, "terminate", lambda t: calls.append(("terminate", t)))
+    monkeypatch.setattr(jobs.proctree, "kill", lambda t: calls.append(("kill", t)))
+    monkeypatch.setattr(jobs.proctree, "close", lambda t: calls.append(("close", t)))
+    job_id = jobs.start_job("p1", "build")
+    assert wait_for(lambda: jobs.JOBS[job_id]["popen"] is not None)
+    assert wait_for(lambda: jobs.JOBS[job_id].get("tree") is tree)
+    jobs.cancel_job(job_id)
+    assert wait_for(lambda: ("kill", tree) in calls)  # 宽限期后仍未结束 → 强杀
+    assert calls[0] == ("terminate", tree)
+    popens[0].release.set()
+    assert wait_for(lambda: jobs.JOBS[job_id]["status"] == "cancelled")
+    assert calls[-1] == ("close", tree)
 
 
 def test_frozen_child_env_keeps_bundled_path_first(jobs, monkeypatch):
@@ -191,7 +317,17 @@ def test_frozen_child_env_keeps_bundled_path_first(jobs, monkeypatch):
     monkeypatch.setenv("PATH", "/app/bin:/usr/bin")
     assert jobs.child_env()["PATH"] == "/app/bin:/usr/bin"
     monkeypatch.setattr(jobs.proc, "FROZEN", False)
+    monkeypatch.setattr(jobs.sys, "platform", "darwin")
     assert jobs.child_env()["PATH"].startswith("/opt/homebrew/bin:")
+
+
+def test_homebrew_path_prefix_kept_on_linux_but_not_windows(jobs, monkeypatch):
+    monkeypatch.setattr(jobs.proc, "FROZEN", False)
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setattr(jobs.sys, "platform", "linux")
+    assert jobs.child_env()["PATH"].startswith("/opt/homebrew/bin:")  # 与改动前一致
+    monkeypatch.setattr(jobs.sys, "platform", "win32")
+    assert "/opt/homebrew/bin" not in jobs.child_env()["PATH"]
 
 
 # ---------------------------------------------------------------- GL-20：新建项目
@@ -242,6 +378,7 @@ STUBBORN = [sys.executable, "-c",
             "time.sleep(0.5); print('child', c.pid, flush=True); time.sleep(60)"]
 
 
+@posix_only("SIGTERM 被忽略的孙进程要靠 SIGKILL 进程组兜底；Windows 的 Job 终止没有宽限期这一层")
 def test_cancel_force_kills_group_even_if_main_child_already_exited(gui_server, jobs, monkeypatch):
     # aicut 收到 SIGTERM 退出了，但它拉起的 ffmpeg 不理 SIGTERM 且还占着输出管道：
     # 宽限期后必须 SIGKILL 整组，任务才能结束、互斥才能释放
@@ -276,6 +413,7 @@ def test_repeated_cancel_starts_one_kill_timer(gui_server, jobs, monkeypatch):
 
 
 # ---------------------------------------------------------------- 审查修复 2：不留孤儿任务（HIGH-1）
+@posix_only("SIGTERM → 宽限期 → SIGKILL 整组")
 def test_shutdown_all_kills_running_jobs_and_grandchildren(gui_server, jobs, monkeypatch):
     monkeypatch.setattr(jobs, "CANCEL_GRACE_S", 0.5)
     make_project(gui_server.root)
@@ -289,6 +427,47 @@ def test_shutdown_all_kills_running_jobs_and_grandchildren(gui_server, jobs, mon
     jobs.shutdown_all()
     assert time.time() - started < 5
     assert wait_for(lambda: not pid_alive(grandchild), timeout=3), "退出时孙进程也必须被杀"
+
+
+@win_only("shutdown_all 经 Job Object 一次结束子进程与孙进程")
+def test_shutdown_all_kills_job_tree_on_windows(gui_server, jobs, monkeypatch):
+    make_project(gui_server.root)
+    fake_command(monkeypatch, jobs, GRANDCHILD)
+    _, data = post_job(gui_server, task="preview")
+    job_id = data["job_id"]
+    assert wait_for(lambda: any(l.startswith("child") for l in get_job(gui_server, job_id)[1]["log"]))
+    grandchild = int(next(l for l in get_job(gui_server, job_id)[1]["log"]
+                          if l.startswith("child")).split()[1])
+    started = time.time()
+    jobs.shutdown_all()
+    assert time.time() - started < 5
+    assert wait_for(lambda: not pid_alive(grandchild), timeout=3), "退出时孙进程也必须被杀"
+
+
+def test_shutdown_all_terminates_waits_kills_and_closes_trees(gui_server, jobs, monkeypatch):
+    calls = []
+    state = {"alive": True}
+
+    class Child:
+        pid = 0
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            return 0
+
+    tree = object()
+    monkeypatch.setattr(jobs.proctree, "terminate", lambda t: calls.append("terminate"))
+    monkeypatch.setattr(jobs.proctree, "alive", lambda t: state["alive"])
+    monkeypatch.setattr(jobs.proctree, "kill", lambda t: (calls.append("kill"), state.update(alive=False)))
+    monkeypatch.setattr(jobs.proctree, "close", lambda t: calls.append("close"))
+    jobs.JOBS["j1"] = {"status": "running", "log": [], "exit": None, "started": 0, "task": "build",
+                       "project": "p1", "popen": Child(), "tree": tree, "cancel": False,
+                       "thread": None, "out_lines": 0}
+    jobs.shutdown_all(grace=0.1)
+    assert calls == ["terminate", "kill", "close"]  # 宽限期内没退出 → 强杀 → 释放
+    assert jobs.JOBS["j1"]["cancel"] is True
 
 
 def test_shutdown_all_without_jobs_is_noop(jobs):
@@ -324,7 +503,7 @@ def _orphan(tmp_path):
     """一个「上次剪辑台留下的」还活着的任务进程（命令行里带 aicut 字样）。"""
     script = tmp_path / "aicut_orphan.py"
     script.write_text("import time; time.sleep(60)", encoding="utf-8")
-    return subprocess.Popen([sys.executable, str(script)], start_new_session=True)
+    return subprocess.Popen([sys.executable, str(script)], **proctree.spawn_kwargs())
 
 
 def test_stale_job_from_previous_server_blocks_new_job(gui_server, jobs, monkeypatch, tmp_path):
@@ -343,6 +522,63 @@ def test_stale_job_from_previous_server_blocks_new_job(gui_server, jobs, monkeyp
     finally:
         orphan.kill()
         orphan.wait()
+
+
+@win_only("Windows 上遗留 marker 靠 OpenProcess + 镜像名识别（python.exe / 本 App 的 exe）")
+def test_stale_job_detected_via_win32_probes(gui_server, jobs, tmp_path):
+    orphan = _orphan(tmp_path)
+    try:
+        jobs.marker_path().parent.mkdir(parents=True, exist_ok=True)
+        jobs.marker_path().write_text(json.dumps(
+            {"pid": orphan.pid, "project": "old", "task": "prepare", "server_pid": 1}),
+            encoding="utf-8")
+        stale = jobs.stale_job()
+        assert stale is not None and stale["pid"] == orphan.pid
+    finally:
+        orphan.kill()
+        orphan.wait()
+    assert jobs.stale_job() is None  # 进程没了：记录失效并清掉
+    assert not jobs.marker_path().exists()
+
+
+def test_stale_job_uses_plat_pid_alive_not_os_kill(jobs, monkeypatch):
+    def boom(*a):
+        raise AssertionError("Windows 上 os.kill(pid, 0) 会终止进程，探活必须走 plat.pid_alive")
+
+    seen = []
+    monkeypatch.setattr(jobs.os, "kill", boom)
+    monkeypatch.setattr(jobs.plat, "pid_alive", lambda pid: seen.append(pid) or False)
+    jobs.marker_path().parent.mkdir(parents=True, exist_ok=True)
+    jobs.marker_path().write_text(json.dumps({"pid": 4242, "project": "x", "task": "build"}),
+                                  encoding="utf-8")
+    assert jobs.stale_job() is None
+    assert seen == [4242] and not jobs.marker_path().exists()
+
+
+@pytest.mark.parametrize("image,expected", [
+    ("C:\\Program Files\\剪辑台\\剪辑台.exe", True),   # 本 App 的 exe（下面把 sys.executable 指过来）
+    ("C:\\Python312\\python.exe", True),
+    ("C:\\Python312\\PYTHONW.EXE", True),
+    ("C:\\Windows\\System32\\notepad.exe", False),
+    (None, False),
+])
+def test_looks_like_job_on_windows_matches_app_or_python_image(jobs, monkeypatch, image, expected):
+    monkeypatch.setattr(jobs.plat, "IS_WIN", True)
+    monkeypatch.setattr(jobs.sys, "executable", "C:\\Program Files\\剪辑台\\剪辑台.exe")
+    monkeypatch.setattr(jobs.plat, "process_image", lambda pid: image)
+    assert jobs._looks_like_job(1) is expected
+
+
+@pytest.mark.parametrize("image,expected", [
+    ("/usr/bin/python3 /app/aicut.py run p1", True),
+    ("/Applications/AI粗剪.app/Contents/MacOS/AI粗剪 --aicut-cli prepare x", True),
+    ("/usr/bin/vim notes.txt", False),
+    (None, False),
+])
+def test_looks_like_job_on_posix_matches_command_hints(jobs, monkeypatch, image, expected):
+    monkeypatch.setattr(jobs.plat, "IS_WIN", False)
+    monkeypatch.setattr(jobs.plat, "process_image", lambda pid: image)
+    assert jobs._looks_like_job(1) is expected
 
 
 def test_dead_stale_marker_is_ignored_and_cleaned(gui_server, jobs, monkeypatch):
@@ -636,3 +872,11 @@ def test_project_job_detail_picks_latest_job(gui_server, jobs, monkeypatch):
         ids.append(data["job_id"])
         assert wait_for(lambda: get_job(gui_server, data["job_id"])[1]["status"] == "done")
     assert jobs.project_job_detail("p1")["id"] == ids[1]
+
+
+# ---------------------------------------------------------------- M16：信号注册不碰 Windows 上不存在的 SIGHUP
+def test_server_main_registers_signals_via_getattr():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parent.parent / "gui" / "server.py").read_text(encoding="utf-8")
+    assert "signal.SIGHUP" not in src and "signal.SIGTERM" not in src
+    assert 'getattr(signal, name, None)' in src

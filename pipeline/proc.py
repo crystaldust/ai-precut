@@ -20,7 +20,7 @@ import time
 import traceback
 from pathlib import Path
 
-from pipeline import pyver
+from pipeline import plat, pyver
 
 FROZEN = bool(getattr(sys, "frozen", False))
 MEIPASS = getattr(sys, "_MEIPASS", None)
@@ -56,7 +56,7 @@ def user_data_root() -> Path:
 def bundled_bin() -> Path | None:
     """App 内置的 ffmpeg/ffprobe 目录。"""
     d = resource_path("bin")
-    return d if (d / "ffmpeg").exists() else None
+    return d if (d / "ffmpeg").exists() or (d / "ffmpeg.exe").exists() else None
 
 
 def ensure_bundled_path() -> None:
@@ -229,6 +229,8 @@ def start_parent_watchdog() -> bool:
     环境变量用后即删，aicut 再拉起的子进程（如 --aicut-module）不会误判。必须在主线程调用（装信号处理）。
     """
     raw = os.environ.pop(PARENT_PID_ENV, None)
+    if plat.IS_WIN:  # Windows：剪辑台把任务放进了 Job Object（KILL_ON_JOB_CLOSE），它没了系统会结束整棵树
+        return False
     if not raw or not raw.isdigit():
         return False
     _install_sigterm_handler()

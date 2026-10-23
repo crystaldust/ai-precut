@@ -576,8 +576,10 @@ def main() -> None:
     else:
         print(f"在浏览器里打开这个一次性链接（{session.NONCE_TTL_S // 60} 分钟内有效）：{entry_url(url)}")
     # 终端窗口被关 / kill 时也要走到 finally，停掉后台任务（不留孤儿进程继续计费）
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    signal.signal(signal.SIGHUP, lambda *_: sys.exit(0))
+    for name in ("SIGTERM", "SIGHUP"):  # Windows 没有 SIGHUP
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            signal.signal(sig, lambda *_: sys.exit(0))
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

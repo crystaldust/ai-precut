@@ -376,4 +376,8 @@ EXPECT: exit 0，`dist/AI粗剪.app` 正常启动
 ## Notes
 - 用户决定（2026-10-21）：仓库公开推到 `crystaldust/ai-precut`；⑥ 按平台对称（Windows 只显示「导出到 Windows 剪映」）；Mac 字样文案在 Windows 上按平台替换，Mac 不变。
 - 内部导出种类 `mac` 的含义是「装进本机剪映草稿库」，Windows 沿用，不改存储格式（命名债）。
-- Task 1 结论（编码器选择、参数、速度）回填到这里。
+- Task 1 结论（CI run 39636023202，`a992a1e`）：钉 BtbN `autobuild-2026-09-30-13-08` / FFmpeg `n8.1.3-9-g29e619e767`；该 LGPL 变体用 `--enable-version3`（随包许可证为 LGPLv3 + GPLv3 文本）。两个编码器都可用：
+  - `libopenh264`：`-profile:v high` 可用，产出 High profile，5 秒 1080p 耗时 1.4s；
+  - `h264_mf`：`-profile:v high` 被拒（该编码器不认这个命名值），不带 profile 产出 Constrained Baseline，耗时 1.3s。
+  - keyring（Windows 凭据管理器）读写删通过；`webview.platforms.edgechromium` 可导入。
+  - Task 5 决定：Windows 候选顺序先在 CI 探针里补试 `h264_mf -profile:v 100/77`（数值 profile）；能出 High/Main 就首选 h264_mf（系统编码器，专利由系统授权覆盖），否则首选 libopenh264（High）、h264_mf 兜底。

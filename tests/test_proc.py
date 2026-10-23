@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from pipeline import proc
+from platform_marks import posix_only
 
 
 def test_app_root_points_to_repo_in_dev():
@@ -59,6 +60,13 @@ def test_bundled_bin_found_and_prepended_once(monkeypatch, tmp_path):
     proc.ensure_bundled_path()
     proc.ensure_bundled_path()  # 幂等：不重复插入
     assert os.environ["PATH"].split(os.pathsep) == [str(tmp_path / "bin"), "/usr/bin"]
+
+
+def test_bundled_bin_accepts_ffmpeg_exe(monkeypatch, tmp_path):
+    monkeypatch.setattr(proc, "MEIPASS", str(tmp_path))
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "ffmpeg.exe").write_bytes(b"")
+    assert proc.bundled_bin() == tmp_path / "bin"
 
 
 def test_ensure_bundled_path_noop_without_bin(monkeypatch, tmp_path):
@@ -280,6 +288,7 @@ def test_app_entry_dispatches_before_webview_import():
 
 
 # ---------------------------------------------------------------- 审查修复 2：父进程没了就自尽（HIGH-1）
+@posix_only("看门狗靠进程组 + SIGTERM/SIGKILL + getppid；Windows 由 Job Object 的 KILL_ON_JOB_CLOSE 保证")
 def test_parent_watchdog_kills_own_group_when_parent_dies(tmp_path):
     """剪辑台（父）被强杀后，任务子进程连同它的孙进程都要自己退出，不能变成孤儿继续计费。"""
     import os
@@ -318,11 +327,33 @@ def test_parent_watchdog_kills_own_group_when_parent_dies(tmp_path):
     assert not any(alive(p) for p in pids)
 
 
+def test_parent_watchdog_is_noop_on_windows_but_still_consumes_env(monkeypatch):
+    # Windows：Job Object KILL_ON_JOB_CLOSE 已保证剪辑台没了任务就没了；不装信号处理、不起线程
+    monkeypatch.setenv(proc.PARENT_PID_ENV, str(os.getppid()))
+    monkeypatch.setattr(proc.plat, "IS_WIN", True)
+    monkeypatch.setattr(proc.threading, "Thread", lambda *a, **k: pytest.fail("不该起看门狗线程"))
+    monkeypatch.setattr(proc.signal, "signal", lambda *a: pytest.fail("不该装信号处理"))
+    assert proc.start_parent_watchdog() is False
+    assert proc.PARENT_PID_ENV not in os.environ  # 子孙进程不会误判
+
+
+def test_proc_module_has_no_posix_only_names_at_top_level():
+    import ast
+    tree = ast.parse(Path(proc.__file__).read_text(encoding="utf-8"))
+    banned = {"killpg", "SIGKILL", "getpgrp", "SIGHUP"}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            continue
+        for sub in ast.walk(node):
+            assert not (isinstance(sub, ast.Attribute) and sub.attr in banned), sub.attr
+
+
 def test_parent_watchdog_inactive_without_env(monkeypatch):
     monkeypatch.delenv(proc.PARENT_PID_ENV, raising=False)
     assert proc.start_parent_watchdog() is False
 
 
+@posix_only("走 POSIX 看门狗路径（装 SIGTERM 处理）")
 def test_parent_watchdog_env_not_inherited_by_grandchildren(monkeypatch):
     import os
     monkeypatch.setenv(proc.PARENT_PID_ENV, str(os.getppid()))
@@ -374,6 +405,7 @@ def _orphaned_child_scenario(tmp_path, child_body):
                           timeout=20).stdout.split()
 
 
+@posix_only("看门狗靠进程组 + SIGTERM")
 def test_watchdog_does_not_need_pgrep(tmp_path):
     """PATH 里没有 pgrep 时，孙进程（ffmpeg）仍先收到 SIGTERM（体面退出），而不是直接被 SIGKILL。"""
     import time
@@ -400,6 +432,7 @@ def test_watchdog_does_not_need_pgrep(tmp_path):
     assert flag.exists()
 
 
+@posix_only("SIGTERM 默认语义 / 退出码 -SIGTERM")
 def test_sigterm_without_self_kill_keeps_default_behavior(tmp_path):
     """装了处理函数后，外部发来的 SIGTERM（剪辑台取消任务）仍按默认语义结束进程。"""
     import os

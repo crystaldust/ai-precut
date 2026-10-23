@@ -32,7 +32,7 @@ hidden = [
     "pipeline.diskspace", "pipeline.encode", "pipeline.exclusions", "pipeline.export_draft", "pipeline.export_flow", "pipeline.filelock",
     "pipeline.fingerprints", "pipeline.format_transcript",
     "pipeline.junk_detect", "pipeline.jy_env", "pipeline.jy_version", "pipeline.llm",
-    "pipeline.media_io", "pipeline.notices", "pipeline.outputs", "pipeline.proc", "pipeline.project_cli",
+    "pipeline.media_io", "pipeline.notices", "pipeline.outputs", "pipeline.plat", "pipeline.proc", "pipeline.proctree", "pipeline.project_cli",
     "pipeline.project_lock", "pipeline.prompts", "pipeline.pyver", "pipeline.questions",
     "pipeline.readiness", "pipeline.render_preview", "pipeline.review", "pipeline.safe_http",
     "pipeline.schema", "pipeline.secrets", "pipeline.select", "pipeline.select_rules",

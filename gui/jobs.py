@@ -3,7 +3,8 @@
 
 所有任务一律是子进程（打包版是 App 带 `--aicut-cli` 重启自己，见 pipeline/proc.py）：
   * 全局互斥：同时最多 MAX_ACTIVE_JOBS 个，再起直接 JobConflict（→ 409），不排队；
-  * 可取消：子进程自成进程组，取消时 SIGTERM 整组（连同它拉起的 ffmpeg），宽限期后 SIGKILL；
+  * 可取消：每个任务一棵进程树（pipeline/proctree.py：POSIX 进程组 / Windows Job Object），
+    取消时停掉整棵树（连同它拉起的 ffmpeg）；POSIX 先 SIGTERM、宽限期后 SIGKILL；
   * 先校验后登记：未知任务不会留下幽灵 running；
   * 子进程 stdin 一律断开，任何 input() 都不能卡住界面；
   * 不留孤儿：剪辑台退出时 shutdown_all 停掉全部任务；剪辑台被强杀时，任务进程里的
@@ -15,15 +16,16 @@ from __future__ import annotations
 import atexit
 import contextlib
 import json
+import ntpath
 import os
-import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from pipeline import applog, outputs, proc, schema, secrets, shots_store
+from pipeline import applog, outputs, plat, proc, proctree, schema, secrets, shots_store
 
 JOB_COMMANDS = {"prepare": ["prepare"], "build": ["build"], "select": ["select"],
                 "export": ["export"], "questions": ["questions", "--force"],  # KI-86：确认页重新出题
@@ -32,13 +34,14 @@ JOB_COMMANDS = {"prepare": ["prepare"], "build": ["build"], "select": ["select"]
 TASK_LABELS = {"prepare": "分析", "build": "导出", "select": "重新选段",
                "export": "生成 Windows 剪映包", "questions": "重新出题", "preview": "生成预览片"}
 MAX_ACTIVE_JOBS = 1          # 重任务全局串行：ffmpeg / ASR 吃满资源，也避免重复计费
-CANCEL_GRACE_S = 5.0         # SIGTERM 后等这么久仍未退出就 SIGKILL
+CANCEL_GRACE_S = 5.0         # 请求停止后等这么久仍未退出就强杀整棵树
 SHORT_CMD_TIMEOUT_S = 60     # 短命令（新建项目等）的超时
 ZIP_TITLE_MAX_CHARS = outputs.ZIP_TITLE_MAX_CHARS  # 别名：测试按 jobs.<名> 引用
 _UNSAFE_FILENAME = outputs.UNSAFE_FILENAME
 PUBLIC_FIELDS = ("status", "log", "exit", "task", "project")
 MARKER_FILE = "job.marker"   # 配置目录下：当前运行中的任务（跨剪辑台实例 / 重启可见）
-JOB_PROCESS_HINTS = ("aicut", "--aicut-cli")  # 判断 marker 里的 pid 还是不是我们的任务进程
+JOB_PROCESS_HINTS = ("aicut", "--aicut-cli")  # 判断 marker 里的 pid 还是不是我们的任务进程（POSIX：命令行）
+WIN_JOB_IMAGES = ("python.exe", "pythonw.exe")  # Windows：镜像名是本 App 的 exe 或 python.exe 即视为像
 HOMEBREW_BIN = "/opt/homebrew/bin"
 MAX_FINISHED_JOBS = 20       # KI-68 / D13：任务表只留最近这么多个已结束任务（运行中的永不删）
 JOB_LOG_MAX_LINES = 5000     # 单个任务在界面里保留的日志行数（保留末尾）
@@ -88,7 +91,7 @@ def child_env() -> dict:
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     env[proc.PARENT_PID_ENV] = str(os.getpid())  # 任务进程的看门狗靠它发现剪辑台没了
-    if not proc.FROZEN:  # 打包版必须优先用内置 ffmpeg，不能把 brew 的插到前面
+    if not proc.FROZEN and sys.platform != "win32":  # 打包版必须优先用内置 ffmpeg，不能把 brew 的插到前面
         env["PATH"] = HOMEBREW_BIN + os.pathsep + env.get("PATH", "")
     return env
 
@@ -104,7 +107,7 @@ def run_aicut(args: list[str]) -> tuple[int, str]:
         r = subprocess.run(proc.cli_cmd(args), cwd=str(proc.app_root()),
                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
                            encoding="utf-8", errors="replace",
-                           timeout=SHORT_CMD_TIMEOUT_S, env=child_env())
+                           timeout=SHORT_CMD_TIMEOUT_S, env=child_env(), **plat.NO_WINDOW)
     except subprocess.TimeoutExpired:
         return 1, SHORT_CMD_TIMEOUT_MSG.format(s=SHORT_CMD_TIMEOUT_S)
     except OSError as exc:
@@ -230,8 +233,8 @@ def start_job(name: str, task: str, extra: list[str] | None = None) -> str:
         thread = threading.Thread(target=_run_job, args=(job_id, cmd), daemon=True,
                                   name=f"aicut-job-{job_id}")
         JOBS[job_id] = {"status": "running", "log": [], "exit": None, "started": time.time(),
-                        "task": task, "project": name, "popen": None, "cancel": False,
-                        "thread": thread, "out_lines": 0}
+                        "task": task, "project": name, "popen": None, "tree": None,
+                        "cancel": False, "thread": thread, "out_lines": 0}
     try:
         thread.start()
     except BaseException:
@@ -248,18 +251,29 @@ def _run_job(job_id: str, cmd: list[str]) -> None:
             cmd, cwd=str(proc.app_root()), stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
             errors="replace", bufsize=1, env=child_env(),
-            start_new_session=True)  # 自成进程组：取消时 killpg 才能连带杀掉 ffmpeg
+            **proctree.spawn_kwargs())  # 子进程成为进程树的根：取消时才能连带杀掉 ffmpeg
     except OSError as exc:
+        _finish_job(job_id, -1, JOB_START_FAILED.format(exc=exc))
+        return
+    try:
+        tree = proctree.attach(child)  # Windows 上 Job 赋值有毫秒级窗口，见 proctree 说明
+    except Exception as exc:  # noqa: BLE001 - 任何失败（含 ctypes ArgumentError）都不能让任务线程静默死掉
+        # proctree.attach 只在「恢复挂起进程」失败时抛：此时进程不能跑，杀掉并报告启动失败
+        for step in (lambda: child.kill(), lambda: child.stdout.close(),
+                     lambda: child.wait(timeout=CANCEL_GRACE_S)):
+            with contextlib.suppress(Exception):
+                step()
         _finish_job(job_id, -1, JOB_START_FAILED.format(exc=exc))
         return
     try:
         with JOBS_LOCK:
             job = JOBS[job_id]
             job["popen"] = child
+            job["tree"] = tree
             cancel_now = job["cancel"]
             _write_marker(child.pid, job["project"], job["task"])
         if cancel_now:  # 取消请求先于 Popen 返回到达
-            _terminate(job_id, child)
+            _terminate(job_id, child, tree)
         for line in child.stdout:
             with JOBS_LOCK:
                 _append_locked(JOBS[job_id], applog.redact(line.rstrip()))  # KI-70：界面日志也打码
@@ -268,7 +282,7 @@ def _run_job(job_id: str, cmd: list[str]) -> None:
         code = child.wait()
     except Exception as exc:  # noqa: BLE001 - 任务线程不能静默死掉，留下永远 running
         with contextlib.suppress(Exception):
-            _terminate(job_id, child)
+            _terminate(job_id, child, tree)
         with contextlib.suppress(Exception):
             child.stdout.close()
         with contextlib.suppress(Exception):
@@ -281,6 +295,10 @@ def _run_job(job_id: str, cmd: list[str]) -> None:
 def _finish_job(job_id: str, code: int, note: str | None = None) -> None:
     with JOBS_LOCK:
         job = JOBS[job_id]
+        tree = job.pop("tree", None)
+        if tree is not None:  # 释放树（Windows：关 Job 句柄，剩余成员随之结束）
+            with contextlib.suppress(Exception):
+                proctree.close(tree)
         if note:  # 异常文本可能带路径 / Key：与任务输出一样打码（L17）
             note = applog.redact(note)
             _append_locked(job, note)
@@ -298,17 +316,10 @@ def _finish_job(job_id: str, code: int, note: str | None = None) -> None:
         job.get("out_lines", 0), applog.strip_paths(note or "")[:LOGGED_LINE_MAX])
 
 
-def _killpg(pid: int, sig: int) -> None:
-    if pid <= 0:  # killpg(0) 会杀到剪辑台自己所在的进程组
-        return
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(pid, sig)
-
-
-def _terminate(job_id: str, child: subprocess.Popen) -> None:
-    """杀整个进程组（含它拉起的 ffmpeg），宽限期后任务仍未结束就 SIGKILL 整组。"""
+def _terminate(job_id: str, child: subprocess.Popen, tree: proctree.Tree) -> None:
+    """停整棵树（含它拉起的 ffmpeg）；宽限期后任务仍未结束就强杀整棵树。"""
     if child.returncode is None:  # 已被 wait() 回收的 pid 可能被复用，不能再发信号
-        _killpg(child.pid, signal.SIGTERM)
+        proctree.terminate(tree)
 
     def _force() -> None:
         # 以「任务还没结束」为准，而不是主进程是否活着：aicut 退了但 ffmpeg 不理 SIGTERM、
@@ -316,7 +327,7 @@ def _terminate(job_id: str, child: subprocess.Popen) -> None:
         with JOBS_LOCK:
             running = JOBS.get(job_id, {}).get("status") == "running"
         if running:
-            _killpg(child.pid, signal.SIGKILL)
+            proctree.kill(tree)
 
     timer = threading.Timer(CANCEL_GRACE_S, _force)
     timer.daemon = True
@@ -333,45 +344,37 @@ def cancel_job(job_id: str) -> bool:
             return True
         job["cancel"] = True
         _append_locked(job, JOB_CANCEL_NOTE)
-        child = job["popen"]
-    if child is not None:  # 还没启动的话，_run_job 拿到 Popen 后会看到 cancel 标志
-        _terminate(job_id, child)
+        child, tree = job["popen"], job.get("tree")
+    if child is not None and tree is not None:  # 还没启动的话，_run_job 拿到 Popen 后会看到 cancel 标志
+        _terminate(job_id, child, tree)
     return True
 
 
 def shutdown_all(grace: float | None = None) -> None:
-    """剪辑台退出时调用：停掉全部运行中的任务（SIGTERM → 宽限期 → SIGKILL 整组），不留孤儿。"""
+    """剪辑台退出时调用：停掉全部运行中的任务（请求停止 → 宽限期 → 强杀整棵树），不留孤儿。"""
     grace = CANCEL_GRACE_S if grace is None else grace
     with JOBS_LOCK:
         targets = []
         for job in JOBS.values():
             if job["status"] == "running":
                 job["cancel"] = True
-                if job["popen"] is not None:
-                    targets.append(job["popen"])
-    for child in targets:
+                if job["popen"] is not None and job.get("tree") is not None:
+                    targets.append((job["popen"], job["tree"]))
+    for child, tree in targets:
         if child.poll() is None:
-            _killpg(child.pid, signal.SIGTERM)
+            proctree.terminate(tree)
     deadline = time.monotonic() + grace
-    while time.monotonic() < deadline and any(_group_alive(c) for c in targets):
+    while time.monotonic() < deadline and any(proctree.alive(t) for _, t in targets):
         time.sleep(0.05)
-    for child in targets:
-        if _group_alive(child):
-            _killpg(child.pid, signal.SIGKILL)
-    for child in targets:
+    for _, tree in targets:
+        if proctree.alive(tree):
+            proctree.kill(tree)
+    for child, _ in targets:
         with contextlib.suppress(Exception):
             child.wait(timeout=1)
-
-
-def _group_alive(child: subprocess.Popen) -> bool:
-    """进程组里还有没有活着的进程（主进程退了，ffmpeg 可能还在）。"""
-    if child.pid <= 0:
-        return False
-    try:
-        os.killpg(child.pid, 0)
-    except (ProcessLookupError, PermissionError):
-        return False
-    return True
+    for _, tree in targets:
+        with contextlib.suppress(Exception):
+            proctree.close(tree)
 
 
 atexit.register(shutdown_all)
@@ -394,13 +397,14 @@ def _clear_marker() -> None:
 
 
 def _looks_like_job(pid: int) -> bool:
-    """pid 可能早被系统复用：只有命令行里带 aicut 字样的才算我们的任务进程。"""
-    try:
-        out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True,
-                             text=True, timeout=5).stdout
-    except (OSError, subprocess.SubprocessError):
+    """pid 可能早被系统复用：POSIX 看命令行里有没有 aicut 字样；Windows 看镜像名是本 App 的 exe 或 python.exe。"""
+    image = plat.process_image(pid)
+    if not image:
         return False
-    return any(hint in out for hint in JOB_PROCESS_HINTS)
+    if plat.IS_WIN:
+        name = ntpath.basename(image).lower()
+        return name in {ntpath.basename(sys.executable).lower(), *WIN_JOB_IMAGES}
+    return any(hint in image for hint in JOB_PROCESS_HINTS)
 
 
 def stale_job() -> dict | None:
@@ -416,11 +420,7 @@ def stale_job() -> dict | None:
     own = {j["popen"].pid for j in JOBS.values() if j.get("popen") is not None}
     if pid in own:
         return None
-    try:
-        os.kill(pid, 0)
-        alive = pid > 0 and _looks_like_job(pid)
-    except (ProcessLookupError, PermissionError, OverflowError):
-        alive = False
+    alive = pid > 0 and plat.pid_alive(pid) and _looks_like_job(pid)  # 探活不能用 os.kill(pid, 0)：Windows 上会终止进程
     if not alive:
         _clear_marker()
         return None
