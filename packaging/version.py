@@ -44,3 +44,22 @@ def build_number(root: Path, *, env=os.environ, run=subprocess.run) -> str:
     if r.returncode != 0 or (value := _positive((r.stdout or "").strip())) is None:
         raise RuntimeError(NO_BUILD_NUMBER.format(env=BUILD_ENV, detail=(r.stderr or "").strip()[:200]))
     return value
+
+
+def git_commit(root: Path, *, env=os.environ, run=subprocess.run) -> str:
+    """AICUT_GIT_COMMIT 或 git rev-parse --short HEAD；拿不到返回 unknown（只用于诊断，不拦构建）。"""
+    if env.get("AICUT_GIT_COMMIT"):
+        return env["AICUT_GIT_COMMIT"].strip()
+    try:
+        r = run(["git", "rev-parse", "--short", "HEAD"], cwd=str(root), capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S, **NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    out = (r.stdout or "").strip()
+    return out if r.returncode == 0 and re.fullmatch(r"[0-9a-f]{4,40}", out) else "unknown"
+
+
+def build_info(root: Path, *, env=os.environ, run=subprocess.run) -> dict:
+    """写进 build_info.json 的内容（pipeline.diagnostics 读 version）。"""
+    return {"version": short_version(root), "build": build_number(root, env=env, run=run),
+            "commit": git_commit(root, env=env, run=run)}

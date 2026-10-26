@@ -1,7 +1,7 @@
 name: windows
 
-# 里程碑 16：Windows 上运行。Task 1 只有「验证」作业（ffmpeg / 编码器 / keyring / webview 探针）
-# 和一个允许失败的「test」作业（此时 Windows 上 import fcntl 必失败）。
+# 里程碑 16：Windows 上运行。「verify」= ffmpeg / 编码器 / keyring / webview 探针；
+# 「test」暂时允许失败（Windows 上 import fcntl 等，Task 8 修）；「build」打 zip + 冒烟 + 上传产物。
 
 on:
   push:
@@ -60,3 +60,62 @@ jobs:
       - run: uv sync --group dev
       - run: uv run python packaging/fetch_ffmpeg_win.py
       - run: uv run pytest -p no:cacheprovider
+
+  build:
+    needs: [verify, test]
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      AI_CUT_SECRETS: file
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # 构建号 = git 提交数，需要完整历史
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.4"
+      - run: uv python install 3.12
+      - run: uv sync --group dev
+      - name: 构建 Windows 包（ffmpeg 下载自检 + PyInstaller + zip）
+        run: uv run python packaging/build_win.py
+      - name: 打包产物完整性（Python.NET 与 WebView2 的 dll 必须在包里）
+        shell: pwsh
+        run: |
+          $missing = @()
+          foreach ($n in "Python.Runtime.dll", "WebView2Loader.dll", "Microsoft.Web.WebView2.Core.dll") {
+            if (-not (Get-ChildItem -Recurse -Filter $n "dist\ai-cut\_internal")) { $missing += $n }
+          }
+          if ($missing) { Write-Host "缺少：$($missing -join ', ')"; exit 1 }
+      - name: 冒烟：打包版 exe 跑 CLI list（隔离目录，退出码必须为 0 且留下日志）
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          AI_CUT_CONFIG_DIR: ${{ runner.temp }}\aicut-smoke\config
+          AI_CUT_PROJECTS: ${{ runner.temp }}\aicut-smoke\projects
+          AI_CUT_DRAFT_ROOT: ${{ runner.temp }}\aicut-smoke\drafts
+          AI_CUT_LOG_DIR: ${{ runner.temp }}\aicut-smoke\logs
+        run: |
+          foreach ($d in $env:AI_CUT_CONFIG_DIR, $env:AI_CUT_PROJECTS, $env:AI_CUT_DRAFT_ROOT, $env:AI_CUT_LOG_DIR) {
+            New-Item -ItemType Directory -Force -Path $d | Out-Null
+          }
+          # 窗口化 exe 没有控制台：不看 stdout，只看退出码和日志（cli-*.log）
+          $p = Start-Process -FilePath "dist\ai-cut\ai-cut.exe" -ArgumentList "--aicut-cli", "list" -PassThru
+          if (-not $p.WaitForExit(120000)) {
+            Stop-Process -Id $p.Id -Force
+            Write-Host "超时 120 秒，已结束进程"
+            exit 1
+          }
+          Write-Host "exit code: $($p.ExitCode)"
+          $logs = Get-ChildItem -Recurse -Filter "cli*.log" $env:AI_CUT_LOG_DIR
+          $ran = $logs | Select-String -SimpleMatch "pid=" -List
+          if ($p.ExitCode -ne 0 -or -not $ran) {
+            Get-ChildItem -Recurse $env:AI_CUT_LOG_DIR | ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content $_.FullName }
+            exit 1
+          }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ai-cut-windows-x64
+          path: dist/ai-cut-windows-x64-*.zip
+          if-no-files-found: error
+          retention-days: 14
