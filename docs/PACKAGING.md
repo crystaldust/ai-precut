@@ -71,8 +71,32 @@ Xcode Command Line Tools、`pkg-config` 与 `cmake`，用户机器不需要；�
    H.264 一律走 VideoToolbox；许可见 `THIRD-PARTY-NOTICES.txt`，对应源码随包在 `dist/sources/`。
    FFmpeg 8.x 的 `drawtext`（预览片字幕）依赖 libfreetype **和 libharfbuzz**：脚本同时静态编入
    FreeType 2.14.3（FTL）与 HarfBuzz 14.6.0（Old MIT，cmake 构建，glib/icu/cairo/graphite/CoreText 全关）。
-3. **仅 arm64**：Intel Mac 需要另外一份 x86_64 静态二进制与构建。
+3. **Mac 仅 arm64**（Windows 为 x64，见下节）：Intel Mac 需要另外一份 x86_64 静态二进制与构建。
 4. 首次启动会弹**钥匙串授权**（读 API Key），选"始终允许"。
+
+## Windows 版（里程碑 16）
+
+只在 Windows 上构建，Mac 不交叉打包。两种方式：
+
+- GitHub Actions：`.github/workflows/windows.yml`（push 到 main 或手动触发；verify → test → build），产物 artifact `ai-cut-windows-x64`（保留 14 天）；
+- 在 Windows 机器上：`uv run python packaging/build_win.py`（步骤：下载并自检 ffmpeg → PyInstaller → 放入许可与源码 → 打 zip）。
+
+**ffmpeg**：`packaging/fetch_ffmpeg_win.py` 下载 BtbN/FFmpeg-Builds 的 win64-lgpl 构建（钉 tag `autobuild-2026-09-30-13-08`、FFmpeg `n8.1.3-9-g29e619e767`，zip 与对应源码包都钉 SHA256，校验失败删文件并中止）。
+该变体带 `--enable-version3`，许可为 **LGPLv3**（无 `--enable-gpl` / `--enable-nonfree` / x264 / x265）；LGPLv3 + GPLv3 许可全文进 `licenses/`，FFmpeg 与 BtbN 构建脚本源码进 `sources/`。
+自检项：版本、许可、`-buildconf`（含 freetype / harfbuzz）、必需编码器与滤镜（与 `build_ffmpeg.sh` 的 REQUIRED_FILTERS 一致）。
+
+**H.264 编码器**：先 `h264_mf`（Windows 自带 Media Foundation，`-profile:v 100` = High），失败回退 `libopenh264`（High）；都不可用时给 Windows 文案提示（N 版 Windows 缺 Media Feature Pack）。
+
+**产物**：`dist/ai-cut-windows-x64-<版本>-<构建号>.zip`，顶层目录 `ai-cut/`，内含：
+
+- `ai-cut.exe` 与 `_internal/`（窗口化，无命令行窗口；内置 ffmpeg / ffprobe）；
+- `THIRD-PARTY-NOTICES.txt`；
+- `首次打开说明-Windows.txt`（SmartScreen「更多信息 → 仍要运行」、WebView2 安装方式）；
+- `licenses/`、`sources/`（LGPL 许可全文与对应源码）。
+
+**Windows 差异**：Key 存 Windows 凭据管理器；日志 `%LOCALAPPDATA%\剪辑台\logs`；项目目录 `文档\AI粗剪`；任务进程树用 Job Object，关窗口 / 取消不留孤儿进程。
+
+**Windows 已知限制**：未签名（SmartScreen 拦一次）；仅 x64（无 ARM64）；只出 zip，暂无安装程序；需要 WebView2 运行时（Windows 11 自带）；不含自动更新；剪映版本号读取与兼容提示在 Windows 上不出。
 
 ## 日志与诊断包（GL-19）
 

@@ -41,11 +41,9 @@ jobs:
       - name: pywebview 渲染器可导入
         run: uv run python -c "import webview, webview.platforms.edgechromium, clr_loader; print('webview ok')"
 
-  # Task 8 完成后删掉 continue-on-error（目前 Windows 上 fcntl 等 POSIX 依赖会让测试失败）
   test:
     runs-on: windows-2022
     timeout-minutes: 60
-    continue-on-error: true
     env:
       AI_CUT_SECRETS: file
     steps:

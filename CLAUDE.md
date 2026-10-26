@@ -10,6 +10,7 @@ AI 粗剪工具：素材 → 三路分析 → 片段浏览 → 覆盖式选段 �
 - CLI：`uv run python aicut.py list|new|run|status|build`
 - 桌面壳（开发）：`uv run python app/main.py`
 - 浏览器版剪辑台：`python3 gui/server.py --open`
+- 打包 Windows 包（只能在 Windows 上建）：CI `.github/workflows/windows.yml` 出 artifact `ai-cut-windows-x64`，或在 Windows 机器上 `uv run python packaging/build_win.py` → `dist/ai-cut-windows-x64-*.zip`
 - 打包 macOS App：`./packaging/build_app.sh` → `dist/AI粗剪.app`（spec 为 `packaging/ai-cut.spec`）
 - Lint / 类型检查：未配置
 

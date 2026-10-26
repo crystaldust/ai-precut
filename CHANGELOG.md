@@ -5,6 +5,15 @@
 
 ## 未发布
 
+### Windows 上运行（里程碑 16）
+
+- 剪辑台现在能在 Windows 10/11 x64 上运行：解压 zip，双击 `ai-cut.exe`（首次按 SmartScreen「更多信息 → 仍要运行」；需要 WebView2，Windows 11 自带）。
+- 全流程可用：Key 存 Windows 凭据管理器，项目放在「文档\AI粗剪」，预览片中文字幕正常，取消任务或关窗口不留残余的 ffmpeg 进程。
+- ⑥ 导出在 Windows 上只显示「导出到 Windows 剪映」（直接装进本机剪映草稿库，剪映开着时先提示退出）；界面里的 Mac 字样在 Windows 上换成 Windows 说法，Mac 上不变。
+- Windows 包由 GitHub Actions 在 Windows 上构建，附 `首次打开说明-Windows.txt`、第三方许可与 LGPL 对应源码。
+- 随包 ffmpeg 是 BtbN 的 LGPLv3 构建（钉版本与 SHA256，无 x264 / x265），H.264 先用系统的 `h264_mf`，不行回退 `libopenh264`。
+- 已知限制：未签名、仅 x64、暂无安装程序。
+
 ### 成片时长随时可改（KI-104）
 
 - 除了 ⑤ 看结果，现在点步骤条 ①（项目设置）和 ③ 剪辑列表面板也能改成片时长；剪辑列表超出目标时可一键「改为」建议时长。

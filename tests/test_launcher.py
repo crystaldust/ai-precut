@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from platform_marks import posix_only
+
 ROOT = Path(__file__).resolve().parent.parent
 LAUNCHER = ROOT / "启动剪辑台.command"
 
@@ -22,6 +24,7 @@ def _run_launcher(tmp_path, path_dirs, home):
                           capture_output=True, text=True, timeout=20)
 
 
+@posix_only("测试的是 macOS 双击启动脚本 启动剪辑台.command（/bin/bash + uv 桩）；Windows 没有该脚本的等价物")
 def test_launcher_execs_uv_run(tmp_path):
     stubs = tmp_path / "bin"
     stubs.mkdir()
@@ -35,6 +38,7 @@ def test_launcher_execs_uv_run(tmp_path):
                                                     "gui/server.py", "--open"]
 
 
+@posix_only("测试的是 macOS 双击启动脚本 启动剪辑台.command（/bin/bash + uv 桩）；Windows 没有该脚本的等价物")
 def test_launcher_finds_uv_in_home_local_bin(tmp_path):
     home = tmp_path / "home"
     (home / ".local/bin").mkdir(parents=True)
@@ -46,6 +50,7 @@ def test_launcher_finds_uv_in_home_local_bin(tmp_path):
     assert r.returncode == 0 and record.exists()
 
 
+@posix_only("测试的是 macOS 双击启动脚本 启动剪辑台.command（/bin/bash + uv 桩）；Windows 没有该脚本的等价物")
 def test_launcher_without_uv_explains_and_exits(tmp_path):
     r = _run_launcher(tmp_path, ["/usr/bin", "/bin"], tmp_path / "empty_home")
     assert r.returncode == 1 and "uv" in r.stdout

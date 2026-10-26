@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from pipeline import applog, cloud, encode
+from platform_marks import posix_only
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "packaging" / "build_ffmpeg.sh"
@@ -62,6 +63,7 @@ def run_script(out, stubs, *args, **env):
                           timeout=60)
 
 
+@posix_only("运行 macOS 专用的 packaging/build_ffmpeg.sh（bash + otool 桩 + curl）；Windows 的 ffmpeg 走 fetch_ffmpeg_win.py")
 def test_verify_only_passes_lgpl_build_and_strips_build_prefix(fake_out):
     out, stubs = fake_out
     r = run_script(out, stubs, "--verify-only")
@@ -71,6 +73,7 @@ def test_verify_only_passes_lgpl_build_and_strips_build_prefix(fake_out):
     assert "--enable-libharfbuzz" in conf
 
 
+@posix_only("运行 macOS 专用的 packaging/build_ffmpeg.sh（bash + otool 桩 + curl）；Windows 的 ffmpeg 走 fetch_ffmpeg_win.py")
 @pytest.mark.parametrize("env, msg", [
     ({"FAKE_GPL": "1"}, "不是 LGPL"),
     ({"FAKE_VERSION": "7.1"}, "版本"),
@@ -84,6 +87,7 @@ def test_verify_only_rejects_bad_builds(fake_out, env, msg):
     assert not (out / "licenses" / "ffmpeg-buildconf.txt").exists()
 
 
+@posix_only("运行 macOS 专用的 packaging/build_ffmpeg.sh（bash + otool 桩 + curl）；Windows 的 ffmpeg 走 fetch_ffmpeg_win.py")
 def test_verify_only_fails_when_otool_fails(fake_out):
     out, stubs = fake_out
     _write_exec(stubs / "otool", "#!/bin/bash\necho 'not an object file' >&2\nexit 1\n")
@@ -91,6 +95,7 @@ def test_verify_only_fails_when_otool_fails(fake_out):
     assert r.returncode != 0 and "链接库" in r.stdout + r.stderr
 
 
+@posix_only("运行 macOS 专用的 packaging/build_ffmpeg.sh（bash + otool 桩 + curl）；Windows 的 ffmpeg 走 fetch_ffmpeg_win.py")
 def test_verify_sources_requires_pinned_tarballs(fake_out):
     out, stubs = fake_out
     (out / "sources").mkdir()
@@ -107,6 +112,7 @@ def test_build_app_checks_sources_before_bundling():
 BUILD_TOOLS = ("clang", "make", "pkg-config", "cmake", "shasum", "tar")
 
 
+@posix_only("运行 macOS 专用的 packaging/build_ffmpeg.sh（bash + otool 桩 + curl）；Windows 的 ffmpeg 走 fetch_ffmpeg_win.py")
 @pytest.mark.skipif(any(shutil.which(t) is None for t in BUILD_TOOLS), reason="需要构建工具")
 def test_download_failure_stops_at_curl(fake_out):
     out, stubs = fake_out
