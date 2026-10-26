@@ -115,6 +115,8 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None if IS_WIN else (os.environ.get("CODESIGN_IDENTITY") or None),
+    # Windows：未捕获异常不弹模态对话框（任务子进程会一直挂着），直接退出，原因看 cli-*.log
+    disable_windowed_traceback=IS_WIN,
 )
 
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="ai-cut")

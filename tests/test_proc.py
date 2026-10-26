@@ -455,3 +455,22 @@ def test_sigterm_without_self_kill_keeps_default_behavior(tmp_path):
         if p.poll() is None:
             p.kill()
             p.wait()
+
+
+def test_line_buffered_stdio_survives_invalid_std_fds(monkeypatch):
+    """Windows 窗口化 exe 没被接管道时 fd 1/2 无效：不能抛错（会弹模态对话框挂住），退回丢弃输出。"""
+    import builtins
+    real_open = builtins.open
+
+    def fake_open(file, *a, **k):
+        if isinstance(file, int):
+            raise OSError(9, "Bad file descriptor")
+        return real_open(file, *a, **k)
+    monkeypatch.setattr(proc.sys, "stdout", None)
+    monkeypatch.setattr(proc.sys, "stderr", None)
+    monkeypatch.setattr(builtins, "open", fake_open)
+    proc._line_buffered_stdio()
+    assert proc.sys.stdout is not None and proc.sys.stderr is not None
+    print("丢弃", file=proc.sys.stdout)
+    proc.sys.stdout.close()
+    proc.sys.stderr.close()

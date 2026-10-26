@@ -100,10 +100,15 @@ jobs:
             New-Item -ItemType Directory -Force -Path $d | Out-Null
           }
           # 窗口化 exe 没有控制台：不看 stdout，只看退出码和日志（cli-*.log）
-          $p = Start-Process -FilePath "dist\ai-cut\ai-cut.exe" -ArgumentList "--aicut-cli", "list" -PassThru
+          # 与剪辑台拉起任务子进程一样接上输出管道（重定向到文件），失败时把内容打出来
+          $out = Join-Path $env:AI_CUT_LOG_DIR "smoke-stdout.txt"
+          $err = Join-Path $env:AI_CUT_LOG_DIR "smoke-stderr.txt"
+          $p = Start-Process -FilePath "dist\ai-cut\ai-cut.exe" -ArgumentList "--aicut-cli", "list" -PassThru `
+            -RedirectStandardOutput $out -RedirectStandardError $err
           if (-not $p.WaitForExit(120000)) {
             Stop-Process -Id $p.Id -Force
             Write-Host "超时 120 秒，已结束进程"
+            Get-ChildItem -Recurse $env:AI_CUT_LOG_DIR | ForEach-Object { Write-Host "--- $($_.FullName)"; Get-Content $_.FullName }
             exit 1
           }
           Write-Host "exit code: $($p.ExitCode)"

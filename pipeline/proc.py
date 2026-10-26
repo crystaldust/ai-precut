@@ -144,8 +144,11 @@ def _line_buffered_stdio() -> None:
     for name, fd in (("stdout", 1), ("stderr", 2)):
         stream = getattr(sys, name)
         if stream is None:
-            setattr(sys, name, open(fd, "w", encoding="utf-8", errors="replace",
-                                    buffering=1, closefd=False))
+            try:
+                stream = open(fd, "w", encoding="utf-8", errors="replace", buffering=1, closefd=False)
+            except OSError:  # Windows 窗口化 exe 没被接管道时 fd 无效：丢弃输出，日志仍写 cli-*.log
+                stream = open(os.devnull, "w", encoding="utf-8")
+            setattr(sys, name, stream)
         elif hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
