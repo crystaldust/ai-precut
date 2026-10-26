@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline import proc
+from pipeline import encode, plat, proc
 from pipeline import render_preview as rp
 
 NASTY = ["it's, ok", "don't: stop 100%", "他说'好'%{pts}", "x\\y [a];b"]
@@ -50,13 +50,80 @@ def test_build_fills_silence_for_input_without_audio():
 
 
 def test_text_dir_falls_back_when_tmp_has_filter_metachars(monkeypatch):
+    monkeypatch.setattr(rp.plat, "IS_WIN", False)
     monkeypatch.setattr(rp.tempfile, "gettempdir", lambda: "/var/x:y")
     assert rp.text_dir_base() == rp.FALLBACK_TMP
 
 
 def test_text_dir_keeps_safe_tmp(monkeypatch):
+    monkeypatch.setattr(rp.plat, "IS_WIN", False)
     monkeypatch.setattr(rp.tempfile, "gettempdir", lambda: "/var/folders/ab/T")
     assert rp.text_dir_base() == "/var/folders/ab/T"
+
+
+def test_windows_text_dir_keeps_ascii_temp(monkeypatch):
+    monkeypatch.setattr(rp.plat, "IS_WIN", True)
+    monkeypatch.setattr(rp.tempfile, "gettempdir", lambda: "C:\\Temp\\aicut")
+    assert rp.text_dir_base() == "C:\\Temp\\aicut"
+
+
+@pytest.mark.parametrize("temp", ["C:\\Users\\张三\\AppData\\Local\\Temp",
+                                  "C:\\Users\\a b\\Temp"])
+def test_windows_text_dir_falls_back_to_public_documents(monkeypatch, tmp_path, temp):
+    monkeypatch.setattr(rp.plat, "IS_WIN", True)
+    monkeypatch.setattr(rp.tempfile, "gettempdir", lambda: temp)
+    monkeypatch.setenv("PUBLIC", str(tmp_path / "Public"))
+    got = Path(rp.text_dir_base())
+    assert got == tmp_path / "Public" / "Documents" / "aicut-tmp" and got.is_dir()
+    assert rp.text_dir_base() != rp.FALLBACK_TMP
+
+
+def test_filter_path_windows_user_path():
+    assert rp._filter_path("C:\\Users\\a b\\t.txt") == "C\\:/Users/a b/t.txt"
+
+
+def test_filter_path_escapes_single_quote():
+    assert rp._filter_path("/x/it's.ttc") == "/x/it'\\''s.ttc"
+
+
+@pytest.mark.parametrize("path", ["/System/Library/Fonts/Hiragino Sans GB.ttc",
+                                  "/var/folders/ab/T/aicut-preview-x/0.txt", "/tmp/0.txt"])
+def test_filter_path_leaves_safe_posix_paths_untouched(path):
+    assert rp._filter_path(path) == path
+
+
+def test_build_escapes_windows_paths_in_drawtext(monkeypatch):
+    monkeypatch.setattr(rp, "pick_font", lambda: "C:\\Windows\\Fonts\\msyh.ttc")
+    t = tl(["一"])
+    fc, _ = rp.build(t, text_paths=[Path("C:\\Users\\a b\\0.txt")], has_audio=[True])
+    assert "fontfile='C\\:/Windows/Fonts/msyh.ttc':textfile='C\\:/Users/a b/0.txt'" in fc
+
+
+def test_windows_font_candidates(tmp_path):
+    got = rp.win_font_candidates({"SystemRoot": str(tmp_path)})
+    assert [Path(g).name for g in got] == ["msyh.ttc", "msyhbd.ttc", "simhei.ttf", "simsun.ttc"]
+    assert all(Path(g).parent == tmp_path / "Fonts" for g in got)
+
+
+def test_pick_font_on_windows_uses_windir_msyh(win_platform, tmp_path, monkeypatch):
+    fonts = tmp_path / "Win" / "Fonts"
+    fonts.mkdir(parents=True)
+    (fonts / "msyh.ttc").write_bytes(b"x")
+    monkeypatch.setenv("SystemRoot", str(tmp_path / "Win"))
+    assert rp.pick_font() == str(fonts / "msyh.ttc")
+
+
+def test_pick_font_on_mac_uses_mac_list(mac_platform):
+    assert rp.font_candidates() is rp.MAC_FONT_CANDIDATES
+
+
+def test_windows_text_dir_mkdir_failure_falls_back_to_temp(monkeypatch, tmp_path):
+    monkeypatch.setattr(rp.plat, "IS_WIN", True)
+    monkeypatch.setattr(rp.tempfile, "gettempdir", lambda: "C:\\Users\\张三\\Temp")
+    blocker = tmp_path / "Public"
+    blocker.write_text("file, not dir")  # mkdir 必然失败
+    monkeypatch.setenv("PUBLIC", str(blocker))
+    assert rp.text_dir_base() == "C:\\Users\\张三\\Temp"
 
 
 # ---------------------------------------------------------------- 集成：真 ffmpeg
@@ -67,7 +134,18 @@ def _ffmpeg_ready() -> bool:
                          text=True).stdout
     flt = subprocess.run(["ffmpeg", "-hide_banner", "-filters"], capture_output=True,
                          text=True).stdout
-    return "h264_videotoolbox" in enc and " drawtext " in flt and " anullsrc " in flt
+    return (any(f" {e} " in enc for e in encode.candidates())
+            and " drawtext " in flt and " anullsrc " in flt)
+
+
+@pytest.fixture(autouse=True)
+def _real_encoder(monkeypatch):
+    """真 ffmpeg 用例：选本机 ffmpeg 里实际有的那个候选编码器（没有就保持首选，用例本身会被 skip）。"""
+    if shutil.which("ffmpeg"):
+        enc = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True,
+                             text=True).stdout
+        found = next((e for e in encode.candidates() if f" {e} " in enc), None)
+        monkeypatch.setitem(encode._PREFLIGHT, "encoder", found)
 
 
 def _make(path: Path, audio: list[str]) -> Path:
@@ -91,7 +169,7 @@ def _private_text_dir(tmp_path, monkeypatch):
     return d
 
 
-@pytest.mark.skipif(not _ffmpeg_ready(), reason="需要带 VideoToolbox / drawtext / anullsrc 的 ffmpeg")
+@pytest.mark.skipif(not _ffmpeg_ready(), reason="需要带本平台 H.264 编码器 / drawtext / anullsrc 的 ffmpeg")
 def test_real_render_with_nasty_text_and_mixed_audio(tmp_path, monkeypatch):
     silent = _make(tmp_path / "silent.mp4", [])
     mono = _make(tmp_path / "mono.mp4",
@@ -170,7 +248,7 @@ def test_cli_failure_leaves_no_half_file_or_temp_dir(tmp_path, monkeypatch):
 
 # ---------------------------------------------------------------- M6 · KI-73 预览字幕字体
 def test_prefers_hiragino_sans_gb(tmp_path, monkeypatch):
-    assert rp.FONT_CANDIDATES[0] == "/System/Library/Fonts/Hiragino Sans GB.ttc"
+    assert rp.MAC_FONT_CANDIDATES[0] == "/System/Library/Fonts/Hiragino Sans GB.ttc"
     second = tmp_path / "b.ttc"
     second.write_bytes(b"x")
     monkeypatch.setattr(rp, "FONT_CANDIDATES", [str(tmp_path / "missing.ttc"), str(second)])

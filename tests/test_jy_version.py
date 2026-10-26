@@ -153,6 +153,7 @@ def test_find_app_prefers_earlier_root_among_candidates_and_spotlight(tmp_path):
 
 # ---- installed_version
 def test_installed_version_default_goes_through_cached_find_app(tmp_path, monkeypatch):
+    monkeypatch.setattr(jv.plat, "IS_WIN", False)  # Mac 分支：在任何宿主上测（Windows 分支恒为 None，见下）
     app = fake_app(tmp_path, "11.4.0", name="任意名字.app")
     calls = []
     monkeypatch.setattr(jv, "find_app", lambda *a, **k: calls.append(1) or app)
@@ -161,6 +162,13 @@ def test_installed_version_default_goes_through_cached_find_app(tmp_path, monkey
     assert len(calls) == 1                      # 第二次走缓存，不再跑 mdfind
     jv.reset_cache()
     monkeypatch.setattr(jv, "find_app", lambda *a, **k: None)
+    assert jv.installed_version() is None
+
+
+def test_installed_version_is_none_on_windows_without_looking_up_the_app(monkeypatch):
+    monkeypatch.setattr(jv.plat, "IS_WIN", True)
+    monkeypatch.setattr(jv, "find_app", lambda *a, **k: pytest.fail("Windows 不读 exe 版本资源"))
+    jv.reset_cache()
     assert jv.installed_version() is None
 
 

@@ -140,18 +140,45 @@ def test_preflight_ok_runs_once_per_process(fresh_preflight):
     assert len(calls) == 1
     cmd = calls[0]
     assert cmd[:2] == ["ffmpeg", "-hide_banner"] and "lavfi" in cmd
-    assert cmd[-3:] == ["-f", "null", "-"] and "h264_videotoolbox" in cmd
+    assert cmd[-3:] == ["-f", "null", "-"] and encode.candidates()[0] in cmd
 
 
 @pytest.mark.parametrize("result", [SimpleNamespace(returncode=1, stderr="Error: cannot create session"),
                                     OSError("no ffmpeg")])
-def test_preflight_failure_gives_clear_message(fresh_preflight, result):
+def test_preflight_failure_gives_clear_message(fresh_preflight, monkeypatch, result):
+    monkeypatch.setattr(encode.sys, "platform", "darwin")  # Mac 文案：在任何宿主上测 Mac 分支
+
     def runner(cmd, **k):
         if isinstance(result, Exception):
             raise result
         return result
     msg = encode.preflight(runner=runner)
-    assert msg.startswith("本机无法使用 VideoToolbox 硬件编码") and msg == encode.preflight()
+    assert msg.startswith("本机无法使用 VideoToolbox 硬件编码") and msg == encode.preflight(runner=runner)  # 失败不缓存：再探一次，文案一致
+
+
+WIN_UNAVAILABLE = ("本机无法使用 Windows 视频编码组件（boom），分析后也无法生成切片和预览，"
+                   "已在调用云端之前停下。请确认系统是 Windows 10/11 完整版（N 版需安装「媒体功能包」）后重启再试；"
+                   "仍不行请导出诊断包发给开发者")
+
+
+def test_preflight_falls_back_to_second_windows_candidate(fresh_preflight, monkeypatch):
+    monkeypatch.setattr(encode.sys, "platform", "win32")
+    calls = []
+
+    def runner(cmd, **k):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=1 if "libopenh264" in cmd else 0, stderr="no libopenh264")
+    assert encode.preflight(runner=runner) is None
+    assert [c[c.index("-c:v") + 1] for c in calls] == ["libopenh264", "h264_mf"]
+    assert encode.encoder() == "h264_mf" and encode.h264_args("clip")[1] == "h264_mf"
+    assert encode.preflight(runner=runner) is None and len(calls) == 2  # 缓存
+
+
+def test_preflight_all_windows_candidates_fail_gives_windows_text(fresh_preflight, monkeypatch):
+    monkeypatch.setattr(encode.sys, "platform", "win32")
+    msg = encode.preflight(runner=lambda cmd, **k: SimpleNamespace(returncode=1, stderr="boom"))
+    assert msg == WIN_UNAVAILABLE
+    assert "result" not in encode._PREFLIGHT  # 失败不缓存
 
 
 def test_cli_prepare_fails_fast_when_encoder_unavailable(monkeypatch, capsys, consented, tmp_path):
@@ -252,12 +279,21 @@ def test_reveal_reports_open_failure(monkeypatch, tmp_path):
     assert support.reveal(tmp_path / "x.zip") is True
 
 
-def test_export_reports_reveal_false_with_message(monkeypatch, tmp_path):
+def test_export_reports_reveal_false_with_message(mac_platform, monkeypatch, tmp_path):
     from gui import support
     monkeypatch.setattr(support.diagnostics, "build_bundle", lambda *a: tmp_path / "d.zip")
     monkeypatch.setattr(support, "reveal", lambda p: False)
     code, body = support.export_diagnostics({}, lambda n: tmp_path)
     assert code == 200 and body["revealed"] is False and body["message"] == support.REVEAL_FAILED_MSG
+
+
+def test_export_reports_reveal_false_with_windows_message(win_platform, monkeypatch, tmp_path):
+    from gui import support
+    monkeypatch.setattr(support.diagnostics, "build_bundle", lambda *a: tmp_path / "d.zip")
+    monkeypatch.setattr(support, "reveal", lambda p: False)
+    code, body = support.export_diagnostics({}, lambda n: tmp_path)
+    assert code == 200 and body["revealed"] is False
+    assert body["message"] == support.REVEAL_FAILED_MSG_WIN and "文件资源管理器" in body["message"]
 
 
 # ---------------------------------------------------------------- 8. 并发清理旧 CLI 日志

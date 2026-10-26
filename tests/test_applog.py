@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline import applog
+from pipeline import applog, plat
 
 KEY = "AKLTsecretkey123456"
 
@@ -46,7 +46,12 @@ def test_child_logger_goes_to_same_file(log_dir):
 
 def test_default_dir_is_library_logs(monkeypatch):
     monkeypatch.delenv("AI_CUT_LOG_DIR", raising=False)
-    assert applog.log_dir() == Path.home() / "Library" / "Logs" / "剪辑台"
+    # Mac ~/Library/Logs/剪辑台；Windows %LOCALAPPDATA%/剪辑台/logs（路径逻辑见 plat.log_dir）
+    assert applog.log_dir() == plat.log_dir()
+    if not plat.IS_WIN:
+        assert applog.log_dir() == Path.home() / "Library" / "Logs" / "剪辑台"
+    else:
+        assert applog.log_dir().parts[-2:] == ("剪辑台", "logs")
 
 
 def test_registered_secret_is_masked(log_dir):

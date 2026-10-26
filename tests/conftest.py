@@ -38,9 +38,23 @@ def _isolate_logs(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _encoder_ok(monkeypatch):
-    """默认当作本机能用 VideoToolbox（预检本身在 test_m5_review2 里用假 runner 测）。"""
+    """默认当作本机能用本平台的首选编码器（未预检 → encode.encoder() 取首个候选）（预检本身在 test_m5_review2 里用假 runner 测）。"""
     from pipeline import encode
-    monkeypatch.setattr(encode, "_PREFLIGHT", {"result": None})
+    monkeypatch.setattr(encode, "_PREFLIGHT", {"result": None, "encoder": None})
+
+
+@pytest.fixture
+def mac_platform(monkeypatch):
+    """测 Mac 分支（open / open -R / 访达文案）：在任何宿主上都把 plat.IS_WIN 钉成 False。"""
+    from pipeline import plat
+    monkeypatch.setattr(plat, "IS_WIN", False)
+
+
+@pytest.fixture
+def win_platform(monkeypatch):
+    """测 Windows 分支：把 plat.IS_WIN 钉成 True（os.startfile / explorer 由各用例自己桩掉）。"""
+    from pipeline import plat
+    monkeypatch.setattr(plat, "IS_WIN", True)
 
 
 @pytest.fixture

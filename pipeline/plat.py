@@ -69,6 +69,15 @@ def windows_dir(env=None) -> Path:
     return Path(value) if value else WIN_DIR_FALLBACK
 
 
+PUBLIC_DIR_FALLBACK = Path("C:/Users/Public")
+
+
+def public_dir(env=None) -> Path:
+    """%PUBLIC%（缺失 / 为空 → C:/Users/Public）：Windows 上所有用户可写、路径恒为 ASCII 的位置。"""
+    value = (os.environ if env is None else env).get("PUBLIC")
+    return Path(value) if value else PUBLIC_DIR_FALLBACK
+
+
 def explorer_exe(env=None) -> Path:
     return windows_dir(env) / "explorer.exe"
 

@@ -90,7 +90,19 @@ def test_state_reports_windows_zip(gui_server):
     assert by_name["v2"]["windows_zip"] is None
 
 
-def test_reveal_export_in_finder(gui_server, monkeypatch):
+def test_reveal_export_in_explorer_on_windows(gui_server, win_platform, monkeypatch, tmp_path):
+    pdir = project(gui_server)
+    zip_path = pdir / "output/v1/测试片_v1_Windows.zip"
+    zip_path.write_bytes(b"x")
+    monkeypatch.setenv("SystemRoot", str(tmp_path / "Win"))
+    ran = []
+    monkeypatch.setattr(gui_server.module.subprocess, "run", lambda argv, **kw: ran.append(argv))
+    status, _, _ = call(gui_server, "POST", "/api/open",
+                        {"project": "p1", "target": "export", "version": "v1"})
+    assert status == 200 and ran == [f'"{tmp_path / "Win" / "explorer.exe"}" /select,"{zip_path}"']
+
+
+def test_reveal_export_in_finder(gui_server, mac_platform, monkeypatch):
     pdir = project(gui_server)
     zip_path = pdir / "output/v1/测试片_v1_Windows.zip"
     zip_path.write_bytes(b"x")

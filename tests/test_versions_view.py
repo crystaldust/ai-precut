@@ -185,7 +185,7 @@ def test_open_export_blocked_when_cannot_confirm(gui_server, monkeypatch):
     assert status == 409 and json.loads(raw)["error"] == exclusions.EXPORT_NO_SNAPSHOT and ran == []
 
 
-def test_open_export_still_works_for_clean_version(gui_server, monkeypatch):
+def test_open_export_still_works_for_clean_version(gui_server, mac_platform, monkeypatch):
     pdir = make_project(gui_server.root)
     _version(pdir)
     zip_path = jobs.windows_zip(pdir, "v1", "p1")

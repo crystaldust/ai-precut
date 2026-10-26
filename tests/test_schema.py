@@ -3,7 +3,7 @@ import json
 import pytest
 
 from pipeline import schema
-from platform_marks import IS_POSIX
+from platform_marks import IS_POSIX, posix_only
 
 
 def test_migrate_v0_adds_version_and_defaults():
@@ -387,6 +387,7 @@ def test_stamp_adds_artifact_schema_without_mutating():
     assert out == {"a": 1, "artifact_schema": schema.ARTIFACT_SCHEMA} and obj == {"a": 1}
 
 
+@posix_only("O_NOFOLLOW 与 os.symlink 是 POSIX 语义（Windows 无 O_NOFOLLOW，建符号链接还需特权）")
 def test_lock_file_is_private_and_not_followed(tmp_path):  # 审查修复 L16
     import os
     import stat

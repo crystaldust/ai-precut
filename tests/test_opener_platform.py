@@ -37,9 +37,11 @@ def test_mac_commands_are_byte_identical(mac, monkeypatch, tmp_path):
     calls = _recorder(monkeypatch)
     opener.open_path(tmp_path)
     opener.reveal(tmp_path / "a.zip")
-    opener.open_app(Path("/Applications/X.app"))
+    app = Path("/Applications/X.app")
+    opener.open_app(app)
+    # str(app)：Windows 宿主上 Path 会把 / 换成 \；命令的形状（open / -R / -a 与参数顺序）才是要钉死的
     assert [c[0] for c in calls] == [["open", str(tmp_path)], ["open", "-R", str(tmp_path / "a.zip")],
-                                     ["open", "-a", "/Applications/X.app"]]
+                                     ["open", "-a", str(app)]]
     assert all(c[1]["timeout"] == opener.OPEN_TIMEOUT_S for c in calls)
 
 

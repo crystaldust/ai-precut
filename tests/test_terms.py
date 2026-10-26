@@ -37,7 +37,7 @@ def _all_copy():
     yield from _strings(clips, names=("NEED_REBUILD", "KEY_MISMATCH"))
     yield from _strings(cache, names=("CLIPS_LABEL",))
     yield from _strings(understand_text, names=("ANNOTATION_RETRY_HINT",))
-    yield from _strings(encode, names=("ENCODER_UNAVAILABLE",))
+    yield from _strings(encode, names=("ENCODER_UNAVAILABLE", "ENCODER_UNAVAILABLE_WIN"))
     yield from _strings(exclusions, names=("MUST_KEEP_LOST", "EXPORT_NO_SNAPSHOT", "EXPORT_BAD_SNAPSHOT"))
     yield from _strings(aicut, names=("TEXT_PARTIAL_WARNING", "PREPARE_KEYS_MISSING",
                                       "MUST_KEEP_OVER_HINT"))

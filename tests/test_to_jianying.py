@@ -95,8 +95,9 @@ def clip(tmp_path_factory):
         pytest.skip("本机无 ffmpeg")
     encoders = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True,
                               text=True).stdout
-    # 与产品同一套编码参数（VideoToolbox）；没有 VT 的 LGPL 构建（如 Linux CI）退回原生 mpeg4
-    codec = encode.h264_args("clip") if " h264_videotoolbox " in encoders \
+    # 与产品同一套编码参数（本平台候选编码器）；没有候选编码器的构建（如 Linux CI）退回原生 mpeg4
+    enc = next((e for e in encode.candidates() if f" {e} " in encoders), None)
+    codec = encode.h264_args("clip", enc) if enc \
         else ["-c:v", "mpeg4", "-pix_fmt", "yuv420p"]
     out = tmp_path_factory.mktemp("media") / "S01.mp4"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
@@ -356,6 +357,8 @@ def test_load_registry_clear_error_when_jianying_missing(tmp_path, setup):
 
 def _setting(tmp_path, monkeypatch, value):
     monkeypatch.delenv("AI_CUT_DRAFT_ROOT", raising=False)
+    # Windows 的 globalSetting 位置看 %LOCALAPPDATA%（不看 Path.home）：让它与 tmp_path/JY_SETTING 对上；Mac 上无影响
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
     setting = tmp_path / tj.JY_SETTING
     setting.parent.mkdir(parents=True)
     setting.write_text(f"[General]\ncurrentCustomDraftPath={value}\n", encoding="utf-8")

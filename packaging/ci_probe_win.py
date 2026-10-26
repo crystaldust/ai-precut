@@ -64,6 +64,23 @@ def keyring_roundtrip() -> int:
     return 0
 
 
+NUMERIC_PROFILES = ("100", "77")  # h264_mf 的数值 profile：100 = High，77 = Main（仅供参考，决定编码器顺序）
+
+
+def probe_numeric_profiles(out_dir: Path) -> None:
+    """信息性：h264_mf 带数值 -profile:v 能否出 High / Main。任何失败只打印，不影响退出码。"""
+    for value in NUMERIC_PROFILES:
+        out = out_dir / f"h264_mf_profile{value}.mp4"
+        try:
+            ok, secs, err = encode("h264_mf", out, ["-profile:v", value])
+            if ok:
+                print(f"[h264_mf -profile:v {value}] 成功，耗时 {secs:.1f}s；{probe(out)}")
+            else:
+                print(f"[h264_mf -profile:v {value}] 被拒或失败：{err.strip()[-300:]}")
+        except Exception as exc:  # 探针本身出错也不能让作业失败
+            print(f"[h264_mf -profile:v {value}] 探测出错：{type(exc).__name__}: {exc}")
+
+
 def main() -> int:
     if "--keyring" in sys.argv[1:]:
         return keyring_roundtrip()
@@ -85,6 +102,7 @@ def main() -> int:
             print(f"[{enc}] {probe(out)}")
         else:
             print(f"[{enc}] 失败，耗时 {secs:.1f}s：{err.strip()}")
+    probe_numeric_profiles(out_dir)
     print(f"可用编码器 {ok_count}/{len(ENCODERS)}")
     return 0 if ok_count else 1
 

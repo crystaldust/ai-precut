@@ -24,36 +24,72 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # 脚本方式运行时可导入 pipeline.encode；append 防遮蔽三方包
 
-from pipeline import encode, media_io  # noqa: E402
+from pipeline import encode, media_io, plat  # noqa: E402
 
 SAMPLE_RATE = 48000
 AUDIO_NORM = f"aresample={SAMPLE_RATE},aformat=sample_rates={SAMPLE_RATE}:channel_layouts=stereo"
 SAFE_FILTER_PATH = re.compile(r"[A-Za-z0-9/._-]+")  # 滤镜图里不用转义就能放的路径
 FALLBACK_TMP = "/tmp"
+# Windows：盘符路径（反斜杠 / 冒号交给 _filter_path 转义），但只认纯 ASCII、无空格——中文用户名的临时目录 ffmpeg 读不稳
+SAFE_WIN_FILTER_PATH = re.compile(r"[A-Za-z]:[\\/][A-Za-z0-9\\/._-]*")
+WIN_FALLBACK_SUBDIR = Path("Documents") / "aicut-tmp"  # 相对 %PUBLIC%
 TEXT_DIR_PREFIX = "aicut-preview-"
 
 # 首选简体黑体（KI-73 / D10）：drawtext 只能取 .ttc 第 0 个字形——
 #   Hiragino Sans GB #0 = W3 简体；STHeiti Medium #0 = 繁体字形；新版 macOS 的 PingFang 已不在 /System/Library/Fonts
-FONT_CANDIDATES = [
+MAC_FONT_CANDIDATES = [
     "/System/Library/Fonts/Hiragino Sans GB.ttc",
     "/System/Library/Fonts/PingFang.ttc",                 # 旧版 macOS
     "/System/Library/Fonts/Supplemental/Songti.ttc",
     "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/Helvetica.ttc",
 ]
+WIN_FONT_FILES = ["msyh.ttc", "msyhbd.ttc", "simhei.ttf", "simsun.ttc"]  # 微软雅黑 / 雅黑粗体 / 黑体 / 宋体
+
+
+def win_font_candidates(env=None) -> list[str]:
+    fonts = plat.windows_dir(env) / "Fonts"
+    return [str(fonts / name) for name in WIN_FONT_FILES]
+
+
+FONT_CANDIDATES: list[str] | None = None  # 测试覆盖点；None = 按当前平台取 font_candidates()
+
+
+def font_candidates() -> list[str]:
+    """本平台的字体候选（调用时才看平台，测试可用 plat.IS_WIN 切换）。"""
+    if FONT_CANDIDATES is not None:
+        return FONT_CANDIDATES
+    return win_font_candidates() if plat.IS_WIN else MAC_FONT_CANDIDATES
+
+
+def _filter_path(p) -> str:
+    """路径放进 drawtext 的 fontfile='…' / textfile='…' 前的转义：反斜杠 → /，: → \\:，' → '\\''（收引号、转义、再开引号）。
+    Mac 上的安全路径（字母数字 / . _ - 与空格）原样返回。"""
+    return str(p).replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
 
 
 def pick_font() -> str:
-    for f in FONT_CANDIDATES:
+    for f in font_candidates():
         if Path(f).exists():
             return f
     sys.exit("找不到可用中文字体")
 
 
 def text_dir_base() -> str:
-    """字幕文件放哪：$TMPDIR 含滤镜图元字符（: , [ ; 空格 …）时退回 /tmp。"""
+    """字幕文件放哪：$TMPDIR 含滤镜图元字符（: , [ ; 空格 …）时退回 /tmp；
+    Windows 上临时目录不是纯 ASCII 无空格（如中文用户名）时退回 %PUBLIC%\\Documents\\aicut-tmp。"""
     base = tempfile.gettempdir()
-    return base if SAFE_FILTER_PATH.fullmatch(base) else FALLBACK_TMP
+    if not plat.IS_WIN:
+        return base if SAFE_FILTER_PATH.fullmatch(base) else FALLBACK_TMP
+    if SAFE_WIN_FILTER_PATH.fullmatch(base):
+        return base
+    # 注意：%PUBLIC% 下的文件本机其他用户也读得到——这里只放字幕文字，且预览渲染完就随临时目录删除
+    fallback = plat.public_dir() / WIN_FALLBACK_SUBDIR
+    try:
+        fallback.mkdir(parents=True, exist_ok=True)
+    except OSError:  # 建不出来（权限 / 磁盘）：退回原临时目录，至少不比改动前差
+        return base
+    return str(fallback)
 
 
 def _sorted_texts(texts: list[dict]) -> list[dict]:
@@ -113,7 +149,7 @@ def build(tl: dict, *, text_paths: list[Path], has_audio: list[bool]) -> tuple[s
         # 2=底部字幕（避开快手/抖音 UI），5=居中字幕卡
         y = {2: "h*0.74", 5: "h*0.42"}.get(align, "(h-text_h)/2")
         parts.append(
-            f"{chain}drawtext=fontfile='{font}':textfile='{path}':expansion=none:"
+            f"{chain}drawtext=fontfile='{_filter_path(font)}':textfile='{_filter_path(path)}':expansion=none:"
             f"fontsize={size}:fontcolor={hexcolor}:"
             f"borderw={max(2, size // 16)}:bordercolor=black@0.85:"
             f"x=(w-text_w)/2:y={y}:"

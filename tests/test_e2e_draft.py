@@ -29,16 +29,21 @@ MATERIAL_SECONDS = 8
 FAKE_USAGE = {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
 
 
-def _has_videotoolbox() -> bool:
+def _available_encoder() -> str | None:
     if shutil.which("ffmpeg") is None:
-        return False
+        return None
     out = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"], capture_output=True,
                          text=True).stdout
-    return f" {encode.ENCODER} " in out
+    return next((e for e in encode.candidates() if f" {e} " in out), None)
 
 
-pytestmark = pytest.mark.skipif(not _has_videotoolbox(),
-                                reason="需要带 h264_videotoolbox 的 ffmpeg（产品只用 VideoToolbox 编码）")
+pytestmark = pytest.mark.skipif(_available_encoder() is None,
+                                reason="需要 ffmpeg -encoders 里有本平台的某个候选 H.264 编码器（encode.ENCODERS）")
+
+
+@pytest.fixture(autouse=True)
+def _pick_real_encoder(monkeypatch):
+    monkeypatch.setitem(encode._PREFLIGHT, "encoder", _available_encoder())
 
 
 class FakeLLM:

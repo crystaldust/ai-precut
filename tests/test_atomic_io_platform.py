@@ -9,7 +9,7 @@ import threading
 import pytest
 
 from pipeline import outputs, plat, schema, shots_store
-from platform_marks import WIN_ONLY
+from platform_marks import WIN_ONLY, posix_only
 
 
 @pytest.fixture
@@ -23,6 +23,7 @@ def test_fsync_dir_is_a_noop_on_windows(as_windows, monkeypatch, tmp_path):
     schema.fsync_dir(tmp_path)
 
 
+@posix_only("对目录 fd 做 os.fsync 只有 POSIX 允许；Windows 上目录 fsync 是空操作（上面已测）")
 def test_fsync_dir_still_syncs_on_posix(monkeypatch, tmp_path):
     monkeypatch.setattr(plat, "IS_WIN", False)
     synced = []
@@ -42,6 +43,7 @@ def test_fsync_file_opens_for_write_on_windows(as_windows, monkeypatch, tmp_path
     assert flags == [os.O_RDWR]
 
 
+@posix_only("真实 os.fsync 配只读 fd 只有 POSIX 允许；Windows 的 fsync 需要写句柄（上面已测）")
 def test_fsync_file_stays_readonly_on_posix(monkeypatch, tmp_path):
     monkeypatch.setattr(plat, "IS_WIN", False)
     f = tmp_path / "a.txt"
