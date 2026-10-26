@@ -115,6 +115,7 @@ def jy_root(tmp_path, monkeypatch):
 @pytest.fixture
 def world(tmp_path, monkeypatch, jy_root):
     """除网络外一切真实；返回打桩对象供断言。外发告知由各用例自己决定（consented fixture）。"""
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))  # Windows 的 Path.home()
     monkeypatch.setenv("HOME", str(tmp_path / "home"))  # to_jianying --staging 默认 ~/.aicut/staging
     monkeypatch.setenv(secrets.ENV_KEYS["mediakit"], "AK-e2e")
     monkeypatch.setenv(secrets.ENV_KEYS["deepseek"], "sk-e2e")

@@ -12,6 +12,12 @@ from pipeline import jy_version
 
 APP = Path("/fake/剪映专业版.app")
 
+@pytest.fixture(autouse=True)
+def _mac_open_semantics(monkeypatch):
+    """本文件断言的是 Mac 的 `open` 命令行（open / open -R / open -a）；Windows 的 opener 另有测试（test_opener_platform）。"""
+    from pipeline import plat
+    monkeypatch.setattr(plat, "IS_WIN", False)
+
 
 @pytest.fixture
 def target_env(gui_server, monkeypatch):

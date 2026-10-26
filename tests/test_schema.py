@@ -3,6 +3,7 @@ import json
 import pytest
 
 from pipeline import schema
+from platform_marks import IS_POSIX
 
 
 def test_migrate_v0_adds_version_and_defaults():
@@ -392,7 +393,8 @@ def test_lock_file_is_private_and_not_followed(tmp_path):  # 审查修复 L16
     path = tmp_path / "project.json"
     with schema.locked(path):
         pass
-    assert stat.S_IMODE(schema.lock_path(path).stat().st_mode) == 0o600
+    if IS_POSIX:  # Windows 没有 POSIX 权限位
+        assert stat.S_IMODE(schema.lock_path(path).stat().st_mode) == 0o600
     other = tmp_path / "victim.json"
     other.write_text("keep")
     schema.lock_path(path).unlink()

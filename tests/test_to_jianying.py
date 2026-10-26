@@ -11,9 +11,10 @@ from pathlib import Path
 
 import pytest
 
-from pipeline import encode, proc
+from pipeline import encode, plat, proc
 from pipeline import to_jianying as tj
 
+VOL = "D:/Volumes" if plat.IS_WIN else "/Volumes"   # 绝对路径前缀：Windows 需要盘符
 SUB = {"style": {"align": 2}}
 CARD = {"style": {"align": 5}}
 
@@ -367,18 +368,18 @@ def test_resolve_draft_root_prefers_env(monkeypatch, tmp_path):
 
 
 def test_resolve_draft_root_reads_jianying_custom_path(monkeypatch, tmp_path):
-    _setting(tmp_path, monkeypatch, "/Volumes/外接盘/drafts")
-    assert tj.resolve_draft_root(home=tmp_path) == Path("/Volumes/外接盘/drafts")
+    _setting(tmp_path, monkeypatch, f"{VOL}/外接盘/drafts")
+    assert tj.resolve_draft_root(home=tmp_path) == Path(f"{VOL}/外接盘/drafts")
 
 
 def test_resolve_draft_root_decodes_qt_escapes(monkeypatch, tmp_path):
-    _setting(tmp_path, monkeypatch, "/Volumes/\\x5916\\x63a5/d")
-    assert tj.resolve_draft_root(home=tmp_path) == Path("/Volumes/外接/d")
+    _setting(tmp_path, monkeypatch, f"{VOL}/\\x5916\\x63a5/d")
+    assert tj.resolve_draft_root(home=tmp_path) == Path(f"{VOL}/外接/d")
 
 
 def test_resolve_draft_root_decodes_surrogate_pairs(monkeypatch, tmp_path):
-    _setting(tmp_path, monkeypatch, '"/Volumes/\\xd83d\\xde00/d"')
-    assert tj.resolve_draft_root(home=tmp_path) == Path("/Volumes/\U0001F600/d")
+    _setting(tmp_path, monkeypatch, f'"{VOL}/\\xd83d\\xde00/d"')
+    assert tj.resolve_draft_root(home=tmp_path) == Path(f"{VOL}/\U0001F600/d")
 
 
 def test_resolve_draft_root_default(monkeypatch, tmp_path):
@@ -395,8 +396,12 @@ def test_resolve_draft_root_default_when_not_customised(monkeypatch, tmp_path, t
     assert tj.resolve_draft_root(home=tmp_path) == tmp_path / tj.DEFAULT_DRAFT_ROOT
 
 
-@pytest.mark.parametrize("value", ["drafts/relative", "@ByteArray(/Volumes/x)",
-                                   "/Volumes/a\\\\b", "/Volumes/\\xd83d/lone", "/Volumes/\\q"])
+UNUSABLE = ["drafts/relative", f"@ByteArray({VOL}/x)", f"{VOL}/\\xd83d/lone", f"{VOL}/\\q"]
+if not plat.IS_WIN:  # Windows 上 \\\\ 是 Qt 对反斜杠的合法转义
+    UNUSABLE.append("/Volumes/a\\\\b")
+
+
+@pytest.mark.parametrize("value", UNUSABLE)
 def test_resolve_draft_root_unusable_custom_path_is_loud(monkeypatch, tmp_path, value):
     _setting(tmp_path, monkeypatch, value)
     with pytest.raises(tj.InstallError) as exc:

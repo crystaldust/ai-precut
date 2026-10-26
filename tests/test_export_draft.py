@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from pipeline import export_draft as ex
+from platform_marks import posix_only
 
 
 def fake_draft(tmp_path):
@@ -221,7 +222,10 @@ def test_install_bat_echoes_root_with_delayed_expansion(tmp_path):
 
 
 # ---------------------------------------------------------------- 审查修复 2：cmd 特殊字符的草稿名一律拒绝
-BAD_BAT_CHARS = ["!", "%", "^", "&", "|", "<", ">", '"']
+# | < > " 在 Windows 上不可能是目录名（NTFS 本身禁止），草稿名只会来自 Mac 端的目录：这几个只在 POSIX 上能构造
+_NOT_A_WINDOWS_FILENAME = posix_only("Windows 文件名不能含 | < > \"")
+BAD_BAT_CHARS = ["!", "%", "^", "&",
+                 *(pytest.param(c, marks=_NOT_A_WINDOWS_FILENAME) for c in ("|", "<", ">", '"'))]
 
 
 @pytest.mark.parametrize("ch", BAD_BAT_CHARS)

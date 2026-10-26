@@ -61,7 +61,13 @@ def check_questions_ready(_pdir: Path) -> None:
 
 def check_build_ready(_pdir: Path, body: dict) -> None:
     """导出到 Mac 剪映：剪映开着就先停（E19），免得切片、晋升都做完才在装草稿时失败。"""
-    if body.get("target") == "mac" and to_jianying.jianying_running():
+    if body.get("target") != "mac":
+        return
+    try:
+        running = to_jianying.jianying_running()
+    except to_jianying.InstallError as exc:  # Windows 上 tasklist 失败：无法确认 = 当作开着，别往下做
+        raise PrepareBlocked("close_jianying", str(exc)) from exc
+    if running:
         raise PrepareBlocked("close_jianying", JIANYING_RUNNING_MSG)
 
 

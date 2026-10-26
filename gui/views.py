@@ -12,7 +12,7 @@ from pathlib import Path
 
 from gui import jianying, jobs, wizard
 from pipeline import (
-    exclusions, fingerprints, media_io, notices, outputs, proc, review, schema, select, shots_store, usage,
+    exclusions, fingerprints, media_io, notices, outputs, plat, proc, review, schema, select, shots_store, usage,
 )
 
 PRESET_CORRUPT_MSG = "已跳过预设「{name}」：{reason}"
@@ -144,7 +144,8 @@ def health_payload() -> dict:
     if ff:
         try:
             ver = subprocess.run([ff, "-version"], capture_output=True, text=True,
-                                 timeout=FFMPEG_VERSION_TIMEOUT_S).stdout.splitlines()[0][:FFMPEG_VERSION_MAX]
+                                 encoding="utf-8", errors="replace",
+                                 timeout=FFMPEG_VERSION_TIMEOUT_S, **plat.NO_WINDOW).stdout.splitlines()[0][:FFMPEG_VERSION_MAX]
         except Exception:  # noqa: BLE001 - 只是展示用的版本号
             ver = "?"
     return {"frozen": proc.FROZEN, "app_root": str(proc.app_root()),

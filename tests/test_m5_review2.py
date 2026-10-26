@@ -244,6 +244,7 @@ def test_failed_rerun_still_recorded(tmp_path, monkeypatch):
 # ---------------------------------------------------------------- 7. 访达选中失败
 def test_reveal_reports_open_failure(monkeypatch, tmp_path):
     from gui import support
+    monkeypatch.setattr(support.plat, "IS_WIN", False)  # 断言的是 Mac 的 open -R
     monkeypatch.setattr(support.subprocess, "run",
                         lambda *a, **k: SimpleNamespace(returncode=1, stderr="LSOpen failed"))
     assert support.reveal(tmp_path / "x.zip") is False

@@ -5,6 +5,7 @@ import ctypes
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from ctypes import wintypes
@@ -200,3 +201,50 @@ def test_posix_process_image_none_when_ps_fails(monkeypatch):
 
     monkeypatch.setattr(plat.subprocess, "run", boom)
     assert plat.process_image(77) is None
+
+
+# ---------------------------------------------------------------- 平台默认目录（M16 Task 4）
+@pytest.fixture
+def as_windows(monkeypatch):
+    """在任何平台上走 Windows 分支的纯路径逻辑（Win32 调用不在这些函数里）。"""
+    monkeypatch.setattr(plat, "IS_WIN", True)
+
+
+def test_mac_dirs_unchanged(monkeypatch, tmp_path):
+    monkeypatch.setattr(plat, "IS_WIN", False)
+    assert plat.jianying_draft_root(home=tmp_path) == tmp_path / "Movies/JianyingPro/User Data/Projects/com.lveditor.draft"
+    assert plat.jianying_setting(home=tmp_path) == tmp_path / "Movies/JianyingPro/User Data/Config/globalSetting"
+    assert plat.config_dir(home=tmp_path) == tmp_path / ".config" / "ai-cut"
+    assert plat.log_dir(home=tmp_path) == tmp_path / "Library" / "Logs" / "剪辑台"
+    assert plat.jianying_draft_root_rel() == Path("Movies/JianyingPro/User Data/Projects/com.lveditor.draft")
+
+
+def test_windows_jianying_dirs_use_localappdata(as_windows, tmp_path):
+    env = {"LOCALAPPDATA": str(tmp_path / "Local")}
+    assert plat.jianying_draft_root(env=env) == tmp_path / "Local/JianyingPro/User Data/Projects/com.lveditor.draft"
+    assert plat.jianying_setting(env=env) == tmp_path / "Local/JianyingPro/User Data/Config/globalSetting"
+
+
+def test_windows_dirs_fall_back_to_home_when_env_missing(as_windows, tmp_path):
+    assert plat.jianying_draft_root(env={}, home=tmp_path) == (
+        tmp_path / "AppData/Local/JianyingPro/User Data/Projects/com.lveditor.draft")
+    assert plat.config_dir(env={}, home=tmp_path) == tmp_path / "AppData/Roaming/ai-cut"
+    assert plat.log_dir(env={}, home=tmp_path) == tmp_path / "AppData/Local/剪辑台/logs"
+
+
+def test_windows_explicit_home_ignores_localappdata(as_windows, tmp_path):
+    """显式传 home（测试 / 调用方指定整套 home）时不看环境变量，整套目录跟着 home 走。"""
+    env = {"LOCALAPPDATA": str(tmp_path / "elsewhere")}
+    assert plat.jianying_setting(env=env, home=tmp_path) == (
+        tmp_path / "AppData/Local/JianyingPro/User Data/Config/globalSetting")
+
+
+def test_windows_config_and_log_dirs(as_windows, tmp_path):
+    env = {"APPDATA": str(tmp_path / "Roam"), "LOCALAPPDATA": str(tmp_path / "Local")}
+    assert plat.config_dir(env=env) == tmp_path / "Roam" / "ai-cut"
+    assert plat.log_dir(env=env) == tmp_path / "Local" / "剪辑台" / "logs"
+    assert plat.jianying_draft_root_rel() == Path("AppData/Local/JianyingPro/User Data/Projects/com.lveditor.draft")
+
+
+def test_windows_empty_env_values_count_as_missing(as_windows, tmp_path):
+    assert plat.config_dir(env={"APPDATA": ""}, home=tmp_path) == tmp_path / "AppData/Roaming/ai-cut"

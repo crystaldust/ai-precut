@@ -7,7 +7,8 @@ import time
 
 import pytest
 
-from pipeline import filelock, schema, shots_store
+from pipeline import filelock, plat, schema, shots_store
+from platform_marks import IS_POSIX
 
 
 def _sh(i, a, b, sub="字幕"):
@@ -43,8 +44,9 @@ def test_locked_creates_private_lock_file_and_serializes_threads(tmp_path):
     [t.join(5) for t in threads]
     assert len(order) == 8
     assert all(order[i].split("-")[0] == order[i + 1].split("-")[0] for i in range(0, 8, 2))
-    mode = stat.S_IMODE(os.stat(pdir / shots_store.FILE_LOCK).st_mode)
-    assert mode == 0o600
+    if IS_POSIX:  # Windows 没有 POSIX 权限位
+        mode = stat.S_IMODE(os.stat(pdir / shots_store.FILE_LOCK).st_mode)
+        assert mode == 0o600
 
 
 def test_locked_blocks_while_another_open_file_holds_flock(tmp_path):
@@ -320,7 +322,7 @@ def test_backup_is_fsynced(tmp_path, monkeypatch):
     real = os.fsync
     monkeypatch.setattr(shots_store.os, "fsync", lambda fd: synced.append(fd) or real(fd))
     shots_store.backup(pdir, "replace")
-    assert len(synced) >= 2                                 # 备份文件 + 目录
+    assert len(synced) >= (1 if plat.IS_WIN else 2)         # 备份文件 + 目录（Windows 不能 fsync 目录）
 
 
 def test_backup_prune_uses_sequence_not_string_order(tmp_path, monkeypatch):

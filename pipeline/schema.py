@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from pipeline import filelock
+from pipeline import filelock, plat
 
 CURRENT_SCHEMA = 2
 # 中间产物（segments_text / segments_scored / selection / timeline）的格式版本（KI-37）。
@@ -151,14 +151,61 @@ def _write_synced(tmp: Path, text: str) -> None:
         os.fsync(f.fileno())  # 先落盘再改名：被强杀 / 断电不会留下空文件
 
 
-def _fsync_dir(d: Path) -> None:
-    """目录项也落盘；某些网络盘 / 外接盘不支持，忽略。"""
-    with contextlib.suppress(OSError):
+REPLACE_ATTEMPTS = 40        # Windows 上 os.replace 被占用时的最多尝试次数
+REPLACE_BACKOFF_S = 0.005    # 第 n 次失败后等 n×这个值，单次不超过 REPLACE_BACKOFF_MAX_S
+REPLACE_BACKOFF_MAX_S = 0.05
+
+
+def _retry_permission(op_name: str, src, dst) -> None:
+    """调用 os.<op_name>(src, dst)。Windows 上目标 / 源正被别的线程、进程（读者、杀毒、索引器）打开会 PermissionError：
+    有界重试（短退避）；POSIX 不重试、行为不变。只重试 PermissionError，其它错误原样抛。"""
+    if not plat.IS_WIN:
+        getattr(os, op_name)(src, dst)
+        return
+    for attempt in range(1, REPLACE_ATTEMPTS + 1):
+        try:
+            getattr(os, op_name)(src, dst)
+            return
+        except PermissionError:
+            if attempt == REPLACE_ATTEMPTS:
+                raise
+            time.sleep(min(REPLACE_BACKOFF_S * attempt, REPLACE_BACKOFF_MAX_S))
+
+
+def atomic_replace(src, dst) -> None:
+    """os.replace（目标存在则原子覆盖），Windows 上对 PermissionError 有界重试。"""
+    _retry_permission("replace", src, dst)
+
+
+def rename_no_overwrite(src, dst) -> None:
+    """os.rename（目标已存在则失败，不覆盖——目录改名用），Windows 上对 PermissionError 有界重试；
+    「目标存在 → 失败」的语义不变（FileExistsError / OSError 不重试）。"""
+    _retry_permission("rename", src, dst)
+
+
+def fsync_file(path: Path) -> None:
+    """已写好的文件落盘。Windows 的 fsync（_commit）要求写句柄，只读句柄会 EBADF。"""
+    fd = os.open(path, os.O_RDWR if plat.IS_WIN else os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def fsync_dir(d: Path, *, strict: bool = False) -> None:
+    """目录项也落盘；某些网络盘 / 外接盘不支持，默认忽略。Windows 不能把目录当文件打开，直接空操作（尽力而为）。
+    strict=True（备份用）：POSIX 上失败照常抛 OSError，只有 Windows 是空操作。"""
+    if plat.IS_WIN:
+        return
+    try:
         fd = os.open(d, os.O_RDONLY)
         try:
             os.fsync(fd)
         finally:
             os.close(fd)
+    except OSError:
+        if strict:
+            raise
 
 
 def _clear_stale_tmps(path: Path) -> None:
@@ -182,11 +229,11 @@ def write_text(path: Path, text: str) -> None:
     tmp = _tmp_path(path)
     try:
         _write_synced(tmp, text)
-        os.replace(tmp, path)
+        atomic_replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    _fsync_dir(path.parent)
+    fsync_dir(path.parent)
     _clear_stale_tmps(path)
 
 
@@ -213,7 +260,7 @@ def create_json_exclusive(path: Path, obj: Any) -> None:
                 os.fsync(f.fileno())
     finally:
         tmp.unlink(missing_ok=True)
-    _fsync_dir(path.parent)
+    fsync_dir(path.parent)
 
 
 def lock_path(path: Path) -> Path:

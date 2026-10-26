@@ -151,17 +151,6 @@ def _empty_exports() -> dict:
     return {k: None for k in EXPORT_KINDS}
 
 
-def _fsync_dir(d: Path) -> None:
-    try:
-        fd = os.open(d, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-    except OSError:
-        pass  # 某些盘不支持目录 fsync
-
-
 def promote(staging: Path, vdir: Path, *, expect_inputs: dict | None = None) -> dict:
     """把暂存的预览片（6 个文件：5 个产物 + 预览片完成标记）原子地放进版本目录；调用方已持 build_section。
 
@@ -185,8 +174,8 @@ def promote(staging: Path, vdir: Path, *, expect_inputs: dict | None = None) -> 
             _link_or_copy(staging / name, tmp / name)
         schema.write_json(tmp / EXPORT_FILE, _empty_exports())
         if not vdir.exists():
-            os.rename(tmp, vdir)
-            _fsync_dir(vdir.parent)
+            schema.rename_no_overwrite(tmp, vdir)
+            schema.fsync_dir(vdir.parent)
             return {"replaced": False, "old_mac": None}
         return _replace_into(tmp, vdir, names, stamp)
     finally:
@@ -204,7 +193,7 @@ def _replace_into(tmp: Path, vdir: Path, names: list[str], stamp: dict | None) -
     for old_zip in vdir.glob(ZIP_GLOB):
         old_zip.unlink(missing_ok=True)
     for name in names:
-        os.replace(tmp / name, vdir / name)
+        schema.atomic_replace(tmp / name, vdir / name)
     return {"replaced": True, "old_mac": mac.get("draft") if mac else None}
 
 

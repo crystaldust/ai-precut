@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 IS_WIN = sys.platform == "win32"
 
@@ -26,6 +27,98 @@ PS_TIMEOUT_S = 5
 
 # 在 GUI 进程里起子进程时展开进 subprocess 调用：Windows 上不弹黑色控制台窗口，POSIX 上是空字典
 NO_WINDOW: dict = {"creationflags": CREATE_NO_WINDOW} if IS_WIN else {}
+
+
+# ---------------------------------------------------------------- 平台默认目录
+# 路径逻辑（可在任何平台上测）：Windows 看 %LOCALAPPDATA% / %APPDATA%，缺失（或为空）时退回 home/AppData/…；
+# 显式传 home（测试 / 调用方指定整套 home）时不看环境变量。AI_CUT_* 覆盖项由各调用方先处理。
+JY_DRAFT_TAIL = Path("JianyingPro/User Data/Projects/com.lveditor.draft")
+JY_SETTING_TAIL = Path("JianyingPro/User Data/Config/globalSetting")
+MAC_JY_BASE = Path("Movies")           # 相对 home
+WIN_LOCAL_REL = Path("AppData/Local")  # %LOCALAPPDATA% 缺失时相对 home
+WIN_ROAMING_REL = Path("AppData/Roaming")
+CONFIG_DIRNAME = "ai-cut"
+LOG_DIRNAME = "剪辑台"
+WIN_LOG_SUBDIR = "logs"
+
+
+def _win_base(var: str, rel: Path, env, home) -> Path:
+    """Windows 的 %VAR%；显式 home 或变量缺失 / 为空 → home/rel。"""
+    if home is None:
+        value = (os.environ if env is None else env).get(var)
+        if value:
+            return Path(value)
+    return (Path.home() if home is None else Path(home)) / rel
+
+
+def _mac_home(home) -> Path:
+    return Path.home() if home is None else Path(home)
+
+
+def local_appdata(env=None, home=None) -> Path:
+    """%LOCALAPPDATA%（缺失 / 为空 / 显式 home → home/AppData/Local）。"""
+    return _win_base("LOCALAPPDATA", WIN_LOCAL_REL, env, home)
+
+
+WIN_DIR_FALLBACK = Path("C:/Windows")
+
+
+def windows_dir(env=None) -> Path:
+    """%SystemRoot%（缺失 / 为空 → C:/Windows）。系统工具一律用绝对路径调，不依赖 PATH。"""
+    value = (os.environ if env is None else env).get("SystemRoot")
+    return Path(value) if value else WIN_DIR_FALLBACK
+
+
+def explorer_exe(env=None) -> Path:
+    return windows_dir(env) / "explorer.exe"
+
+
+def tasklist_exe(env=None) -> Path:
+    return windows_dir(env) / "System32" / "tasklist.exe"
+
+
+def jianying_draft_root_rel() -> Path:
+    """剪映默认草稿根相对 home 的部分（to_jianying.DEFAULT_DRAFT_ROOT）。"""
+    return (WIN_LOCAL_REL if IS_WIN else MAC_JY_BASE) / JY_DRAFT_TAIL
+
+
+def jianying_setting_rel() -> Path:
+    return (WIN_LOCAL_REL if IS_WIN else MAC_JY_BASE) / JY_SETTING_TAIL
+
+
+def _jy_base(env, home) -> Path:
+    if IS_WIN:
+        return _win_base("LOCALAPPDATA", WIN_LOCAL_REL, env, home)
+    return _mac_home(home) / MAC_JY_BASE
+
+
+def jianying_draft_root(env=None, home=None) -> Path:
+    """剪映默认草稿根（Mac ~/Movies/…；Windows %LOCALAPPDATA%/JianyingPro/User Data/Projects/com.lveditor.draft）。"""
+    return _jy_base(env, home) / JY_DRAFT_TAIL
+
+
+def jianying_setting(env=None, home=None) -> Path:
+    """剪映 globalSetting（Qt INI，里面可能有自定义草稿位置）。"""
+    return _jy_base(env, home) / JY_SETTING_TAIL
+
+
+def config_dir(env=None, home=None) -> Path:
+    """凭证 / 告知记录所在目录的默认位置：Mac ~/.config/ai-cut，Windows %APPDATA%/ai-cut。"""
+    if IS_WIN:
+        return _win_base("APPDATA", WIN_ROAMING_REL, env, home) / CONFIG_DIRNAME
+    return _mac_home(home) / ".config" / CONFIG_DIRNAME
+
+
+def log_dir(env=None, home=None) -> Path:
+    """日志目录的默认位置：Mac ~/Library/Logs/剪辑台，Windows %LOCALAPPDATA%/剪辑台/logs。"""
+    if IS_WIN:
+        return _win_base("LOCALAPPDATA", WIN_LOCAL_REL, env, home) / LOG_DIRNAME / WIN_LOG_SUBDIR
+    return _mac_home(home) / "Library" / "Logs" / LOG_DIRNAME
+
+
+def is_absolute_path(value: str) -> bool:
+    """value 在本平台上是不是绝对路径（Windows：盘符 / UNC，`C:/x` 与 `C:\\x` 都算；POSIX：以 / 开头）。"""
+    return (PureWindowsPath if IS_WIN else PurePosixPath)(value).is_absolute()
 
 
 def _dword(value: int = 0):

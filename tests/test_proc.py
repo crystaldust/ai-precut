@@ -30,6 +30,7 @@ def test_user_data_root_frozen_default_is_documents(monkeypatch, tmp_path):
     monkeypatch.delenv("AI_CUT_PROJECTS", raising=False)
     monkeypatch.setattr(proc, "FROZEN", True)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows 的 Path.home() 看这个
     assert proc.user_data_root() == tmp_path / "Documents" / "AI粗剪"  # 不能写进 .app
 
 

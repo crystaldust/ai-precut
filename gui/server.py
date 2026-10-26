@@ -30,7 +30,7 @@ sys.path.insert(0, str(ROOT))  # 让 gui 能 import pipeline
 
 from pipeline.pyver import require_supported_python  # noqa: E402
 require_supported_python()  # 旧解释器在这里就给出中文说明
-from pipeline import applog, outputs, proc, schema, shots_store  # noqa: E402
+from pipeline import applog, outputs, plat, proc, schema, shots_store  # noqa: E402
 from gui import (  # noqa: E402
     browse_batch, jianying, jobs, maintenance, media, opener, prefs, project_routes, result_routes, session, settings,
     support, views,
@@ -435,6 +435,8 @@ class Handler(BaseHTTPRequestHandler):
                     picked = []
                 path = picked[0] if picked else ""
                 return self._json({"path": path})
+            if plat.IS_WIN:  # 没有桌面壳的选文件框（浏览器版开发用）：空路径 = 取消
+                return self._json({"path": ""})
             script = ('POSIX path of (choose file with prompt "选择一条视频素材" '
                       'of type {"public.movie"})')
             r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True)
@@ -499,15 +501,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": NO_EXPORT_MSG}, 404)
                 if blocked := outputs.export_block(pdir, version)[1]:  # KI-100：含不可用片段的版本不能定位 Windows 包
                     return self._json({"error": blocked}, 409)
-                open_args = ["-R", str(zip_path)]
+                action = lambda: opener.reveal(zip_path)  # noqa: E731
             elif target == "jianying":  # KI-98：只打开检测到的剪映，没装就明说
                 if (app := jianying.find(refresh=True)) is None:
                     return self._json({"error": jianying.NOT_FOUND_MSG}, 404)
-                open_args = ["-a", str(app)]
+                action = lambda: opener.open_app(app)  # noqa: E731
             else:
-                open_args = [str(pdir)]
+                action = lambda: opener.open_path(pdir)  # noqa: E731
             try:
-                opener.run_open(open_args)
+                action()
             except opener.OpenFailed as exc:
                 return self._json({"error": str(exc)}, 500)
             return self._json({"ok": True})

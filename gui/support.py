@@ -10,12 +10,14 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-from pipeline import applog, diagnostics, proc
+from gui import opener
+from pipeline import applog, diagnostics, plat, proc
 
 NOTICES_FILE = "THIRD-PARTY-NOTICES.txt"
 NOTICES_MISSING = "（没有找到第三方许可文件，请联系开发者）"
 DIAG_FAILED_MSG = "导出失败：{reason}"
 REVEAL_FAILED_MSG = "诊断包已生成，但没能在访达中打开，请到「下载」文件夹里找"
+REVEAL_FAILED_MSG_WIN = "诊断包已生成，但没能在文件资源管理器中打开，请到「下载」文件夹里找"
 BAD_PROJECT_MSG = "项目名不合法"
 LOG = applog.get("gui")
 
@@ -27,9 +29,19 @@ def notices_path() -> Path:
     return proc.app_root() / "packaging" / NOTICES_FILE
 
 
+def reveal_failed_msg() -> str:
+    return REVEAL_FAILED_MSG_WIN if plat.IS_WIN else REVEAL_FAILED_MSG
+
+
 def reveal(path: Path) -> bool:
-    """在访达中选中文件（测试替换点）；返回是否成功。"""
-    try:
+    """在访达 / 文件资源管理器中选中文件（测试替换点）；返回是否成功。"""
+    if plat.IS_WIN:
+        try:
+            opener.reveal(path)
+        except opener.OpenFailed:
+            return False
+        return True
+    try:  # Mac：沿用原来的调用（无超时、同样的日志）
         r = subprocess.run(["open", "-R", str(path)], capture_output=True, text=True)
     except OSError:
         return False
@@ -70,7 +82,7 @@ def export_diagnostics(body: dict, resolve: Callable[[str], Path]) -> tuple[int,
         LOG.warning("访达中选中诊断包失败", exc_info=True)
         revealed = False
     body = {"ok": True, "name": path.name, "folder": path.parent.name, "revealed": revealed}
-    return 200, body if revealed else {**body, "message": REVEAL_FAILED_MSG}
+    return 200, body if revealed else {**body, "message": reveal_failed_msg()}
 
 
 def handle_get(path: str) -> tuple[int, dict] | None:

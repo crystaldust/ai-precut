@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 from packaging.build_package import (  # noqa: E402
     rewrite_for_windows, write_installer, zip_pkg,
 )
-from pipeline import proc, to_jianying  # noqa: E402
+from pipeline import proc, schema, to_jianying  # noqa: E402
 
 
 def _api_name(name: str) -> str:
@@ -72,7 +72,7 @@ def package_draft(draft_dir: Path, name: str, out_zip: Path) -> Path:
         write_installer(pkg)
         zip_pkg(pkg, tmp_zip)
         check_package(inspect_package(tmp_zip))
-        os.replace(tmp_zip, out_zip)
+        schema.atomic_replace(tmp_zip, out_zip)
     finally:
         shutil.rmtree(pkg, ignore_errors=True)
         tmp_zip.unlink(missing_ok=True)

@@ -21,10 +21,12 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import errno
 import json
 import os
 import re
+import platform
 import shutil
 import subprocess
 import sys
@@ -38,10 +40,10 @@ if str(ROOT) not in sys.path:
     # 免得仓库根的 packaging/ 遮蔽 PyPI 的 packaging
     sys.path.append(str(ROOT))
 
-from pipeline import jy_version, schema  # noqa: E402
+from pipeline import jy_version, plat, schema  # noqa: E402
 
-DEFAULT_DRAFT_ROOT = Path("Movies/JianyingPro/User Data/Projects/com.lveditor.draft")  # 相对 home
-JY_SETTING = Path("Movies/JianyingPro/User Data/Config/globalSetting")                  # 相对 home
+DEFAULT_DRAFT_ROOT = plat.jianying_draft_root_rel()   # 相对 home（Mac ~/Movies/…；Windows AppData/Local/…，见 plat）
+JY_SETTING = plat.jianying_setting_rel()               # 相对 home
 ROOT_META_NAME = "root_meta_info.json"
 INSTALL_MARKER = ".aicut_installing"   # 安装中标记：只有带它且未注册的目录才允许自动清理
 TMP_SUFFIX = ".aicut-tmp"               # 草稿根内的同卷临时目录：.<草稿名>.aicut-tmp
@@ -53,6 +55,10 @@ COVER_ERR_TAIL = 200
 TEMPLATE = jy_version.TEMPLATE   # 保留这个名字：测试会替换它
 
 JY_RUNNING = "剪映正在运行，请先完全退出（Cmd+Q）再安装"
+JY_RUNNING_WIN = "剪映正在运行，请先关闭剪映窗口（含托盘图标）再安装"
+JY_PROCESS_WIN = "JianyingPro.exe"
+JY_CHECK_FAILED_WIN = "无法确认剪映是否在运行（{detail}）；为避免剪映覆盖草稿库，已停止。请先关闭剪映窗口（含托盘图标）后重试"
+TASKLIST_TIMEOUT_S = 10
 TEMPLATE_MISSING = jy_version.TEMPLATE_MISSING
 DRAFT_EXISTS = "草稿已存在：{target}（换名字，或先在剪映里删除）"
 JY_MISSING = ("找不到剪映草稿库：{meta}\n"
@@ -311,6 +317,20 @@ def align_with_template(draft_dir: Path, template: Path) -> None:
     write_json(draft_dir / "draft_content.json", base)
 
 
+def platform_fields() -> dict:
+    """草稿 platform / last_modified_platform 的指纹。
+
+    Mac：剪映 11.0 自己写出的空草稿里指纹就是空串，实测可加载；版本号写已验证版本（D3）。
+    Windows：与 packaging/build_package.py 的 rewrite_for_windows 同一组值（已在真机验证）。
+    """
+    if plat.IS_WIN:
+        return {"app_id": 0, "app_source": "", "app_version": "", "device_id": "",
+                "hard_disk_id": "", "mac_address": "", "os": "windows", "os_version": ""}
+    return {"app_id": 0, "app_source": "", "app_version": jy_version.VERIFIED_VERSION,
+            "device_id": "", "hard_disk_id": "", "mac_address": "",
+            "os": "mac", "os_version": platform.release()}
+
+
 def macify(draft_dir: Path, name: str, materials_size: int, draft_id: str,
            root: Path, *, runner=subprocess.run) -> dict:
     """补 Mac 版字段并写入口文件 draft_info.json。"""
@@ -318,16 +338,13 @@ def macify(draft_dir: Path, name: str, materials_size: int, draft_id: str,
     content = json.loads(content_path.read_text(encoding="utf-8"))
     now = int(time.time() * 1_000_000)
 
-    # 剪映 11.0 自己写出的空草稿里 platform 指纹就是空串，实测可加载；版本号写已验证版本（D3）
-    platform = {"app_id": 0, "app_source": "", "app_version": jy_version.VERIFIED_VERSION,
-                "device_id": "", "hard_disk_id": "", "mac_address": "",
-                "os": "mac", "os_version": os.uname().release}
+    fields = platform_fields()
     for k in ("platform", "last_modified_platform"):
-        content[k] = {**content.get(k, {}), **platform}
+        content[k] = {**content.get(k, {}), **fields}
     content["id"] = draft_id
     content["update_time"] = now
     write_json(content_path, content)
-    write_json(draft_dir / "draft_info.json", content)   # Mac 版入口文件名
+    write_json(draft_dir / "draft_info.json", content)   # 入口文件名（Mac / Windows 版都认）
 
     meta_path = draft_dir / "draft_meta_info.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -377,8 +394,10 @@ def _make_cover(src: Path, dst: Path, runner) -> None:
 
 
 # ------------------------------------------------------------------ 草稿根与注册表
-def _decode_qt_value(raw: str) -> str:
-    """解 Qt INI 的值：去引号、\\xHHHH 按 UTF-16 码元解码（含代理对）；其他转义一律不认。"""
+def _decode_qt_value(raw: str, *, allow_backslash: bool = False) -> str:
+    """解 Qt INI 的值：去引号、\\xHHHH 按 UTF-16 码元解码（含代理对）；其他转义一律不认。
+
+    allow_backslash（仅 Windows）：Qt 把路径里的反斜杠写成 \\\\，这时还原成一个反斜杠。"""
     if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
         raw = raw[1:-1]
     if raw.startswith("@"):
@@ -391,6 +410,10 @@ def _decode_qt_value(raw: str) -> str:
             units.extend(int.from_bytes(b, "little")
                          for b in _chunks(ch.encode("utf-16-le"), 2))
             i += 1
+            continue
+        if allow_backslash and raw[i + 1:i + 2] == "\\":
+            units.append(ord("\\"))
+            i += 2
             continue
         m = re.match(r"x([0-9a-fA-F]{4})", raw[i + 1:])
         if not m:
@@ -407,13 +430,13 @@ def _chunks(data: bytes, size: int) -> list[bytes]:
     return [data[i:i + size] for i in range(0, len(data), size)]
 
 
-def _custom_draft_path(home: Path) -> Path | None:
+def _custom_draft_path(home: Path | None, env=None) -> Path | None:
     """读剪映「全局设置 → 草稿位置」（Qt INI 的 currentCustomDraftPath）。
 
     没有设置文件 / 没有该键 / 值为空 → None（用默认位置）；
     有值但读不了、解不了或不是绝对路径 → InstallError，绝不悄悄退回默认目录（审查修复 3）。
     """
-    setting = home / JY_SETTING
+    setting = plat.jianying_setting(env=env, home=home)
     try:
         text = setting.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -426,13 +449,13 @@ def _custom_draft_path(home: Path) -> Path | None:
         return None
     raw = m.group(1).strip()
     try:
-        value = _decode_qt_value(raw)
+        value = _decode_qt_value(raw, allow_backslash=plat.IS_WIN)
     except ValueError as exc:
         value = None
         reason = str(exc)
     else:
         reason = "不是绝对路径"
-    if value is None or not value.startswith("/"):
+    if value is None or not plat.is_absolute_path(value):
         raise InstallError(f"剪映「全局设置 → 草稿位置」的值无法使用（{reason}）：{raw}\n"
                            f"设置文件：{setting}；可设置环境变量 AI_CUT_DRAFT_ROOT 指定草稿目录")
     return Path(value)
@@ -441,10 +464,9 @@ def _custom_draft_path(home: Path) -> Path | None:
 def resolve_draft_root(env=None, home: Path | None = None) -> Path:
     """草稿根：AI_CUT_DRAFT_ROOT > 剪映自定义草稿位置 > 默认位置。只算路径，不做存在性检查。"""
     env = os.environ if env is None else env
-    home = Path.home() if home is None else home
     if env.get("AI_CUT_DRAFT_ROOT"):
         return Path(env["AI_CUT_DRAFT_ROOT"]).expanduser()
-    return _custom_draft_path(home) or home / DEFAULT_DRAFT_ROOT
+    return _custom_draft_path(home, env) or plat.jianying_draft_root(env=env, home=home)
 
 
 def load_registry(root: Path) -> dict:
@@ -461,9 +483,30 @@ def load_registry(root: Path) -> dict:
     return reg
 
 
+def _jianying_running_win() -> bool:
+    """tasklist（绝对路径）+ csv 解析，第一列精确等于 JianyingPro.exe（忽略大小写）才算在运行。
+    和 Mac 的 pgrep 不同，这里「无法确认」时关门（InstallError）：误判成没在运行会让剪映覆盖草稿库。"""
+    argv = [str(plat.tasklist_exe()), "/FI", f"IMAGENAME eq {JY_PROCESS_WIN}", "/FO", "CSV", "/NH"]
+    try:
+        res = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=TASKLIST_TIMEOUT_S, **plat.NO_WINDOW)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise InstallError(JY_CHECK_FAILED_WIN.format(detail=type(exc).__name__)) from exc
+    if getattr(res, "returncode", 0) != 0:
+        raise InstallError(JY_CHECK_FAILED_WIN.format(detail=f"退出码 {res.returncode}"))
+    return any(row and row[0].strip().lower() == JY_PROCESS_WIN.lower()
+               for row in csv.reader((res.stdout or "").splitlines()))
+
+
 def jianying_running() -> bool:
+    if plat.IS_WIN:
+        return _jianying_running_win()
     return subprocess.run(["pgrep", "-f", "MacOS/VideoFusion-macOS"],
                           capture_output=True).returncode == 0
+
+
+def running_message() -> str:
+    return JY_RUNNING_WIN if plat.IS_WIN else JY_RUNNING
 
 
 def build_entry(info: dict, name: str, root: Path, materials_size: int = 0) -> dict:
@@ -543,7 +586,7 @@ def _validate_or_raise(draft: Path, expect: dict | None, *, relocate=None,
 
 def _ensure_not_running() -> None:
     if jianying_running():
-        raise InstallError(JY_RUNNING)
+        raise InstallError(running_message())
 
 
 def _backup_registry(meta: Path) -> Path:
@@ -562,7 +605,7 @@ def _restore_registry(bak: Path, meta: Path) -> None:
     tmp = meta.with_name(f".{meta.name}.{uuid.uuid4().hex}.restore")
     try:
         shutil.copy2(bak, tmp)
-        os.replace(tmp, meta)
+        schema.atomic_replace(tmp, meta)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -580,7 +623,7 @@ def _place_in_root(draft_dir: Path, tmp: Path, name: str) -> bool:
     """
     (draft_dir / INSTALL_MARKER).write_text(name, encoding="utf-8")
     try:
-        os.rename(draft_dir, tmp)
+        schema.rename_no_overwrite(draft_dir, tmp)
         return True
     except OSError as exc:
         if exc.errno != errno.EXDEV:
@@ -594,7 +637,7 @@ def _place_in_root(draft_dir: Path, tmp: Path, name: str) -> bool:
 def _undo_placement(draft_dir: Path, placed: Path, renamed: bool) -> None:
     """回滚放置：改名来的挪回暂存目录；拷贝来的直接删（暂存原件还在）。报告删了 / 留了什么。"""
     if renamed and placed.exists():
-        os.rename(placed, draft_dir)
+        schema.rename_no_overwrite(placed, draft_dir)
         print(f"未安装的草稿已挪回暂存目录：{draft_dir}")
     elif placed.exists():
         if not (placed / INSTALL_MARKER).exists():
@@ -636,7 +679,7 @@ def install(draft_dir: Path, root: Path, name: str, info: dict, size: int,
     state = {"renamed": False, "placed": tmp, "registering": False}
     try:
         state["renamed"] = _place_in_root(draft_dir, tmp, name)
-        os.rename(tmp, target)
+        schema.rename_no_overwrite(tmp, target)
         state["placed"] = target
         _validate_or_raise(target, expect)
         _ensure_not_running()

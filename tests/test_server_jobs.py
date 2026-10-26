@@ -1,5 +1,6 @@
 """M4 · GL-17 / GL-20：后台任务（互斥、取消、先校验后登记、子进程化）与新建项目。"""
 import json
+import os
 import subprocess
 import sys
 import time
@@ -187,7 +188,7 @@ def test_job_command_dev_and_frozen(jobs, monkeypatch):
     assert jobs.job_command("prepare", "p1", ["--x"])[1:] == ["--aicut-cli", "prepare", "p1", "--x"]
 
 
-def test_child_popen_flags(gui_server, jobs, monkeypatch):
+def test_child_popen_flags(gui_server, jobs, plain_attach, monkeypatch):
     seen = {}
 
     class FakePopen:
@@ -207,6 +208,7 @@ def test_child_popen_flags(gui_server, jobs, monkeypatch):
     for key, value in proctree.spawn_kwargs().items():  # 进程树的启动参数由 proctree 决定，不再写死
         assert seen[key] == value
     assert seen["env"]["PYTHONUNBUFFERED"] == "1"
+    assert len(plain_attach) == 1
 
 
 def test_child_popen_uses_proctree_spawn_kwargs_and_attaches(gui_server, jobs, monkeypatch):
@@ -314,18 +316,18 @@ def test_cancel_terminates_tree_then_kills_after_grace(gui_server, jobs, monkeyp
 
 def test_frozen_child_env_keeps_bundled_path_first(jobs, monkeypatch):
     monkeypatch.setattr(jobs.proc, "FROZEN", True)
-    monkeypatch.setenv("PATH", "/app/bin:/usr/bin")
-    assert jobs.child_env()["PATH"] == "/app/bin:/usr/bin"
+    monkeypatch.setenv("PATH", os.pathsep.join(["/app/bin", "/usr/bin"]))  # 分隔符：POSIX ':'、Windows ';'
+    assert jobs.child_env()["PATH"] == os.pathsep.join(["/app/bin", "/usr/bin"])
     monkeypatch.setattr(jobs.proc, "FROZEN", False)
     monkeypatch.setattr(jobs.sys, "platform", "darwin")
-    assert jobs.child_env()["PATH"].startswith("/opt/homebrew/bin:")
+    assert jobs.child_env()["PATH"].startswith("/opt/homebrew/bin" + os.pathsep)
 
 
 def test_homebrew_path_prefix_kept_on_linux_but_not_windows(jobs, monkeypatch):
     monkeypatch.setattr(jobs.proc, "FROZEN", False)
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setattr(jobs.sys, "platform", "linux")
-    assert jobs.child_env()["PATH"].startswith("/opt/homebrew/bin:")  # 与改动前一致
+    assert jobs.child_env()["PATH"].startswith("/opt/homebrew/bin" + os.pathsep)  # 与改动前一致
     monkeypatch.setattr(jobs.sys, "platform", "win32")
     assert "/opt/homebrew/bin" not in jobs.child_env()["PATH"]
 
@@ -627,7 +629,7 @@ def test_thread_start_failure_unregisters_job(gui_server, jobs, monkeypatch):
     assert jobs.JOBS == {} and jobs.active_job() is None  # 互斥已释放
 
 
-def test_reader_exception_reaps_child_and_fails_job(gui_server, jobs, monkeypatch):
+def test_reader_exception_reaps_child_and_fails_job(gui_server, jobs, plain_attach, monkeypatch):
     closed = {}
 
     class Out:
@@ -656,6 +658,7 @@ def test_reader_exception_reaps_child_and_fails_job(gui_server, jobs, monkeypatc
     job_id = jobs.start_job("p1", "build")
     assert wait_for(lambda: jobs.JOBS[job_id]["status"] == "failed")
     assert closed == {"stdout": True, "waited": True}
+    assert len(plain_attach) == 1
     assert any("任务异常中断" in l for l in jobs.JOBS[job_id]["log"])
 
 

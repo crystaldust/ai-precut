@@ -13,6 +13,12 @@ from pipeline import jy_version
 
 APP = Path("/fake/剪映专业版.app")
 
+@pytest.fixture(autouse=True)
+def _mac_open_semantics(monkeypatch):
+    """本文件断言的是 Mac 的 `open` 命令行与 .app 检测；Windows 另有测试（test_opener_platform / test_jy_version）。"""
+    from pipeline import plat
+    monkeypatch.setattr(plat, "IS_WIN", False)
+
 
 class Clock:
     def __init__(self):

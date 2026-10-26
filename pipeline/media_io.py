@@ -131,7 +131,7 @@ def _write_marker(dst: Path, source: Path | str | None = None) -> None:
         meta["source"] = fp
     try:
         tmp.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, marker)
+        schema.atomic_replace(tmp, marker)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -153,7 +153,7 @@ def atomic_output(dst: Path, *, mark: bool = True,
         yield tmp
         if not tmp.is_file() or tmp.stat().st_size == 0:
             raise MediaError(f"没有产出有效文件：{dst.name}")
-        os.replace(tmp, dst)
+        schema.atomic_replace(tmp, dst)
         if mark:
             _write_marker(dst, source)
     finally:

@@ -12,12 +12,16 @@ import subprocess
 import time
 from pathlib import Path
 
+from pipeline import plat
+
 ROOT = Path(__file__).resolve().parent.parent   # 冻结版里是 _MEIPASS，spec 把模板放在 research/ 下
 VERIFIED_VERSION = "11.0.0"     # 模板来源，也是写进草稿的 platform.app_version
 VERIFIED_SERIES = "11.0"
 TEMPLATE = ROOT / "research" / f"base_template_{VERIFIED_SERIES}.json"
 APP_CANDIDATES = (Path("/Applications/VideoFusion-macOS.app"),
                   Path.home() / "Applications/VideoFusion-macOS.app")
+# Windows 剪映 exe 候选（相对 %LOCALAPPDATA%）。未经真机验证：找不到时「打开剪映」按钮本来就不显示。
+WIN_EXE_CANDIDATES_REL = (Path("JianyingPro/Apps/JianyingPro.exe"), Path("JianyingPro/JianyingPro.exe"))
 BUNDLE_ID = "com.lemon.lvpro"   # 剪映专业版 Mac 的 bundle id（与 to_jianying 一致）
 MDFIND_TIMEOUT_S = 3            # Spotlight 查询最多等几秒，超时当作没找到
 MDFIND_QUERY = f"kMDItemCFBundleIdentifier == '{BUNDLE_ID}'"
@@ -79,13 +83,28 @@ def _best(apps, roots) -> Path | None:
     return min(ranked, key=lambda x: x[0])[1] if ranked else None  # min 稳定：同级取先出现的
 
 
-def find_app(candidates=APP_CANDIDATES, runner=subprocess.run, roots=APP_ROOTS) -> Path | None:
+def win_candidates(env=None, home=None) -> tuple[Path, ...]:
+    """Windows 剪映 exe 的候选路径（%LOCALAPPDATA% 下，缺失时退回 home/AppData/Local）。"""
+    base = plat.local_appdata(env=env, home=home)
+    return tuple(base / rel for rel in WIN_EXE_CANDIDATES_REL)
+
+
+def _win_find() -> Path | None:
+    return next((p for p in win_candidates() if p.is_file()), None)
+
+
+def find_app(candidates=None, runner=subprocess.run, roots=APP_ROOTS) -> Path | None:
     """本机剪映专业版的 .app 路径（KI-98）：先看固定位置，再用 Spotlight 按 bundle id 找；都没有 → None。
 
     不写死单一路径，但任何来源的路径都必须：解析符号链接后位于 roots（/Applications、~/Applications、
     /System/Applications）之内、是真实目录、Info.plist 的 bundle id 对得上；多个时优先靠前的目录。
     runner 可注入，测试不会碰真实系统。
+    Windows（不显式传 candidates 时）：只看 win_candidates() 里存在的 exe，不跑 mdfind。
     """
+    if candidates is None:
+        if plat.IS_WIN:
+            return _win_find()
+        candidates = APP_CANDIDATES
     return _best(candidates, roots) or _best(_spotlight_apps(runner), roots)
 
 
@@ -113,6 +132,8 @@ def installed_version(candidates=None) -> str | None:
     不传 candidates：用 cached_find() 的结果（含 Spotlight，有缓存）；显式传候选路径时只看这些路径。
     """
     if candidates is None:
+        if plat.IS_WIN:  # 不读 exe 版本资源；只影响非阻断的兼容提示
+            return None
         located = cached_find()
         candidates = [located] if located else []
     for app in candidates:

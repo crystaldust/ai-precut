@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from pipeline import pyver
+from pipeline import plat, pyver
 
 JY_PACKAGE = "pyJianYingDraft"
 JY_VERSION = "0.3.1"                       # 与 uv.lock 一致（tests/test_jy_env 守着）
@@ -40,14 +40,15 @@ def available_here() -> bool:
 def _installed_version(py: Path, runner) -> str:
     try:
         r = runner([str(py), "-c", VERSION_PROBE], capture_output=True, text=True,
-                   timeout=VERSION_PROBE_TIMEOUT_S)
+                   encoding="utf-8", errors="replace", timeout=VERSION_PROBE_TIMEOUT_S, **plat.NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return ""
     return (r.stdout or "").strip() if r.returncode == 0 else ""
 
 
 def _pip_install(py: Path, runner) -> None:
-    r = runner([str(py), "-m", "pip", "install", "-q", JY_PIN], capture_output=True, text=True)
+    r = runner([str(py), "-m", "pip", "install", "-q", JY_PIN], capture_output=True, text=True,
+                 encoding="utf-8", errors="replace", **plat.NO_WINDOW)
     if r.returncode != 0:
         raise JyEnvError(f"安装 pyJianYingDraft 失败：{(r.stderr or '')[-ERR_TAIL:]}")
 
@@ -66,7 +67,8 @@ def ensure(venv: Path, *, runner=subprocess.run, base_python: str = sys.executab
     else:
         print(f"[·] {CREATING.format(venv=venv)}")
     Path(venv).parent.mkdir(parents=True, exist_ok=True)
-    r = runner([base_python, "-m", "venv", "--clear", str(venv)], capture_output=True, text=True)
+    r = runner([base_python, "-m", "venv", "--clear", str(venv)], capture_output=True, text=True,
+               encoding="utf-8", errors="replace", **plat.NO_WINDOW)
     if r.returncode != 0:
         raise JyEnvError(f"创建 {venv} 失败：{(r.stderr or '')[-ERR_TAIL:]}")
     _pip_install(py, runner)

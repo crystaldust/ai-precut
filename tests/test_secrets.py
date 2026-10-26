@@ -4,6 +4,7 @@ import stat
 import pytest
 
 from pipeline import secrets
+from platform_marks import IS_POSIX, posix_only
 
 
 def test_mask_keeps_edges():  # KI-67：规格变更——18 位只留后 4，短 Key 连长度也不暴露
@@ -72,7 +73,8 @@ def test_file_backend_roundtrip(file_env):
     assert secrets.get("mediakit") == "AKLTtest123456789"
     cred = file_env / "credentials.json"
     assert cred.exists()
-    assert oct(stat.S_IMODE(cred.stat().st_mode)) == oct(0o600)
+    if IS_POSIX:  # Windows 没有 POSIX 权限位
+        assert oct(stat.S_IMODE(cred.stat().st_mode)) == oct(0o600)
     secrets.delete("mediakit")
     assert secrets.get("mediakit") is None
 
@@ -102,6 +104,7 @@ def test_status_masks(file_env):
 
 
 # ---------------------------------------------------------------- M4 审查修复 2（LOW-10，KI-28 的创建权限部分）
+@posix_only("临时凭证文件 0600 权限位")
 def test_cred_temp_file_created_0600_with_unique_name(file_env, monkeypatch):
     import os
     import stat as st
@@ -161,6 +164,7 @@ def test_delete_ok_when_gone(file_env):
 
 
 # ---------------------------------------------------------------- KI-28：共享目录不 chmod；删除时屏蔽旧版文件
+@posix_only("目录 / 文件权限位")
 def test_existing_shared_dir_mode_untouched(file_env):
     file_env.mkdir(parents=True)
     file_env.chmod(0o755)
@@ -169,6 +173,7 @@ def test_existing_shared_dir_mode_untouched(file_env):
     assert stat.S_IMODE((file_env / "credentials.json").stat().st_mode) == 0o600
 
 
+@posix_only("目录权限位 0700")
 def test_new_config_dir_is_0700(file_env):
     secrets.set("mediakit", "AKLTtest123456789")
     assert stat.S_IMODE(file_env.stat().st_mode) == 0o700

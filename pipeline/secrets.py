@@ -17,7 +17,7 @@ import stat
 import uuid
 from pathlib import Path
 
-from pipeline import schema
+from pipeline import plat, schema
 
 SERVICE = "ai-cut"
 PROVIDERS = ("mediakit", "deepseek")
@@ -54,7 +54,7 @@ MASK_SHORT = "********"     # 更短：固定 8 个星号，连长度也不暴�
 def _config_dir() -> Path:
     if custom := os.environ.get("AI_CUT_CONFIG_DIR"):
         return Path(custom).expanduser()
-    return Path.home() / ".config" / "ai-cut"
+    return plat.config_dir()
 
 
 def config_dir() -> Path:
@@ -108,7 +108,7 @@ def _write_file(data: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(json.dumps(data, ensure_ascii=False, indent=2))
-        os.replace(tmp, path)
+        schema.atomic_replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

@@ -4,6 +4,7 @@ import sys
 
 import pytest
 
+IS_POSIX = sys.platform != "win32"  # 用于「同一测试里只有某条断言是 POSIX 语义」的场合
 POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="POSIX 语义（进程组 / 信号 / ps）")
 WIN_ONLY = pytest.mark.skipif(sys.platform != "win32", reason="Windows 语义（Job Object / kernel32）")
 

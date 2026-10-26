@@ -8,6 +8,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
+# 与 pipeline.plat.NO_WINDOW 同义；本文件要能被旧解释器导入，不 import plat
+NO_WINDOW = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 MIN_PYTHON = (3, 11)
 TOO_OLD = ("AI 粗剪需要 Python {need} 或更新版本，当前是 {found}（{exe}）。\n"
            "请在仓库根用 `uv run python …` 运行（uv 会准备好合适的 Python），或安装 Python {need}+。")
@@ -32,7 +34,8 @@ def supports_safe_path(python: str, runner=subprocess.run) -> bool:
     if python == sys.executable:
         return sys.version_info[:2] >= MIN_PYTHON
     try:
-        r = runner([python, "-c", PROBE], capture_output=True, text=True, timeout=PROBE_TIMEOUT_S)
+        r = runner([python, "-c", PROBE], capture_output=True, text=True,
+                   encoding="utf-8", errors="replace", timeout=PROBE_TIMEOUT_S, **NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return False
     return r.returncode == 0 and (r.stdout or "").strip() == "True"

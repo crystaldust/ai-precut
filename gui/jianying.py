@@ -2,7 +2,7 @@
 """剪辑台 · 剪映专业版检测（KI-98）：不写死路径，没装就不显示「打开剪映」。
 
 检测与进程内缓存在 pipeline/jy_version（installed_version 与本模块共用同一份缓存）；
-这里只是剪辑台的入口。打开用 gui/opener.run_open。
+这里只是剪辑台的入口。打开用 gui/opener.open_app。
 """
 from __future__ import annotations
 

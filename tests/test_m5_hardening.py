@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from pipeline import applog, cloud, diagnostics, llm, secrets
+from platform_marks import IS_POSIX, posix_only
 
 KEY = "AKLTsecretkey123456"
 
@@ -171,11 +172,13 @@ def test_log_dir_and_files_private(tmp_path, monkeypatch):
     for i in range(30):
         log.info("行 %d %s", i, "x" * 20)
     _flush()
-    assert _mode(d) == 0o700
     files = list(d.iterdir())
-    assert len(files) >= 2 and all(_mode(f) == 0o600 for f in files)
+    assert len(files) >= 2
+    if IS_POSIX:  # Windows 没有 POSIX 权限位
+        assert _mode(d) == 0o700 and all(_mode(f) == 0o600 for f in files)
 
 
+@posix_only("诊断包 0600 权限位")
 def test_diagnostics_zip_private(tmp_path, monkeypatch):
     monkeypatch.setattr(diagnostics, "ffmpeg_info", lambda: None)
     assert _mode(diagnostics.build_bundle(tmp_path, None)) == 0o600

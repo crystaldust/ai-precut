@@ -113,8 +113,8 @@ def test_find_app_none_when_spotlight_unavailable_or_empty(runner):
 
 # ---- 安全：只信任系统应用目录里、bundle id 对得上的 .app
 def test_default_roots_are_application_folders_only():
-    names = {str(r) for r in jv.APP_ROOTS}
-    assert {"/Applications", "/System/Applications", str(Path.home() / "Applications")} == names
+    names = set(jv.APP_ROOTS)
+    assert {Path("/Applications"), Path("/System/Applications"), Path.home() / "Applications"} == names
 
 
 def test_find_app_rejects_app_outside_trusted_roots(tmp_path):
@@ -176,3 +176,47 @@ def test_cached_find_refresh_and_expiry(monkeypatch):
     t[0] += jv.CACHE_S + 1
     jv.cached_find(now=lambda: t[0])
     assert len(calls) == 3
+
+
+# ---- Windows（M16 Task 4）：在 Mac 上 monkeypatch plat.IS_WIN 测纯逻辑
+@pytest.fixture
+def as_windows(monkeypatch, tmp_path):
+    from pipeline import plat
+    monkeypatch.setattr(plat, "IS_WIN", True)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    jv.reset_cache()
+    yield tmp_path / "Local"
+    jv.reset_cache()
+
+
+def test_windows_exe_candidates_under_localappdata(as_windows):
+    assert jv.win_candidates() == (as_windows / "JianyingPro/Apps/JianyingPro.exe",
+                                   as_windows / "JianyingPro/JianyingPro.exe")
+
+
+def test_windows_find_app_returns_first_existing_exe(as_windows):
+    second = as_windows / "JianyingPro/JianyingPro.exe"
+    second.parent.mkdir(parents=True)
+    second.write_bytes(b"MZ")
+    assert jv.find_app() == second
+    first = as_windows / "JianyingPro/Apps/JianyingPro.exe"
+    first.parent.mkdir(parents=True)
+    first.write_bytes(b"MZ")
+    assert jv.find_app() == first
+
+
+def test_windows_find_app_none_when_not_installed_and_never_runs_mdfind(as_windows, monkeypatch):
+    monkeypatch.setattr(jv.subprocess, "run", lambda *a, **k: pytest.fail("Windows 上不该跑 mdfind"))
+    assert jv.find_app() is None
+
+
+def test_windows_directory_named_like_exe_is_not_an_app(as_windows):
+    (as_windows / "JianyingPro/JianyingPro.exe").mkdir(parents=True)
+    assert jv.find_app() is None
+
+
+def test_windows_installed_version_is_none_without_explicit_candidates(as_windows):
+    exe = as_windows / "JianyingPro/JianyingPro.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    assert jv.installed_version() is None  # 不读 exe 版本资源：只影响非阻断的兼容提示

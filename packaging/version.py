@@ -9,9 +9,12 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
+# 与 pipeline.plat.NO_WINDOW 同义；本文件按路径加载、不 import pipeline
+NO_WINDOW = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 BUILD_ENV = "AICUT_BUILD_NUMBER"
 GIT_TIMEOUT_S = 30
 NO_BUILD_NUMBER = ("拿不到构建号：设置环境变量 {env}（正整数），或在 git 仓库里构建（{detail}）")
@@ -35,7 +38,7 @@ def build_number(root: Path, *, env=os.environ, run=subprocess.run) -> str:
         return value
     try:
         r = run(["git", "rev-list", "--count", "HEAD"], cwd=str(root), capture_output=True,
-                text=True, timeout=GIT_TIMEOUT_S)
+                text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_S, **NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as exc:
         raise RuntimeError(NO_BUILD_NUMBER.format(env=BUILD_ENV, detail=exc)) from exc
     if r.returncode != 0 or (value := _positive((r.stdout or "").strip())) is None:

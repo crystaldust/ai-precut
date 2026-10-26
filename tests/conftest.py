@@ -44,6 +44,21 @@ def _encoder_ok(monkeypatch):
 
 
 @pytest.fixture
+def plain_attach(monkeypatch):
+    """FakePopen 没有真实进程句柄（Windows 的 proctree.attach 要读 popen._handle）：这些用例只关心任务状态机，
+    进程树用最朴素的 Tree(pid)；attach 与 Job Object 本身由 test_proctree 覆盖。"""
+    from gui import jobs
+    from pipeline import proctree
+    attached = []
+
+    def attach(popen):
+        attached.append(popen)
+        return proctree.Tree(popen.pid)
+    monkeypatch.setattr(jobs.proctree, "attach", attach)
+    return attached  # 用例应断言它非空：确认任务确实走了 proctree.attach
+
+
+@pytest.fixture
 def no_keys():
     """显式声明「本测试不带任何 Key」；隔离本身已由 _isolate_secrets 统一完成。"""
     from pipeline import secrets

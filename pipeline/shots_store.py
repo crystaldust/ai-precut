@@ -160,14 +160,6 @@ def _seq_of(path: Path) -> int:
     return int(m.group(1)) if m else 0
 
 
-def _fsync_path(path: Path) -> None:
-    fd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-
-
 def backup(pdir: Path, reason: str) -> Path | None:
     """把现有 shots.json 原样拷到 work/shots_backups/<序号>-<UTC 时间>-<原因>.json 并落盘。
 
@@ -183,8 +175,8 @@ def backup(pdir: Path, reason: str) -> Path | None:
     seq = max((_seq_of(p) for p in existing), default=0) + 1
     dest = folder / f"{seq:06d}-{_utc_stamp()}-{reason}.json"
     shutil.copyfile(src, dest)
-    _fsync_path(dest)
-    _fsync_path(folder)
+    schema.fsync_file(dest)
+    schema.fsync_dir(folder, strict=True)  # POSIX 上失败照常抛；Windows 无法 fsync 目录
     for old in sorted(existing + [dest], key=_seq_of)[:-BACKUP_KEEP]:
         old.unlink(missing_ok=True)
     return dest

@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from pipeline import schema, secrets
+from pipeline import plat, schema, secrets
 
 ROOT_LOGGER = "aicut"
 LOG_DIR_ENV = "AI_CUT_LOG_DIR"
@@ -44,6 +44,13 @@ _PATTERNS = (
 # 绝对路径（含 ~/）只留最后一段文件名；URL（前面是 :/）与相对路径不动
 _ABS_PATH = re.compile(
     r"(?<![\w.:/~\\])~?/(?:[^\s/'\"<>|:;，；：、（）()\[\]]+/)+([^\s/'\"<>|:;，；：、（）()\[\]]+)")
+# 以下两条只在 Windows 上生效（plat.IS_WIN），Mac 的脱敏结果与改动前逐字一致。
+# 分隔符一律 [\\/]+：JSON 转义后的 C:\\Users\\bob 也认。各量词的字符类互不重叠，匹配是线性的。
+_WIN_USER_DIR = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:[\\/]+Users[\\/]+[^\\/\r\n]+", re.I)  # → ~（用户名可含中文 / 空格）
+# Windows 绝对路径（盘符开头，或上一步脱敏出来的 ~\）只留最后一段文件名
+_WIN_ABS_PATH = re.compile(
+    r"(?<![\w.:/~\\])(?:[A-Za-z]:[\\/]+|~\\+)(?:[^\s\\/'\"<>|:;，；：、（）()\[\]]+[\\/]+)*"
+    r"([^\s\\/'\"<>|:;，；：、（）()\[\]]+)")
 _SECRETS: set[str] = set()
 _LOCK = threading.Lock()
 _SETUP_LOCK = threading.Lock()
@@ -61,7 +68,7 @@ def log_dir() -> Path:
     """日志目录（不创建）。"""
     if custom := os.environ.get(LOG_DIR_ENV):
         return Path(custom).expanduser()
-    return Path.home() / "Library" / "Logs" / APP_LOG_DIRNAME
+    return plat.log_dir()
 
 
 def current_log_file() -> Path | None:
@@ -87,7 +94,8 @@ def register_known_secrets() -> None:
 
 def strip_paths(text: str) -> str:
     """绝对路径 → 文件名（尽力而为：含空格的路径只能截掉空格前那段）。"""
-    return _ABS_PATH.sub(r"\1", text)
+    text = _ABS_PATH.sub(r"\1", text)
+    return _WIN_ABS_PATH.sub(r"\1", text) if plat.IS_WIN else text
 
 
 def redact(text: str) -> str:
@@ -97,7 +105,7 @@ def redact(text: str) -> str:
         text = text.replace(value, secrets.mask(value))
     for pattern, repl in _PATTERNS:
         text = pattern.sub(repl, text)
-    return text
+    return _WIN_USER_DIR.sub("~", text) if plat.IS_WIN else text
 
 
 class RedactFilter(logging.Filter):
@@ -130,7 +138,8 @@ def _ours(logger: logging.Logger) -> list[logging.Handler]:
 def _private_open(self) -> object:
     """日志文件一创建就是 0600（不经过默认权限）；已有文件也收紧。"""
     fd = os.open(self.baseFilename, os.O_WRONLY | os.O_CREAT | os.O_APPEND, FILE_MODE)
-    os.fchmod(fd, FILE_MODE)
+    if hasattr(os, "fchmod"):  # Windows 没有 POSIX 权限位，没有 os.fchmod
+        os.fchmod(fd, FILE_MODE)
     return os.fdopen(fd, "a", encoding=self.encoding, errors=self.errors)
 
 

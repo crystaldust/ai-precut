@@ -81,7 +81,7 @@ def test_start_job_unknown_task_leaves_no_ghost_job(gui_server):
     assert gui_server.module.JOBS == before
 
 
-def test_start_job_select_runs_aicut_select(gui_server, monkeypatch):
+def test_start_job_select_runs_aicut_select(gui_server, plain_attach, monkeypatch):
     seen = {}
 
     class FakePopen:
@@ -104,6 +104,7 @@ def test_start_job_select_runs_aicut_select(gui_server, monkeypatch):
     while srv.JOBS[job]["status"] == "running" and time.time() < deadline:
         time.sleep(0.01)
     assert srv.JOBS[job]["status"] == "done"
+    assert len(plain_attach) == 1  # 子进程确实被放进了进程树
     assert seen["argv"][2:] == ["select", "p1", "--target", "300"]
     assert seen["stdin"] is srv.subprocess.DEVNULL  # 子进程里 input() 不能卡住任务
 

@@ -23,7 +23,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from pipeline import applog, consent, proc, secrets
+from pipeline import applog, consent, plat, proc, schema, secrets
 
 BUNDLE_PREFIX = "剪辑台诊断-"
 SAFE_WORK_FILES = ("timings.json", "failed.json", "asr_task.json")
@@ -33,12 +33,16 @@ MIN_HOME_LEN = 2  # 主目录是 "/" 时不做替换，否则整份文本都被�
 FAILED_FIELDS = ("stage", "error", "at")  # failed.json 只带这些（context 里可能有路径）
 BUNDLE_MODE = 0o600
 FFMPEG_TIMEOUT_S = 5
+BUILD_INFO_FILE = "build_info.json"  # 打包时写入（version / build / commit）
 MAX_NAME_TRIES = 100
 
 
 def app_version() -> str:
-    """打包版读 Info.plist，开发版读 pyproject.toml；都失败 → unknown。"""
+    """打包版读 Info.plist（Windows：build_info.json），开发版读 pyproject.toml；都失败 → unknown。"""
     try:
+        if proc.FROZEN and plat.IS_WIN:
+            info = json.loads(proc.resource_path(BUILD_INFO_FILE).read_text(encoding="utf-8"))
+            return str(info["version"])
         if proc.FROZEN:
             plist = Path(sys.executable).resolve().parents[1] / "Info.plist"
             with open(plist, "rb") as f:
@@ -56,9 +60,11 @@ def ffmpeg_info() -> dict | None:
         return None
     try:
         version = subprocess.run([ff, "-hide_banner", "-version"], capture_output=True,
-                                 text=True, timeout=FFMPEG_TIMEOUT_S).stdout
+                                 text=True, encoding="utf-8", errors="replace",
+                                 timeout=FFMPEG_TIMEOUT_S, **plat.NO_WINDOW).stdout
         license_text = subprocess.run([ff, "-hide_banner", "-L"], capture_output=True,
-                                      text=True, timeout=FFMPEG_TIMEOUT_S).stdout
+                                      text=True, encoding="utf-8", errors="replace",
+                                      timeout=FFMPEG_TIMEOUT_S, **plat.NO_WINDOW).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     return {"path": ff, "version": (version.splitlines() or [""])[0],
@@ -188,7 +194,7 @@ def build_bundle(out_dir: Path, project_dir: Path | None = None) -> Path:
             if project_dir is not None:
                 _write_project(z, Path(project_dir))
         os.chmod(part, BUNDLE_MODE)  # 只有自己能读
-        os.replace(part, target)
+        schema.atomic_replace(part, target)
     finally:
         part.unlink(missing_ok=True)
     applog.get("diagnostics").info("诊断包已生成：%s", target.name)
