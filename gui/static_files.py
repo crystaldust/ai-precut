@@ -7,7 +7,7 @@ calibrate 页面删除。
 """
 STATIC_FILES = frozenset({
     "index.html", "app.css",
-    "common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
+    "common.js", "platform.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
     "shortcuts.js", "cliplist.js",
     "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js", "step-criteria.js",
     "criteria-analysis.js", "criteria-pending.js",

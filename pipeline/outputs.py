@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from pipeline import exclusions, export_draft, fingerprints, media_io, project_lock, schema, shots_store
+from pipeline import exclusions, export_draft, fingerprints, media_io, plat, project_lock, schema, shots_store
 
 PACKAGING = "生成草稿并打包（媒体要拷一遍，几分钟）…"
 PREVIEW_DIR = "preview"                     # output/preview：当前分镜表的预览片暂存（不是版本）
@@ -26,6 +26,7 @@ EXPORT_KINDS = ("mac", "windows")
 PREVIEW_STALE = "分镜表在生成预览片之后改过了：先在「⑤ 看结果」重新生成预览片，再导出"
 PREVIEW_NONE = "还没有当前分镜表的预览片：先在「⑤ 看结果」生成预览片"
 ALREADY_IN_JIANYING = "这一版已经在 Mac 剪映里：{draft}"  # 剪映不允许同名草稿（KI-59）
+ALREADY_IN_JIANYING_WIN = "这一版已经在 Windows 剪映里：{draft}"
 MANUAL_REPLACED = "已用新的 AI 选段覆盖手动分镜表，原表备份在 work/shots_backups/{path}"
 MANUAL_BUSY = "选段已更新，但分镜表正忙，没能覆盖手动分镜表（你的修改还在）；请稍后再选一次"
 MANUAL_BACKUP_FAILED = "手动分镜表备份失败（{exc}），没有覆盖它（你的修改还在）；选段本身已更新"
@@ -197,6 +198,10 @@ def _replace_into(tmp: Path, vdir: Path, names: list[str], stamp: dict | None) -
     return {"replaced": True, "old_mac": mac.get("draft") if mac else None}
 
 
+def already_in_jianying(draft: str) -> str:
+    return (ALREADY_IN_JIANYING_WIN if plat.IS_WIN else ALREADY_IN_JIANYING).format(draft=draft)
+
+
 def read_exports(vdir: Path) -> dict | None:
     """这一版真正导出过什么；没有 export.json（改版前生成）或读不出 → None（= legacy）。"""
     try:
@@ -258,7 +263,7 @@ def build_args(pdir: Path, body: dict, cfg: dict) -> list[str]:
     if version := matching_version(pdir, fingerprints.preview_inputs(pdir, cfg)):
         mac = (read_exports(Path(pdir) / "output" / version) or {}).get("mac")
         if target == "mac" and mac:
-            raise ValueError(ALREADY_IN_JIANYING.format(draft=mac.get("draft", version)))
+            raise ValueError(already_in_jianying(mac.get("draft", version)))
         extra += ["--version", version]
     return [*extra, *(["--windows", "--no-draft"] if target == "windows" else [])]
 

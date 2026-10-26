@@ -9,13 +9,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from pipeline import applog, consent, encode, outputs, readiness, schema, secrets, to_jianying
+from pipeline import applog, consent, encode, outputs, plat, readiness, schema, secrets, to_jianying
 
 KEY_RE = re.compile(r"[\x21-\x7e]{8,512}")  # 可打印 ASCII、无空白
 
 NEED_CONSENT_MSG = "请先阅读并确认数据外发说明"
 NEED_KEYS_MSG = "还没有填写 API Key：{names}。请在「更多 → 设置 · API Key」里填写"
 JIANYING_RUNNING_MSG = "剪映正在运行，请先完全退出（Cmd+Q）再导出到 Mac 剪映"
+JIANYING_RUNNING_MSG_WIN = "剪映正在运行，请先关闭剪映窗口再导出到 Windows 剪映"
 EXPORT_BLOCKED_NEED = "export_blocked"
 UNKNOWN_PROVIDER_MSG = "未知的 Key 类型"
 BAD_KEY_MSG = "Key 格式不对：应为 8–512 位、不含空格的英文字母 / 数字 / 符号"
@@ -59,6 +60,10 @@ def check_questions_ready(_pdir: Path) -> None:
             names=secrets.PROVIDER_LABELS["deepseek"]["label"]), ["deepseek"])
 
 
+def jianying_running_msg() -> str:
+    return JIANYING_RUNNING_MSG_WIN if plat.IS_WIN else JIANYING_RUNNING_MSG
+
+
 def check_build_ready(_pdir: Path, body: dict) -> None:
     """导出到 Mac 剪映：剪映开着就先停（E19），免得切片、晋升都做完才在装草稿时失败。"""
     if body.get("target") != "mac":
@@ -68,7 +73,7 @@ def check_build_ready(_pdir: Path, body: dict) -> None:
     except to_jianying.InstallError as exc:  # Windows 上 tasklist 失败：无法确认 = 当作开着，别往下做
         raise PrepareBlocked("close_jianying", str(exc)) from exc
     if running:
-        raise PrepareBlocked("close_jianying", JIANYING_RUNNING_MSG)
+        raise PrepareBlocked("close_jianying", jianying_running_msg())
 
 
 def check_export_ready(pdir: Path, body: dict) -> None:

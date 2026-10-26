@@ -189,6 +189,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | 文件 | 管什么 |
 |---|---|
 | `common.js` | 必须最先加载：`esc()` / `num()` 转义、同源 `fetch` 带 cookie、`data-act` 事件委托（`ACTIONS`） |
+| `platform.js` | 平台文案（M16）：`IS_WIN`（按 UA，无 navigator 当 Mac）、`platformCopy(mac, win)`；须先于 jobs / support / step-export |
 | `base.js` | 全局 `state`、`api()` / `postJson()`、`toast`、格式化、弹窗 |
 | `jobs.js` | 任务：启动 / 轮询 / 取消 / 重试、顶栏任务胶囊、启动类按钮置灰 |
 | `settings.js` | 首次使用的数据外发告知与 Key、设置页 |

@@ -44,8 +44,8 @@ var until = async (cond, n = 200) => { for (let i = 0; i < n && !cond(); i++) aw
 """
 
 
-def in_export(script, routes=None, *, state=None, setup=""):
+def in_export(script, routes=None, *, state=None, setup="", ua=None):
     """打开项目、进入 ⑥，再跑 script。state 覆盖 /api/state 的字段。"""
     st = {**EXPORT_STATE, **(state or {})}
     body = "(async () => { await selectProject('新项目'); await go('export'); await enterExport();" + script + " })()"
-    return run_app(body, routes={**EXPORT_ROUTES, "GET /api/state": st, **(routes or {})}, setup=SETTLE + setup)
+    return run_app(body, routes={**EXPORT_ROUTES, "GET /api/state": st, **(routes or {})}, setup=SETTLE + setup, ua=ua)

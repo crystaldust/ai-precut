@@ -4,6 +4,7 @@
 // 只在调用时才用到，所以本文件可以先于它们加载。
 
 /* 界面文案：产品可直接改这里 */
+// export 任务只是「生成 Windows 剪映包」的 zip 导出；Windows 上该按钮被隐藏，所以这几条文案提到「Windows 剪映包」也不会露面。
 const JOB_TITLES = {prepare:'正在分析', build:'正在导出', select:'正在重新选段',
                     export:'正在生成 Windows 剪映包', questions:'正在重新出题', preview:'正在生成预览片'};
 const JOB_LABELS = {prepare:'分析', build:'导出', select:'重新选段',
@@ -38,7 +39,7 @@ const COPY_CHIP_FAILED = '失败 · 查看';
 const COPY_CHIP_CANCELLED = '已取消 · 查看';
 const COPY_CHIP_WARNED = '完成，有提示 · 查看';
 const COPY_BUSY = '正在{label}，完成后再试';
-const COPY_NEED_TITLE = '这台 Mac 暂时不能分析';  // KI-97：任务前置检查不通过且不是告知 / Key（如编码器不可用）
+const COPY_NEED_TITLE = platformCopy('这台 Mac 暂时不能分析', '这台电脑暂时不能分析');  // KI-97：任务前置检查不通过且不是告知 / Key（如编码器不可用）
 const JOB_POLL_MS = 900;
 const JOB_POLL_FIRST_MS = 500;
 const JOB_POLL_RETRY_MS = 1500;

@@ -7,27 +7,30 @@ const COPY_EXPORT_CURRENT = '当前分镜表 {n} 镜 · {dur} · 预览片 {at}'
 const COPY_EXPORT_CURRENT_NO_PREVIEW = '当前分镜表 {n} 镜 · {dur} · 还没有预览片';
 const COPY_EXPORT_AS_NEW = '会导出为 {v}（版本号自动 +1，不会覆盖旧版）';
 const COPY_EXPORT_AS_SAME = '当前分镜表已经是 {v}，再导出另一种导出物不会新开版本';
-const COPY_EXPORT_MAC = '导出到 Mac 剪映';
+const COPY_EXPORT_MAC = platformCopy('导出到 Mac 剪映', '导出到 Windows 剪映');
 const COPY_EXPORT_WIN = '生成 Windows 剪映包';
-const COPY_IN_JIANYING = '已在 Mac 剪映里：{draft}';
+const COPY_IN_JIANYING = platformCopy('已在 Mac 剪映里：{draft}', '已在 Windows 剪映里：{draft}');
 const COPY_NO_JIANYING = '没检测到剪映专业版，装好后在剪映的本地草稿里找「{draft}」';
 const COPY_OPEN_JIANYING = '打开剪映';
 const COPY_WIN_USAGE = '拷到 Windows 解压，双击 INSTALL.bat';
 const COPY_WIN_DONE = '已生成 {name}（{mb} MB）';
-const COPY_REVEAL = '在访达中显示';
+const COPY_REVEAL = platformCopy('在访达中显示', '在文件资源管理器中显示');
 const COPY_HISTORY = '历史版本';
 const COPY_CURRENT_TAG = '当前';
 const COPY_EXPORT_EMPTY = '还没有导出过';
 const COPY_VER_FACTS = '{at} · {n} 镜 · {dur}';
-const COPY_MAC_DRAFT = 'Mac 剪映：{draft}';
-const COPY_MAC_DRAFT_LEGACY = 'Mac 剪映草稿名：{draft}（改版前生成，未记录是否导入过）';
+const COPY_MAC_DRAFT = platformCopy('Mac 剪映：{draft}', 'Windows 剪映：{draft}');
+const COPY_MAC_DRAFT_LEGACY = platformCopy('Mac 剪映草稿名：{draft}（改版前生成，未记录是否导入过）',
+                                           'Windows 剪映草稿名：{draft}（改版前生成，未记录是否导入过）');
 const COPY_NO_PREVIEW = '这一版只有工程，没有预览片';
 const COPY_BLOCKED_FALLBACK = '这一版含 {n} 段已标为不可用的片段，不能生成 Windows 剪映包';
 const COPY_JY_RUNNING_TITLE = '剪映正在运行';
-const COPY_JY_RUNNING_BODY = '导出到 Mac 剪映前请先退出剪映（⌘Q），否则剪映会覆盖草稿库。';
+const COPY_JY_RUNNING_BODY = platformCopy('导出到 Mac 剪映前请先退出剪映（⌘Q），否则剪映会覆盖草稿库。',
+                                          '导出到 Windows 剪映前请先关闭剪映窗口，否则剪映会覆盖草稿库。');
 const COPY_JY_RUNNING_GO = '我已关掉，继续';
 const COPY_EXPORT_CANCEL = '取消';
 const COPY_NO_TIME = '—';
+const SHOW_WIN_PACKAGE = !IS_WIN;   // Windows 上只有「导出到 Windows 剪映」，不提供 zip 包（后端能力保留）
 const VERSION_NUM = /^v(\d+)$/;
 
 const jianyingUi = {again: null};
@@ -74,7 +77,7 @@ function currentExportHtml(){
   const facts = fillCopy(at ? COPY_EXPORT_CURRENT : COPY_EXPORT_CURRENT_NO_PREVIEW,
                      {n: state.shots.length, dur: fmtLong(Math.max(0, Math.round(total))), at: fmtClock(at)});
   const as = cur ? fillCopy(COPY_EXPORT_AS_SAME, {v: cur.name}) : fillCopy(COPY_EXPORT_AS_NEW, {v: nextVersionName()});
-  const win = cur && isBlocked(cur) ? blockedNoteHtml(cur) : cur && cur.windows_zip ? windowsDoneHtml(cur, exportVersions().indexOf(cur)) : exportButton('exportWindows', COPY_EXPORT_WIN);
+  const win = !SHOW_WIN_PACKAGE ? '' : cur && isBlocked(cur) ? blockedNoteHtml(cur) : cur && cur.windows_zip ? windowsDoneHtml(cur, exportVersions().indexOf(cur)) : exportButton('exportWindows', COPY_EXPORT_WIN);
   return `<section class="ver x-cur"><h3>${esc(COPY_EXPORT_CURRENT_TITLE)} <span class="hint">${esc(facts)}</span></h3>
     <div class="m">${esc(as)}</div>
     <div class="ver-export">${macStateHtml(cur)}${win}</div>
@@ -114,6 +117,7 @@ function blockedNoteHtml(v){
   return `<div class="m blocked-note">${esc(v.blocked || fillCopy(COPY_BLOCKED_FALLBACK, {n: num(v.unusable_hits)}))}</div>`;
 }
 function windowsLineHtml(v, i){
+  if(!SHOW_WIN_PACKAGE) return '';
   if(isBlocked(v)) return blockedNoteHtml(v);
   const body = v.windows_zip ? windowsDoneHtml(v, i)
     : `<button class="ghost" data-act="exportVersion" data-i="${num(i)}" data-starts-job>${esc(COPY_EXPORT_WIN)}</button>`;

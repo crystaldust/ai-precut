@@ -6,7 +6,8 @@
 const COPY_DIAG_RUNNING = '正在生成诊断包…';
 // 导出前的一行说明（与 pipeline/diagnostics.py 文档里的保证一致）
 const COPY_DIAG_NOTICE = '诊断包含版本、阶段耗时和日志里的错误行，路径只留文件名、不含素材 / 文稿 / Key；发送前请自己打开看一眼';
-const COPY_DIAG_DONE = '诊断包 {name} 已保存到「{folder}」文件夹并在访达中选中，直接拖进微信发给开发者';
+const COPY_DIAG_DONE = platformCopy('诊断包 {name} 已保存到「{folder}」文件夹并在访达中选中，直接拖进微信发给开发者',
+                                    '诊断包 {name} 已保存到「{folder}」文件夹并在文件资源管理器中选中，直接拖进微信发给开发者');
 const COPY_DIAG_FOLDERS = {Downloads: '下载', Desktop: '桌面'};
 const COPY_ABOUT_TITLE = '关于 AI 粗剪 · 第三方许可';
 const COPY_ABOUT_VERSION = '版本 {v} · 本软件使用 FFmpeg（LGPL v2.1）等开源软件，许可全文如下';

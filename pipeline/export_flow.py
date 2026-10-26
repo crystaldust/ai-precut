@@ -13,15 +13,20 @@ from pathlib import Path
 from typing import Any
 
 from pipeline import (applog, build_documentary, clips, diskspace, exclusions, fingerprints, outputs,
-                      project_lock, review, schema, select)
+                      plat, project_lock, review, schema, select)
 
 TABLE_CHANGED_MSG = "分镜表在读取时被修改了，没有生成预览片；请重新点「生成预览片」"
 OVERWRITE_WARN = "{version} 已用新内容覆盖：剪映里的「{draft}」是旧内容，不会随之更新"
 OVERWRITE_REFUSED = ("{version} 的内容已经变了，不能再往剪映里装同名草稿「{draft}」（剪映不允许同名草稿）；"
                      "请生成新版本再导出到 Mac 剪映")
+OVERWRITE_REFUSED_WIN = OVERWRITE_REFUSED.replace("Mac 剪映", "Windows 剪映")
 DRAFT_RECORD_FAILED = "草稿已经装进剪映（{draft}），但记录导出信息失败：{exc}。请不要重复导出，到剪映里确认这份草稿即可"
 WINDOWS_RECORD_FAILED = "Windows 包已生成（{zip}），但记录导出信息失败：{exc}"
 RECORD_ERRORS = (OSError, ValueError, project_lock.Busy)  # ValueError 含 CorruptJSON
+
+
+def overwrite_refused(version: str, draft: str) -> str:
+    return (OVERWRITE_REFUSED_WIN if plat.IS_WIN else OVERWRITE_REFUSED).format(version=version, draft=draft)
 
 
 def current_shots(ops: Any, pdir: Path) -> list[dict]:
@@ -104,7 +109,7 @@ def _require_fresh(ops: Any, pdir: Path, c: dict) -> dict:
 def install_once(ops: Any, vdir: Path, draft_name: str) -> None:
     """这一版已经在 Mac 剪映里就不重装（剪映不允许同名草稿，KI-59）；装成功才记 export.json。"""
     if (outputs.read_exports(vdir) or {}).get("mac"):
-        ops.info(outputs.ALREADY_IN_JIANYING.format(draft=draft_name))
+        ops.info(outputs.already_in_jianying(draft_name))
         return
     with applog.stage(vdir.parent.parent / "work", "draft"):
         ops.install_draft(vdir, draft_name)
@@ -143,7 +148,7 @@ def build(ops: Any, pdir: Path, c: dict, args: Namespace) -> None:
     if res["old_mac"]:
         ops.warn(OVERWRITE_WARN.format(version=version, draft=res["old_mac"]))
         if not args.no_draft:
-            ops.die(OVERWRITE_REFUSED.format(version=version, draft=res["old_mac"]))
+            ops.die(overwrite_refused(version, res["old_mac"]))
     if not args.no_draft:
         install_once(ops, vdir, draft)
     if getattr(args, "windows", False):

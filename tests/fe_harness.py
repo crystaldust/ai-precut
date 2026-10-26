@@ -14,7 +14,7 @@ STATIC = Path(__file__).resolve().parent.parent / "gui" / "static"
 NODE = shutil.which("node")
 
 # index.html 里的加载顺序，不含最后的 main.js（它只负责启动，测试里手动调用 boot()）
-SCRIPTS = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
+SCRIPTS = ["common.js", "platform.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
            "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js", "step-criteria.js",
            "criteria-analysis.js", "criteria-pending.js", "reselect.js", "result-table.js", "result-unused.js",
            "step-result.js", "step-export.js", "export-compare.js", "app.js"]
@@ -22,7 +22,7 @@ SCRIPTS = ["common.js", "base.js", "jobs.js", "settings.js", "support.js", "side
 HARNESS = r"""
 const vm = require('vm');
 const fs = require('fs');
-const [files, routes, setup, script] = JSON.parse(process.argv[1]);
+const [files, routes, setup, script, ua] = JSON.parse(process.argv[1]);
 const els = {}, calls = [], timers = [], intervals = [], docListeners = {}, lists = {};
 function mkEl(sel, parent){
   let html = '';
@@ -98,6 +98,7 @@ const ctx = {
   fireDoc: (type, ev = {}) => (docListeners[type] || []).forEach(fn => fn(ev)),
 };
 ctx.window = ctx;
+if (ua !== null && ua !== undefined) ctx.navigator = typeof ua === 'object' ? ua : {userAgent: ua};  // 不传 = 没有 navigator（platform.js 当 Mac）
 vm.createContext(ctx);
 for (const f of files) vm.runInContext(fs.readFileSync(f, 'utf8'), ctx, {filename: f});
 if (setup) vm.runInContext(setup, ctx);
@@ -107,9 +108,9 @@ Promise.resolve(vm.runInContext(script, ctx)).then(out => {
 """
 
 
-def run_app(script, routes=None, setup="", files=None):
+def run_app(script, routes=None, setup="", files=None, ua=None):
     paths = [str(STATIC / f) for f in (files if files is not None else SCRIPTS)]
-    args = json.dumps([paths, routes or {}, setup, script])
+    args = json.dumps([paths, routes or {}, setup, script, ua])
     r = subprocess.run([NODE, "-e", HARNESS, args], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)

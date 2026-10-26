@@ -61,7 +61,7 @@ var flushPendingSave = () => Promise.resolve(true);
 
 
 def run_js(script, files=(), extra=""):
-    paths = [str(STATIC / "common.js"), *[str(STATIC / f) for f in files]]
+    paths = [str(STATIC / "platform.js"), str(STATIC / "common.js"), *[str(STATIC / f) for f in files]]
     args = json.dumps([paths, STUBS + extra, script])
     r = subprocess.run([NODE, "-e", HARNESS, args], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
