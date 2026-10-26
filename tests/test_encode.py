@@ -1,4 +1,4 @@
-"""H.264 编码参数（GL-04）：Mac VideoToolbox / Windows libopenh264、h264_mf，码率显式，全仓不再出现 libx264。"""
+"""H.264 编码参数（GL-04）：Mac VideoToolbox / Windows h264_mf、libopenh264，码率显式，全仓不再出现 libx264。"""
 import re
 import shutil
 import subprocess
@@ -31,10 +31,11 @@ def test_mac_command_line_is_byte_identical(monkeypatch, kind, rate):
 
 def test_windows_encoder_args(monkeypatch):
     monkeypatch.setattr(encode.sys, "platform", "win32")
-    assert encode.ENCODERS["win32"] == ["libopenh264", "h264_mf"]
-    assert encode.h264_args("clip") == ["-c:v", "libopenh264", "-b:v", "12M", "-profile:v", "high",
+    assert encode.ENCODERS["win32"] == ["h264_mf", "libopenh264"]
+    assert encode.h264_args("clip") == ["-c:v", "h264_mf", "-b:v", "12M", "-profile:v", "100",
                                         "-pix_fmt", "yuv420p"]
-    assert encode.h264_args("clip", "h264_mf") == ["-c:v", "h264_mf", "-b:v", "12M", "-pix_fmt", "yuv420p"]
+    assert encode.h264_args("clip", "libopenh264") == ["-c:v", "libopenh264", "-b:v", "12M",
+                                                       "-profile:v", "high", "-pix_fmt", "yuv420p"]
 
 
 def test_linux_falls_back_to_mac_candidates(monkeypatch):
@@ -44,8 +45,8 @@ def test_linux_falls_back_to_mac_candidates(monkeypatch):
 
 def test_chosen_encoder_is_used_by_h264_args(monkeypatch):
     monkeypatch.setattr(encode.sys, "platform", "win32")
-    monkeypatch.setattr(encode, "_PREFLIGHT", {"result": None, "encoder": "h264_mf"})
-    assert encode.h264_args("proxy")[1] == "h264_mf"
+    monkeypatch.setattr(encode, "_PREFLIGHT", {"result": None, "encoder": "libopenh264"})
+    assert encode.h264_args("proxy")[1] == "libopenh264"
 
 
 def test_bitrates_are_named_constants():

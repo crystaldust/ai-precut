@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""H.264 编码参数的唯一来源：Mac 用 VideoToolbox，Windows 用 libopenh264 / h264_mf（随包 ffmpeg 是 LGPL 构建，不含 x264 编码器，GL-04）。
+"""H.264 编码参数的唯一来源：Mac 用 VideoToolbox，Windows 用 h264_mf / libopenh264（随包 ffmpeg 是 LGPL 构建，不含 x264 编码器，GL-04）。
 
 只给「编码参数」，写盘仍走 media_io.ffmpeg_to / atomic_output（临时文件 → 原子改名 → .done）。
 VideoToolbox 不支持 -crf/-preset，码率显式给出；-pix_fmt yuv420p 兜住 10-bit/HDR 素材；
@@ -13,14 +13,14 @@ import threading
 
 from pipeline import media_io
 
-# 按平台的候选编码器（先到先得）。Mac 只有 VideoToolbox；Windows 优先 libopenh264（能出 High profile），
-# h264_mf（Media Foundation，不认命名 profile）兜底；其它平台（Linux 开发机）沿用 Mac 的列表。
-ENCODERS = {"darwin": ["h264_videotoolbox"], "win32": ["libopenh264", "h264_mf"]}
+# 按平台的候选编码器（先到先得）。Mac 只有 VideoToolbox；Windows 优先 h264_mf（系统 Media Foundation 编码器，
+# 专利授权随系统；不认命名 profile，用数值 100 = High），libopenh264（High）兜底；其它平台（Linux 开发机）沿用 Mac 的列表。
+ENCODERS = {"darwin": ["h264_videotoolbox"], "win32": ["h264_mf", "libopenh264"]}
 # 每个编码器自己的额外参数（插在 -b:v 之后、-pix_fmt 之前）
 ENCODER_ARGS = {
     "h264_videotoolbox": ["-profile:v", "high", "-allow_sw", "1"],
     "libopenh264": ["-profile:v", "high"],
-    "h264_mf": [],
+    "h264_mf": ["-profile:v", "100"],  # 数值 profile：100 = High（CI run 40288378821 实测产出 High）
 }
 PIX_FMT = "yuv420p"
 PROXY_BITRATE = "1500k"   # 540p 分析代理（原 x264 ultrafast crf30）

@@ -167,10 +167,10 @@ def test_preflight_falls_back_to_second_windows_candidate(fresh_preflight, monke
 
     def runner(cmd, **k):
         calls.append(cmd)
-        return SimpleNamespace(returncode=1 if "libopenh264" in cmd else 0, stderr="no libopenh264")
+        return SimpleNamespace(returncode=1 if "h264_mf" in cmd else 0, stderr="no h264_mf")
     assert encode.preflight(runner=runner) is None
-    assert [c[c.index("-c:v") + 1] for c in calls] == ["libopenh264", "h264_mf"]
-    assert encode.encoder() == "h264_mf" and encode.h264_args("clip")[1] == "h264_mf"
+    assert [c[c.index("-c:v") + 1] for c in calls] == ["h264_mf", "libopenh264"]
+    assert encode.encoder() == "libopenh264" and encode.h264_args("clip")[1] == "libopenh264"
     assert encode.preflight(runner=runner) is None and len(calls) == 2  # 缓存
 
 

@@ -14,14 +14,14 @@ from platform_marks import WIN_ONLY
 
 @pytest.fixture
 def second_candidate(monkeypatch):
-    """Windows 候选：libopenh264 失败、h264_mf 成功；缓存清空（模拟全新进程）。返回预检探测记录。"""
+    """Windows 候选：h264_mf 失败、libopenh264 成功；缓存清空（模拟全新进程）。返回预检探测记录。"""
     monkeypatch.setattr(encode.sys, "platform", "win32")
     monkeypatch.setattr(encode, "_PREFLIGHT", {})
     probed = []
 
     def fake_try(enc, runner):
         probed.append(enc)
-        return "no libopenh264" if enc == "libopenh264" else None
+        return "no h264_mf" if enc == "h264_mf" else None
     monkeypatch.setattr(encode, "_try", fake_try)
     return probed
 
@@ -43,13 +43,13 @@ def _codec(args):
 def test_cut_clip_uses_verified_encoder(second_candidate, monkeypatch, tmp_path):
     seen = _capture_ffmpeg(monkeypatch)
     clips.cut_clip(tmp_path / "c.mp4", tmp_path / "s.mp4", {"in": 0.0, "out": 1.0})
-    assert _codec(seen[0]) == "h264_mf" and second_candidate == ["libopenh264", "h264_mf"]
+    assert _codec(seen[0]) == "libopenh264" and second_candidate == ["h264_mf", "libopenh264"]
 
 
 def test_cut_shot_uses_verified_encoder(second_candidate, monkeypatch, tmp_path):
     seen = _capture_ffmpeg(monkeypatch)
     build_documentary.cut_shot(tmp_path / "s.mp4", tmp_path / "c.mp4", 0.0, 1.0)
-    assert _codec(seen[0]) == "h264_mf"
+    assert _codec(seen[0]) == "libopenh264"
 
 
 def test_render_preview_uses_verified_encoder(second_candidate, monkeypatch, tmp_path):
@@ -61,7 +61,7 @@ def test_render_preview_uses_verified_encoder(second_candidate, monkeypatch, tmp
     tl_file.write_text(json.dumps(tl()), encoding="utf-8")
     monkeypatch.setattr("sys.argv", ["render_preview", str(tl_file), "-o", str(tmp_path / "o.mp4")])
     rp.main()
-    assert _codec(seen[0]) == "h264_mf"
+    assert _codec(seen[0]) == "libopenh264"
 
 
 def test_proxy_uses_verified_encoder(second_candidate, monkeypatch, tmp_path):
@@ -72,13 +72,13 @@ def test_proxy_uses_verified_encoder(second_candidate, monkeypatch, tmp_path):
     monkeypatch.setattr(aicut, "_run_pipeline", lambda *a: None)
     _project(tmp_path)
     aicut.cmd_junk(argparse.Namespace(name="p1"))
-    assert _codec(seen[0]) == "h264_mf"
+    assert _codec(seen[0]) == "libopenh264"
 
 
 def test_probe_runs_once_per_process(second_candidate):
     encode.h264_args("clip")
     encode.h264_args("proxy")
-    assert second_candidate == ["libopenh264", "h264_mf"]
+    assert second_candidate == ["h264_mf", "libopenh264"]
 
 
 def test_unavailable_encoder_raises_media_error_with_platform_text(monkeypatch):
