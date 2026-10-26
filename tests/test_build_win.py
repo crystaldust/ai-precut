@@ -178,3 +178,9 @@ def test_workflow_build_job():
     assert re.search(r"upload-artifact@[0-9a-f]{40} # v", build)
     run_blocks = re.findall(r"run: \|\n((?:          .*\n)+)", build)
     assert not any("${{" in b for b in run_blocks)  # 表达式只放 env:
+
+
+def test_pyinstaller_runs_without_repo_root_on_sys_path():
+    """仓库里的 packaging/ 会遮住 PyPI 的 packaging 库（CI run 40293034711），必须用 python -P 启动 PyInstaller。"""
+    src = (Path(__file__).resolve().parent.parent / "packaging" / "build_win.py").read_text(encoding="utf-8")
+    assert '[sys.executable, "-P", "-m", "PyInstaller"' in src

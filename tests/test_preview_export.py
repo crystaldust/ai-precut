@@ -228,7 +228,7 @@ def test_reuse_version_adds_windows_to_same_version(env):
     assert len(env.calls["draft"]) == 1
 
 
-def test_reuse_version_with_mac_already_exported_skips_draft(env, capsys):
+def test_reuse_version_with_mac_already_exported_skips_draft(env, capsys, mac_platform):
     preview()
     build(require_preview=True)
     capsys.readouterr()
@@ -400,7 +400,7 @@ def test_job_extra_build_reuses_matching_version(env, jobs_mod):
         ["--require-preview", "--version", "v1", "--windows", "--no-draft"]
 
 
-def test_job_extra_build_mac_already_in_jianying_is_rejected(env, jobs_mod):
+def test_job_extra_build_mac_already_in_jianying_is_rejected(env, jobs_mod, mac_platform):
     preview()
     build(require_preview=True)                            # v1 已装进剪映
     with pytest.raises(ValueError, match="已经在 Mac 剪映里：片名_v1"):

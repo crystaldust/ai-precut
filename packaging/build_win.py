@@ -88,7 +88,8 @@ def main() -> int:
     version = _load("version")
     print("→ PyInstaller 构建")
     try:
-        subprocess.run([sys.executable, "-m", "PyInstaller", str(ROOT / "packaging" / "ai-cut.spec"),
+        # -P：不把 cwd（仓库根）放进 sys.path，否则仓库里的 packaging/ 会遮住 PyPI 的 packaging 库
+        subprocess.run([sys.executable, "-P", "-m", "PyInstaller", str(ROOT / "packaging" / "ai-cut.spec"),
                         "--noconfirm", "--clean"], cwd=ROOT, check=True)
     except (subprocess.CalledProcessError, OSError) as exc:
         code = getattr(exc, "returncode", 1) or 1
