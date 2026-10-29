@@ -61,7 +61,10 @@ def answers_digest(workdir: Path) -> str:
         return CORRUPT
     if data is None:
         return ""
-    return _sha(_canonical(data.get("answers") or {}))
+    custom = data.get("custom") or {}
+    if not custom:  # 没填自定义：和以前同一个指纹，老项目不误报「需要更新」
+        return _sha(_canonical(data.get("answers") or {}))
+    return _sha(_canonical({"answers": data.get("answers") or {}, "custom": custom}))
 
 
 def target_of(cfg: dict) -> int:

@@ -595,7 +595,9 @@ def with_lines(segments: list[dict], segments_path: Path) -> list[dict]:
 def run(scored_path: Path, answers_path: Path, out_dir: Path,
         *, questions_path: Path | None = None, title: str = "",
         material: str = "", weights: dict | None = None,
-        calibration: dict | None = None, target: float | None = None) -> dict:
+        calibration: dict | None = None, target: float | None = None,
+        custom: dict | None = None) -> dict:
+    """custom：custom_rules.ensure 的结果（剪辑师自定义想法换算出的规则），合并在选项规则之后。"""
     # M13 D3：输入指纹在选段开始前取（选段过程中被改的输入，选完后要显示为「需要更新」）；
     # target 用传进来的值，而不是重读 project.json（cmd_select 选段成功后才保存新目标）
     inputs = fingerprints.selection_inputs(
@@ -633,11 +635,14 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
         else:
             extra_warnings.append(BUDGET_LEGACY_WARNING)
     rules = _current_rules(answers, questions, stored_rules, payload.get("rules_version"))
+    custom_items = [x for x in (custom or {}).get("items") or [] if isinstance(x, dict)]
+    rules = select_rules.with_custom(rules, custom_items)
+    extra_warnings += select_rules.custom_warnings(custom_items)
     # KI-03：确认页兜底题的原话 + 剪辑偏好里的原话（按换行 /「；」分，句内逗号保留）
     lines = select_rules.parse_must_lines((calibration or {}).get("must_lines"))
     rules = {**rules, "must_lines": list(dict.fromkeys(
         [*select_rules.parse_must_lines(rules.get("must_lines")), *lines]))}
-    result = {**select(segments, topics, rules, target, weights), "inputs": inputs}
+    result = {**select(segments, topics, rules, target, weights), "inputs": inputs, "custom_rules": custom_items}
     if extra_warnings:
         result = {**result, "warnings": [*result["warnings"], *extra_warnings]}
 

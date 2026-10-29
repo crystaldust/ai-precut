@@ -124,6 +124,24 @@ def rules_from_answers(answers: dict, questions: dict | None) -> dict:
     return {**rules, "ignored_answers": ignored}
 
 
+# ---------------------------------------------------------------- 自定义想法（custom_rules 换算的结果）
+CUSTOM_NOT_MAPPED = "自定义「{text}」没能换算成选段规则，未生效：{note}"
+
+
+def with_custom(rules: dict, items: list[dict]) -> dict:
+    """换算出的规则合并在选项规则之后：结尾 / 主角 / 节奏以自定义为准，话题与原话追加。"""
+    for it in items or []:
+        for rule in (it.get("rules") or []) if isinstance(it, dict) else []:
+            if isinstance(rule, dict):
+                rules = _apply_rule(rules, rule)
+    return rules
+
+
+def custom_warnings(items: list[dict]) -> list[str]:
+    return [CUSTOM_NOT_MAPPED.format(text=it.get("text", ""), note=it.get("note", ""))
+            for it in items or [] if isinstance(it, dict) and not it.get("rules")]
+
+
 # ---------------------------------------------------------------- 必留原话（KI-03）
 def parse_must_lines(raw) -> list[str]:
     """剪辑偏好里的原话 → 一条条原话。按换行 /「；」分，句内逗号保留（D5）。"""

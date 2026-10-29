@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import notices, questions, review, schema, select, topic_names
+from pipeline import custom_rules, fingerprints, notices, questions, review, schema, select, topic_names
 
 NO_SCORED_MSG = "还没有三档判定，先跑 analyze/text/score"
 NO_QUESTIONS_MSG = "还没有决策问题，先跑 questions"
@@ -154,6 +154,14 @@ def _compact_segment(s: dict) -> dict:
             "text": _clip(s.get("text"))}
 
 
+def _custom_understood(work: Path, custom: dict, q: dict, scored) -> dict:
+    """上次换算的结果（只认和当前文字 / 题目 / 话题对得上的）→ {题 id: {rules: 人话, note}}。"""
+    topics = (scored.get("topics") if isinstance(scored, dict) else None) or []
+    current = custom_rules.load_current(work, custom, q, topics) if custom else None
+    return {it["key"]: {"rules": custom_rules.describe(it.get("rules")), "note": it.get("note") or ""}
+            for it in (current or {}).get("items") or [] if isinstance(it, dict) and it.get("key") in custom}
+
+
 def confirm(pdir: Path) -> dict:
     work = pdir / "work"
     q = schema.read_json(work / "questions.json", default=None)  # 损坏 → CorruptJSON → 409（KI-21）
@@ -178,11 +186,15 @@ def confirm(pdir: Path) -> dict:
               for t in (scored.get("topics") if isinstance(scored, dict) else None) or []
               if isinstance(t, dict) and isinstance(t.get("name"), str)]
     answers = questions.normalize_answers(q, stored.get("answers"))
+    custom, _stale = questions.split_stale_custom(  # 重新出过题：旧题上的自定义不再显示、不会被下次保存带回来
+        questions.normalize_custom(q, stored.get("custom")), stored.get("questions_digest"),
+        fingerprints.file_digest(work / "questions.json"))
     pending = _pending_items(segments)
     return {"questions": q.get("questions") or [], "fallback": q.get("fallback", False),
             "topics": topics, "segments": [_compact_segment(s) for s in sorted(segments, key=lambda s: s["start"])],
             "pending": pending, "speakers": speakers(segments),
             "summary": summary, "answers": answers,
+            "custom": custom, "custom_understood": _custom_understood(work, custom, q, scored),
             "confirmed": stored.get("confirmed", False), "answers_unreadable": unreadable,
             "stale_questions": questions.has_legacy_focus(q), "stale_hint": STALE_QUESTIONS_HINT,  # KI-86
             "warnings": notices.project_warnings(work)}

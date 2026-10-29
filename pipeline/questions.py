@@ -13,6 +13,8 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from pathlib import Path
 
 from pipeline import applog, schema, select_rules, usage
@@ -54,6 +56,30 @@ def _topic_names(topics: list[dict]) -> list[str]:
     return [t.get("name", "") for t in topics if t.get("name")]
 
 
+def validate_rule(rule, names: set[str]) -> dict | None:
+    """模型给的一条 rule → 规整后的 {kind, value}；不合格返回 None（出题与自定义换算共用）。
+
+    must_topics 只留真实话题名、留空即不合格；must_lines 必须是非空字符串列表。
+    """
+    if not isinstance(rule, dict):
+        return None
+    kind, value = rule.get("kind"), rule.get("value")
+    if not isinstance(kind, str) or kind not in KINDS:   # 模型可能给出列表 / 对象：先判类型再查集合
+        return None
+    if kind == "must_topics":
+        if isinstance(value, str):
+            value = [value]
+        value = [v for v in (value if isinstance(value, list) else []) if isinstance(v, str) and v in names]
+        if not value:
+            return None
+    if kind == "must_lines":
+        value = [value] if isinstance(value, str) else value
+        if not isinstance(value, list) or not value or \
+                not all(isinstance(v, str) and v.strip() for v in value):
+            return None
+    return {"kind": kind, "value": value}
+
+
 def _normalize(data: dict, topics: list[dict]) -> dict:
     names = set(_topic_names(topics))
     out = []
@@ -67,26 +93,13 @@ def _normalize(data: dict, topics: list[dict]) -> dict:
             label = str(o.get("label") or "").strip()[:LABEL_MAX]
             if not label or label in seen:
                 continue
-            rule = o.get("rule") or {}
-            kind = rule.get("kind")
-            if kind not in KINDS:
+            rule = validate_rule(o.get("rule"), names)
+            if rule is None:
                 continue
-            value = rule.get("value")
-            if kind == "must_topics":
-                if isinstance(value, str):
-                    value = [value]
-                value = [v for v in (value or []) if v in names]
-                if not value:
-                    continue
-            if kind == "must_lines":
-                value = [value] if isinstance(value, str) else value
-                if not isinstance(value, list) or not value or \
-                        not all(isinstance(v, str) and v.strip() for v in value):
-                    continue
             seen.add(label)
             options.append({"label": label,
                             "effect": str(o.get("effect") or "")[:20],
-                            "rule": {"kind": kind, "value": value}})
+                            "rule": rule})
         if len(options) < 2:
             continue
         out.append({"id": f"q{i}", "text": text,
@@ -226,3 +239,53 @@ def normalize_answers(qs: dict | None, answers) -> dict:
         elif isinstance(value, str) and value in labels:
             out[qid] = value
     return out
+
+
+# ---------------------------------------------------------------- 自定义（剪辑师自己填的想法）
+CUSTOM_EXTRA = "_extra"   # 所有题之后的「其他想法（自定义）」；题 id 都是 q1…，不会撞
+MAX_CUSTOM_CHARS = 200
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
+_SPACES = re.compile(r" {2,}")
+
+
+def _visible(ch: str) -> str:
+    """不可见格式字符（零宽、双向覆盖，Cf）去掉；行 / 段分隔符（Zl / Zp）当空格。"""
+    cat = unicodedata.category(ch)
+    return "" if cat == "Cf" else " " if cat in ("Zl", "Zp") else ch
+
+
+def _clean_custom(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = "".join(_visible(ch) for ch in _CONTROL.sub(" ", value))
+    return _SPACES.sub(" ", text).strip()[:MAX_CUSTOM_CHARS]
+
+
+def normalize_custom(qs: dict | None, raw) -> dict:
+    """磁盘 / 请求里的自定义 → {题 id 或 CUSTOM_EXTRA: 文字}。
+
+    换行 / 控制字符压成空格、去首尾空白、截到 MAX_CUSTOM_CHARS；空的、不是字符串的、对不上当前题目的丢掉。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    allowed = {q.get("id") for q in (qs or {}).get("questions") or [] if isinstance(q, dict)} | {CUSTOM_EXTRA}
+    cleaned = {k: _clean_custom(v) for k, v in raw.items() if k in allowed}
+    return {k: v for k, v in cleaned.items() if v}
+
+
+def split_stale_custom(custom: dict, saved_digest: str | None, current_digest: str) -> tuple[dict, dict]:
+    """题目重新生成过（存答案时的题目摘要对不上现在的）：绑在题上的自定义作废，只留「其他想法」。
+
+    返回 (仍有效的, 作废的)。老数据没记题目摘要时不判过期。题 id 总是 q1…，换题后会挂到新题上，所以按摘要判。
+    """
+    if not saved_digest or saved_digest == current_digest:
+        return custom, {}
+    return ({k: v for k, v in custom.items() if k == CUSTOM_EXTRA},
+            {k: v for k, v in custom.items() if k != CUSTOM_EXTRA})
+
+
+def drop_replaced_answers(qs: dict | None, answers: dict, custom: dict) -> dict:
+    """单选题填了自定义 = 替换选项：去掉这道题的选项答案。多选题两者并存。返回新 dict。"""
+    single = {q.get("id") for q in (qs or {}).get("questions") or []
+              if isinstance(q, dict) and q.get("type") != "multi"}
+    return {k: v for k, v in answers.items() if not (k in single and k in custom)}

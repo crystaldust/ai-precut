@@ -35,7 +35,7 @@ from pipeline import (applog, build_documentary, classify, cloud, consent, disks
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
                       select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
                       usage)
-from pipeline import brief, cli_args, clips, config_cli, export_flow, fingerprints, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
+from pipeline import brief, cli_args, clips, config_cli, custom_rules, export_flow, fingerprints, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
 from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
 from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
 from pipeline.prompts import ask_calibration, ask_target  # noqa: E402,F401 - 测试按 aicut.<名> 打桩
@@ -442,6 +442,42 @@ def cmd_questions(args) -> None:
         info(f"  {q['text']} → " + " / ".join(o["label"] for o in q["options"]))
 
 
+CUSTOM_UNDERSTOOD = "自定义「{text}」→ AI 理解为：{rules}"
+CUSTOM_STALE_NOTE = "决策问题重新生成过，这条是针对旧题目写的；回 ④ 重新填写"
+
+
+def _split_stale_custom(work: Path, stored: dict, custom: dict) -> tuple[dict, list[dict]]:
+    """题目重新生成过：绑在旧题上的自定义不外发、不换算，转成「未生效」条目（选段写警告）。"""
+    kept, dropped = questions.split_stale_custom(
+        custom, stored.get("questions_digest"), fingerprints.file_digest(work / "questions.json"))
+    return kept, [{"key": k, "text": v, "rules": [], "note": CUSTOM_STALE_NOTE} for k, v in dropped.items()]
+
+
+def _interpret_custom(work: Path) -> dict:
+    """④ 自定义想法 → 选段规则：没填不外发、不要 Key；没改过命中缓存不调用；调用失败停下（答案已保存）。"""
+    stored = schema.read_json(work / questions.ANSWERS_FILE, default={})
+    stored = stored if isinstance(stored, dict) else {}
+    qs = schema.read_json(work / "questions.json", default=None)
+    custom, stale = _split_stale_custom(work, stored, questions.normalize_custom(qs, stored.get("custom")))
+    if not custom:
+        return {"items": stale}
+    scored = schema.read_json(work / "segments_scored.json", default={})
+    topics = (scored.get("topics") if isinstance(scored, dict) else None) or []
+
+    def client():
+        require_consent()
+        return metered(work, custom_rules.STAGE)
+
+    try:
+        res, _cached = custom_rules.ensure(work, custom, qs, topics, client_factory=client)
+    except LLMError as exc:
+        die(str(exc))
+    for it in res["items"]:
+        if it.get("rules"):
+            info(CUSTOM_UNDERSTOOD.format(text=it.get("text", ""), rules=custom_rules.describe(it["rules"])))
+    return {**res, "items": [*res["items"], *stale]}
+
+
 def cmd_select(args) -> None:
     """M3 覆盖式选段：按话题预算挑镜头，输出选段表与时间线。"""
     pdir = project_dir(args.name)
@@ -454,13 +490,14 @@ def cmd_select(args) -> None:
         check_or_die(schema.check_target_duration, args.target)
         new_target = schema.check_target_duration(args.target)
         c = {**c, "target_duration": new_target}
+    custom = _interpret_custom(work)
     try:
         res = select.run(work / "segments_scored.json", work / "brief_answers.json", work,
                          questions_path=work / "questions.json",
                          title=c.get("title", args.name), material=c["material"],
                          weights=style.weights(c.get("calibration")),
                          calibration=c.get("calibration"),
-                         target=float(c.get("target_duration") or 175))
+                         target=float(c.get("target_duration") or 175), custom=custom)
     except select.SelectionError as exc:
         die(str(exc))
     if new_target is not None:  # 选段成功后才保存新目标；加锁读改写，不覆盖别人刚改的字段（KI-51）
