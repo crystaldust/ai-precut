@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""⑤ 看结果 / ⑥ 导出的接口（M14 E21）：/api/result、恢复为 AI 选段、两版对比、回到这一版、当前预览片。
+"""⑤ 看结果 / ⑥ 导出的接口（M14 E21）：/api/result、查看 AI 提示词、恢复为 AI 选段、两版对比、回到这一版、当前预览片。
 
 路由模块范式同 gui/maintenance.py：返回 (状态码, JSON) 或 None（不是本模块的路径）；
 项目解析由 server 传入；ProjectCorrupt 不在这里捕获，由 server 统一回 409。写类接口在分镜表锁内读改写，
@@ -66,6 +66,18 @@ def _get_result(q: dict, existing: Lookup) -> tuple[int, dict]:
         return 409, {"error": str(exc)}
     except (KeyError, TypeError) as exc:  # 分析结果结构不对（同 ④ 的 AnalysisIncomplete 处理）
         return 409, {"error": exclusions.BAD_DATA.format(detail=exc)}
+
+
+def _get_prompt(q: dict, existing: Lookup) -> tuple[int, dict]:
+    pdir = _project(q.get("project", [""])[0], existing)
+    if isinstance(pdir, tuple):
+        return pdir
+    try:
+        return 200, result_payload.ai_prompt(pdir)
+    except schema.CorruptJSON as exc:
+        return 409, {"error": str(exc)}
+    except FileNotFoundError as exc:
+        return 404, {"error": str(exc)}
 
 
 def _get_compare(q: dict, existing: Lookup) -> tuple[int, dict]:
@@ -179,7 +191,8 @@ def current_preview(pdir: Path) -> Path:
     return outputs.staging_dir(pdir) / outputs.PREVIEW_FILE
 
 
-GET_ROUTES = {"/api/result": _get_result, "/api/versions/compare": _get_compare}
+GET_ROUTES = {"/api/result": _get_result, "/api/result/prompt": _get_prompt,
+              "/api/versions/compare": _get_compare}
 POST_ROUTES = {"/api/result/restore-ai": _post_restore_ai, "/api/versions/restore": _post_restore_version}
 
 

@@ -6,11 +6,13 @@
 换算结果过和出题同一套校验，再加更严的取值检查（主角 / 结尾 / 节奏只认枚举，话题只认真实话题名）。
 换算不出来的条目带一句说明，由选段转成「未生效」警告；模型调用失败 / 超预算直接抛出，不静默降级（同 GL-09）。
 结果按「文字 + 题目 + 话题」的摘要缓存在 work/custom_rules.json：没改就不重复调用、不重复计费。
+缓存里同时记下实际发出的提示词、模型原始回复和换算时间（prompt_record），⑤「查看 AI 提示词」显示的就是这一份。
 """
 from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -145,11 +147,13 @@ def _item(key: str, text: str, reply: dict | None, qs: dict | None, names: set[s
 
 
 def interpret(custom: dict, qs: dict | None, topics: list[dict], *, client) -> dict:
-    """调一次模型把全部自定义换算成规则；返回 {"items": [{key, text, rules, note}]}，顺序同 custom。"""
+    """调一次模型把全部自定义换算成规则；返回 {"items": [{key, text, rules, note}], prompt, reply, at}，
+    items 顺序同 custom，prompt / reply 是实际发出的提示词和模型原始回复。"""
     if not custom:
         return {"items": []}
+    user = _prompt(custom, qs, topics)
     try:
-        data = client.chat_json(SYSTEM, _prompt(custom, qs, topics), temperature=0.2, max_tokens=1200)
+        data = client.chat_json(SYSTEM, user, temperature=0.2, max_tokens=1200)
     except usage.BudgetExceeded:
         raise
     except Exception as exc:  # noqa: BLE001 - 任何调用失败都停下说明，不当作「没填」
@@ -159,7 +163,19 @@ def interpret(custom: dict, qs: dict | None, topics: list[dict], *, client) -> d
         raise InterpretFailed(INTERPRET_FAILED.format(error="模型回复的结构不对"), retryable=False)
     by_key = {r["key"]: r for r in replies if isinstance(r, dict) and isinstance(r.get("key"), str)}
     names = set(_topic_names(topics))
-    return {"items": [_item(k, custom[k], by_key.get(k), qs, names) for k in ordered(custom, qs)]}
+    return {"items": [_item(k, custom[k], by_key.get(k), qs, names) for k in ordered(custom, qs)],
+            "prompt": {"system": SYSTEM, "user": user}, "reply": data,
+            "at": datetime.now().isoformat(timespec="seconds")}
+
+
+def prompt_record(result: dict | None) -> dict | None:
+    """换算结果里记下的「实际发出的提示词 + 原始回复 + 时间」；没有（没填自定义 / 本功能之前的旧缓存）→ None。"""
+    prompt = (result or {}).get("prompt") if isinstance(result, dict) else None
+    if not isinstance(prompt, dict) or not all(isinstance(prompt.get(k), str) for k in ("system", "user")):
+        return None
+    at = result.get("at")
+    return {"system": prompt["system"], "user": prompt["user"], "reply": result.get("reply"),
+            "at": at if isinstance(at, str) else None}
 
 
 def cache_key(custom: dict, qs: dict | None, topics: list[dict]) -> str:
@@ -186,7 +202,11 @@ def load_current(workdir: Path, custom: dict, qs: dict | None, topics: list[dict
 
 def ensure(workdir: Path, custom: dict, qs: dict | None, topics: list[dict], *,
            client_factory: Callable[[], object]) -> tuple[dict, bool]:
-    """有缓存直接用（不建 client：不需要 Key、不外发）；否则换算并原子写缓存。返回 (结果, 是否命中缓存)。"""
+    """有缓存直接用（不建 client：不需要 Key、不外发）；否则换算并原子写缓存。返回 (结果, 是否命中缓存)。
+
+    缓存连同当时发出的提示词 / 原始回复 / 换算时间一起存：命中时显示的是当初真正发出的那一份
+    （改了 SYSTEM / USER 模板要 +CUSTOM_RULES_VERSION，否则旧缓存仍显示旧提示词）。
+    """
     if not custom:
         return {"items": []}, True
     cached = load_current(workdir, custom, qs, topics)
@@ -225,3 +245,15 @@ def _phrase(rule: dict) -> str:
 
 def describe(rules: list[dict]) -> str:
     return "；".join(p for p in (_phrase(r) for r in rules or [] if isinstance(r, dict)) if p)
+
+
+_SELECTION_KINDS = (("focus", "focus"), ("must_topics", "must_topics"), ("exclude_topics", "exclude"),
+                    ("ending", "ending"), ("pacing", "pacing"), ("must_lines", "must_lines"))
+
+
+def describe_selection_rules(rules: dict | None) -> list[str]:
+    """选段实际用的规则字典（selection.json 的 rules，选项 + 自定义合并后）→ 一条一句人话；空值不列。"""
+    rules = rules if isinstance(rules, dict) else {}
+    phrases = (_phrase({"kind": kind, "value": rules.get(field)}) for field, kind in _SELECTION_KINDS
+               if rules.get(field) not in (None, "", []))
+    return [p for p in phrases if p]

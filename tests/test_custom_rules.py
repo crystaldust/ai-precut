@@ -241,3 +241,41 @@ def test_cache_write_failure_still_returns_the_paid_result(tmp_path, monkeypatch
     fake = Fake({"items": [{"key": "q1", "rules": [{"kind": "ending", "value": "leave"}]}]})
     res, cached = custom_rules.ensure(tmp_path, {"q1": "背影收尾"}, QS, TOPICS, client_factory=lambda: fake)
     assert cached is False and res["items"][0]["rules"] == [{"kind": "ending", "value": "leave"}]
+
+
+# ---------------------------------------------------------------- 记录实际发出的提示词（⑤ 查看 AI 提示词）
+def test_interpret_records_the_prompt_actually_sent_and_the_raw_reply():
+    reply = {"items": [{"key": "q1", "rules": [{"kind": "ending", "value": "leave"}]}]}
+    fake = Fake(reply)
+    res = custom_rules.interpret({"q1": "背影收尾"}, QS, TOPICS, client=fake)
+    record = custom_rules.prompt_record(res)
+    assert (record["system"], record["user"]) == fake.calls[0]
+    assert record["reply"] == reply and isinstance(record["at"], str) and record["at"]
+
+
+def test_prompt_record_survives_the_cache(tmp_path):
+    fake = Fake({"items": [{"key": "q1", "rules": [{"kind": "ending", "value": "leave"}]}]})
+    first, _ = custom_rules.ensure(tmp_path, {"q1": "背影收尾"}, QS, TOPICS, client_factory=lambda: fake)
+    again, cached = custom_rules.ensure(tmp_path, {"q1": "背影收尾"}, QS, TOPICS, client_factory=lambda: fake)
+    assert cached is True and custom_rules.prompt_record(again) == custom_rules.prompt_record(first)
+
+
+@pytest.mark.parametrize("result", [
+    {"items": []}, None, {"prompt": "坏"}, {"prompt": {"system": 1, "user": "u"}},
+    {"prompt": {"system": "s", "user": None}}])
+def test_prompt_record_is_none_without_a_usable_record(result):
+    assert custom_rules.prompt_record(result) is None
+
+
+def test_old_cache_without_record_is_still_used_without_calling_again(tmp_path):
+    custom = {"q1": "背影收尾"}
+    (tmp_path / custom_rules.CUSTOM_RULES_FILE).write_text(json.dumps({
+        "key": custom_rules.cache_key(custom, QS, TOPICS),
+        "items": [{"key": "q1", "text": "背影收尾", "rules": [{"kind": "ending", "value": "leave"}], "note": ""}]},
+        ensure_ascii=False), encoding="utf-8")
+
+    def factory():
+        raise AssertionError("旧缓存不该为了补提示词重新调用")
+
+    res, cached = custom_rules.ensure(tmp_path, custom, QS, TOPICS, client_factory=factory)
+    assert cached is True and custom_rules.prompt_record(res) is None and res["items"][0]["rules"]

@@ -168,3 +168,36 @@ def test_question_bound_custom_is_not_used_after_questions_were_regenerated(proj
     assert "背影收尾" not in seen[0]                                  # 旧题目上的自定义不外发、不换算
     assert sel["rules"]["exclude_topics"] == ["聊吃饭"]                # 「其他想法」不绑题目，照常生效
     assert any("背影收尾" in w and "未生效" in w for w in sel["warnings"])
+
+
+# ---------------------------------------------------------------- ⑤ 查看 AI 提示词：选段记下这次用的提示词
+def test_run_records_the_prompt_used_for_this_selection(tmp_path):
+    sp, ap = _files(tmp_path, {"answers": {}, "rules": {}, "rules_version": RV})
+    custom = {"items": [item(EXTRA, "不要吃饭那段", [{"kind": "exclude", "value": ["聊吃饭"]}])],
+              "prompt": {"system": "系统", "user": "用户"}, "reply": {"items": []}, "at": "2026-10-29T10:00:00"}
+    res = select.run(sp, ap, tmp_path, custom=custom)
+    saved = json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))
+    expected = {"system": "系统", "user": "用户", "reply": {"items": []}, "at": "2026-10-29T10:00:00"}
+    assert res["custom_prompt"] == expected and saved["custom_prompt"] == expected
+
+
+def test_run_without_custom_records_no_prompt(tmp_path):
+    sp, ap = _files(tmp_path, {"answers": {}})
+    assert select.run(sp, ap, tmp_path)["custom_prompt"] is None
+
+
+def test_selection_rules_in_plain_words():
+    lines = custom_rules.describe_selection_rules({
+        "must_topics": ["讲合同"], "exclude_topics": ["聊吃饭"], "ending": "leave", "focus": "ensemble",
+        "pacing": "tight", "must_lines": ["九千八包含所有耗材"], "ignored_answers": ["旧答案"]})
+    text = "\n".join(lines)
+    for word in ("讲合同", "聊吃饭", "离开", "群像", "紧凑", "九千八包含所有耗材"):
+        assert word in text
+    assert "旧答案" not in text and len(lines) == 6
+
+
+def test_selection_rules_skip_empty_values():
+    lines = custom_rules.describe_selection_rules({"must_topics": [], "exclude_topics": [], "ending": None,
+                                                    "focus": None, "pacing": "normal", "must_lines": []})
+    assert lines == ["节奏正常"]
+    assert custom_rules.describe_selection_rules(None) == []

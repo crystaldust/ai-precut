@@ -1,4 +1,5 @@
 // 剪辑台主页 · ⑤ 看结果（M14，闸门 B）：页面骨架、顶栏摘要、就地改目标时长、预览片、闸门「看过了，去导出」。
+// 顶栏「查看 AI 提示词」：点了才拉 /api/result/prompt，弹窗显示生成当前选段时发给 AI 的提示词。
 // 分镜表与播放器在 result-table.js，未采用清单在 result-unused.js，重新选段询问与恢复为 AI 选段在 reselect.js。
 // 页面骨架是固定的（viewResult 恒返回同一段 HTML，刷新不会重画它）；各块由 paintResult 按需填入，内容没变就不写。
 // 服务端数字（覆盖率、未采用、预览片是否新鲜）来自 GET /api/result，进入 ⑤ / 每次保存成功 / 任务结束后重拉（序号防乱序）。
@@ -26,6 +27,19 @@ const COPY_GATE_B = '看过了，去导出 →';
 const COPY_GATE_B_HINT = '先生成当前分镜表的预览片';
 const COPY_ANALYSIS_UPDATED_MANUAL = '分析结果更新了：分镜表仍是你手动改的那一版；需要时点「恢复为 AI 选段」';  // Q6
 const COPY_EXPORT_NEED_PREVIEW = '先在「⑤ 看结果」生成当前分镜表的预览片';  // 与 gui/wizard.py 的 LOCKED_EXPORT_HINT 一致
+const COPY_PROMPT_OPEN = '查看 AI 提示词';
+const COPY_PROMPT_TITLE = '发给 AI 的提示词';
+const COPY_PROMPT_NOT_CALLED = '本次选段没有调用 AI：选段是程序按你在「④ 定标准」的选择计算的。只有填了「自定义」想法，才会请 AI 把它换算成选段规则。';
+const COPY_PROMPT_CALLED = '你填了「自定义」想法，AI 把它们换算成了选段规则（换算于 {at}）。';
+const COPY_PROMPT_NO_RECORD = '你填了「自定义」想法，AI 把它们换算成了选段规则；这次用的是之前的换算结果，当时没有记录原始提示词。';
+const COPY_PROMPT_ITEMS = '自定义想法的换算结果';
+const COPY_PROMPT_ITEM_OK = '「{text}」→ {rules}';
+const COPY_PROMPT_ITEM_NOT = '「{text}」→ 未生效：{note}';
+const COPY_PROMPT_SYSTEM = '系统提示词';
+const COPY_PROMPT_USER = '用户提示词';
+const COPY_PROMPT_REPLY = 'AI 的回复';
+const COPY_PROMPT_RULES = '最终选段规则（选项 + 自定义合并后）';
+const COPY_PROMPT_NO_RULES = '没有额外规则，按默认方式选段';
 const RESULT_RELOAD_MS = 400;   // 保存成功后重拉 ⑤ 数据的防抖：连续保存只拉一次
 
 let resultGen = 0;   // 每次进入 / 离开 / 重置 +1：过期的 /api/result 回包一律丢掉
@@ -179,8 +193,9 @@ function topHtml(r, live){
   const cur = live ? fmtLong(Math.max(0, Math.round(liveTotal()))) : '', cnt = live ? state.shots.length : '';
   const edited = manualInfo()?.edited === true;
   const restore = edited ? `<button class="ghost r-restore" data-act="openRestoreAi" data-starts-job>${esc(COPY_RESTORE_AI)}</button>` : '';
+  const prompt = `<button class="ghost r-prompt" data-act="openAiPrompt">${esc(COPY_PROMPT_OPEN)}</button>`;
   return `<div class="r-stats"><span>${targetHtml(r, tb)}</span>${esc(COPY_TOP_SEP)}<span>${esc(COPY_TOP_CUR)} <b id="rCur">${cur}</b></span>`
-    + `${esc(COPY_TOP_SEP)}<span>${esc(COPY_TOP_SHOTS)} <b id="rCnt">${cnt}</b></span>${esc(COPY_TOP_SEP)}<span>${clipHtml(tb)}</span>${restore}</div>`
+    + `${esc(COPY_TOP_SEP)}<span>${esc(COPY_TOP_SHOTS)} <b id="rCnt">${cnt}</b></span>${esc(COPY_TOP_SEP)}<span>${clipHtml(tb)}</span>${prompt}${restore}</div>`
     + overHtml(tb) + manualNoteHtml(r);
 }
 function paintTop(){
@@ -204,7 +219,37 @@ async function applySuggested(){
   if(suggest) await confirmReselect({target: suggest});
 }
 
+/* ---------------- 查看 AI 提示词 ---------------- */
+function promptAt(at){ return typeof at === 'string' ? at.slice(0, 16).replace('T', ' ') : ''; }
+function fillCopy(tpl, vals){ return tpl.replace(/\{(\w+)\}/g, (m, k) => k in vals ? String(vals[k]) : m); }  // 一次替换：文字里的 $& / {text} 原样保留
+function promptItemHtml(it){
+  const vals = {text: it.text || '', rules: it.rules || '', note: it.note || ''};
+  return `<li>${esc(fillCopy(it.rules ? COPY_PROMPT_ITEM_OK : COPY_PROMPT_ITEM_NOT, vals))}</li>`;
+}
+function promptBlockHtml(label, body){ return `<h4>${esc(label)}</h4><pre class="ai-prompt" tabindex="0">${esc(String(body ?? ''))}</pre>`; }
+function aiPromptHtml(d){
+  const items = Array.isArray(d.items) ? d.items.filter(x => x && typeof x === 'object') : [];
+  const rules = Array.isArray(d.rules) ? d.rules : [];
+  const lead = !d.called ? COPY_PROMPT_NOT_CALLED
+    : d.recorded ? fillCopy(COPY_PROMPT_CALLED, {at: promptAt(d.at)}) : COPY_PROMPT_NO_RECORD;
+  const itemsHtml = d.called && items.length ? `<h4>${esc(COPY_PROMPT_ITEMS)}</h4><ul>${items.map(promptItemHtml).join('')}</ul>` : '';
+  const prompts = d.called && d.recorded ? promptBlockHtml(COPY_PROMPT_SYSTEM, d.system) + promptBlockHtml(COPY_PROMPT_USER, d.user)
+    + promptBlockHtml(COPY_PROMPT_REPLY, d.reply) : '';
+  const rulesHtml = rules.length ? `<ul>${rules.map(x => `<li>${esc(String(x))}</li>`).join('')}</ul>` : `<p class="hint">${esc(COPY_PROMPT_NO_RULES)}</p>`;
+  return `<div class="ai-prompt-view"><p>${esc(lead)}</p>${itemsHtml}${prompts}<h4>${esc(COPY_PROMPT_RULES)}</h4>${rulesHtml}</div>`;
+}
+async function openAiPrompt(){
+  const name = state.project;
+  if(!name) return;
+  let data;
+  try{ data = await api('/api/result/prompt?project=' + encodeURIComponent(name)); }
+  catch(e){ if(state.view === 'result' && state.project === name) toast(e.message, TOAST_ERROR_MS); return; }
+  if(state.view !== 'result' || state.project !== name) return;   // 回包前离开了 ⑤ / 换了项目：不弹
+  showModal(COPY_PROMPT_TITLE, aiPromptHtml(data || {}));
+}
+
 Object.assign(ACTIONS, {
+  openAiPrompt: ()=>openAiPrompt(),
   editTarget: ()=>editTarget(), cancelTarget: ()=>cancelTarget(), applyTarget: ()=>applyTarget(),
   applySuggested: ()=>applySuggested(), makePreview: ()=>makePreview(),
   gateBHint: ()=>toast(COPY_GATE_B_HINT), retrySave: ()=>retrySave(),

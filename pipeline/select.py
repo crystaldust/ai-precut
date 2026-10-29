@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-from pipeline import classify, fingerprints, review, schema, select_rules, shot_sub
+from pipeline import classify, custom_rules, fingerprints, review, schema, select_rules, shot_sub
 
 HARD_TYPES = {"金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑"}
 MIN_SHOT = 1.5      # 最短镜头
@@ -597,7 +597,8 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
         material: str = "", weights: dict | None = None,
         calibration: dict | None = None, target: float | None = None,
         custom: dict | None = None) -> dict:
-    """custom：custom_rules.ensure 的结果（剪辑师自定义想法换算出的规则），合并在选项规则之后。"""
+    """custom：custom_rules.ensure 的结果（剪辑师自定义想法换算出的规则），合并在选项规则之后；
+    其中实际发出的提示词记为 custom_prompt（⑤「查看 AI 提示词」）。"""
     # M13 D3：输入指纹在选段开始前取（选段过程中被改的输入，选完后要显示为「需要更新」）；
     # target 用传进来的值，而不是重读 project.json（cmd_select 选段成功后才保存新目标）
     inputs = fingerprints.selection_inputs(
@@ -642,7 +643,8 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
     lines = select_rules.parse_must_lines((calibration or {}).get("must_lines"))
     rules = {**rules, "must_lines": list(dict.fromkeys(
         [*select_rules.parse_must_lines(rules.get("must_lines")), *lines]))}
-    result = {**select(segments, topics, rules, target, weights), "inputs": inputs, "custom_rules": custom_items}
+    result = {**select(segments, topics, rules, target, weights), "inputs": inputs, "custom_rules": custom_items,
+              "custom_prompt": custom_rules.prompt_record(custom)}
     if extra_warnings:
         result = {**result, "warnings": [*result["warnings"], *extra_warnings]}
 
