@@ -53,6 +53,9 @@
 5. **⑤ 看结果**（闸门 B）：
    - 顶栏：目标时长（点「改」就地改，确定后重新选段）· 当前总时长 · 镜头数 · 剪辑列表 N/M 进片 ✓；剪辑列表超过目标时长时
      变成警告条并直接给建议时长。
+   - 顶栏右侧「查看 AI 提示词」：弹窗显示生成当前选段时发给 AI 的内容。选段本身是程序按规则计算的；只有 ④ 填了
+     「自定义」想法，才会请 AI 换算成选段规则，此时显示系统提示词、用户提示词、AI 的原始回复、换算时间和每条想法的换算结果；
+     没填就说明「本次选段没有调用 AI」。两种情况都列出最终选段规则（选项 + 自定义合并后）。
    - 左边是**分镜表**：字幕直接改（自动保存）、↑ ↓ 调顺序、✕ 删镜头、＋空镜、按时间排序；每镜有「为什么选它」，
      可展开看被删掉的替代句；选中一镜可以在播放器里设入点 / 出点。
    - 右上是**预览片**：点「生成预览片」（只在顶栏胶囊里显示进度）。**预览片不产生版本号**；分镜表改过后会提示
@@ -149,6 +152,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | POST | `/api/browse/batch` | ③ 批量标记 `{project, items:[{id, must_keep?, unusable?, level?}], restore_shots?}`（≤ 2000 条；`level: null` = 撤销人工档位）：整批成功或整批不写；响应 `segments`（这批各段最新状态）、`cleared`（`{id: 被清掉的标记}`）、`clip_list`、`wizard`、`removed_shots`、`restored`、`not_restored` |
 | POST | `/api/topics/rename` | 话题改名 `{project, name, display}`：只改显示名，选段 / 答案仍按原名匹配；`display` 为空 = 恢复原名；重名 / 超长 → 400 |
 | POST | `/api/confirm/answers` | ④ 保存答案 `{project, answers, custom?, confirmed?, manual?}`（`custom` = `{题 id 或 "_extra": 文字}`，不带 = 清空）：不带 `confirmed` = 草稿（不动确认状态、不起任务）；`confirmed:true` 保存并起「重新选段」任务（`manual:'replace'|'keep'` 决定手动分镜表怎么处理；`job_id`，没能起来时 `job_error`）；响应带 `wizard` |
+| GET | `/api/result/prompt?project=` | ⑤ 查看 AI 提示词：`called`（这次选段用到了 AI 换算）、`recorded`（有当时实际发出的记录）、`system` / `user` / `reply` / `at`、`items`（每条自定义的换算结果）、`rules`（最终选段规则，人话）；没有选段 → 404，`selection.json` 损坏 → 409 |
 | POST | `/api/result/restore-ai` | ⑤ 恢复为 AI 选段：备份并删除手动分镜表；没有手动表是空操作；没有 AI 选段 / 项目有任务在跑 → 409 |
 | POST | `/api/versions/restore` | ⑥ 回到这一版 `{project, version}`：该版留存的分镜表写成当前分镜表（先备份当前手动表；含不可用片段的镜头去掉并列在 `dropped`）；无快照 / 任务在跑 / 镜头全被去掉 → 409；不删除任何版本 |
 | POST | `/api/prefs` | 改界面偏好；快捷键冲突 / 非法键位 → 400 并说明 |
@@ -207,7 +211,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | `step-criteria.js` | ④ 页面骨架与加载、目录、决策问题（含自定义；草稿自动保存）、闸门、档位修改 |
 | `criteria-analysis.js` | ④「分析对不对」：话题改名、关键信息、说话人、逐段改档位 |
 | `criteria-pending.js` | ④「裁决待定」：一次一段、A / D、先跳过、剩下的按 AI 建议、播放器 |
-| `step-result.js` | ⑤ 看结果：页面骨架、顶栏摘要、就地改目标时长、预览片、闸门 B「看过了，去导出」 |
+| `step-result.js` | ⑤ 看结果：页面骨架、顶栏摘要、就地改目标时长、预览片、闸门 B「看过了，去导出」、查看 AI 提示词弹窗 |
 | `result-table.js` | ⑤ 分镜表（字幕可改、为什么选它、替代句）、一个播放器两种模式（预览片 / 素材）、入出点、重新选段期间只读 |
 | `result-unused.js` | ⑤ 未采用清单：原因、试听、加回（按时间插入，算一次手动修改） |
 | `reselect.js` | 重新选段前的「覆盖 / 保留我的修改 / 取消」询问（⑤ 改时长、横幅重新选段、④ 重新确认）与「恢复为 AI 选段」 |
