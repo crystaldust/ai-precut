@@ -16,6 +16,7 @@ __pycache__/
 .coverage
 .coverage.*
 htmlcov/
+node_modules/
 
 # 系统
 .DS_Store
