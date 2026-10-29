@@ -46,6 +46,8 @@
    - **裁决待定**：一次一段，看原文、依据、听一下，**A 可用 / D 废片**，也可以「先跳过」。
      「剩下的按 AI 建议」= 剩下的待定先不进片，**不会替你标可用或废片**，之后仍可在 ③ 改。
    - **决策问题**：3–5 题，每个选项下一行「选了会怎样」；点选即自动保存；可以「重新出题」；兜底模板出的题会标明。
+     每题最后有「自定义」（单选题选它 = 替换选项，多选题可与选项一起勾），题目之后还有「其他想法（自定义）」；
+     写下的想法在确认后由 AI 换算成选段规则，回到 ④ 时输入框下显示「AI 理解为：…」，没能换算的说明原因。
    点底部「确认，生成分镜表」：保存答案并重新选段，完成后自动进入 ⑤。如果还有待定没裁完，会先问
    「还有 N 段待定，按 AI 建议处理？」，不会拦住你。改版前就出过片的旧项目，④ 顶部有一行提示，可以直接去 ⑤ ⑥。
 5. **⑤ 看结果**（闸门 B）：
@@ -133,7 +135,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | GET | `/api/versions/compare?project=&a=&b=` | ⑥ 对比两版：两侧的预览片 / 镜头数 / 时长 + `diff`（新增 / 删除 / 改字幕 / 改入出点 / 顺序）；任一版没有留存分镜表 → `diff:null` + `note` |
 | GET | `/api/analysis?project=` | ② 的人话进度：11 项 `{label, status, seconds}`、`done/total`、`failed`、`notice`；重新分析时只显示要重跑的部分 |
 | GET | `/api/browse?project=` | ③ 的数据：摘要、`segments`（含 `must_keep` / `unusable` / `inCut`）、`speakers`、`clip_list` |
-| GET | `/api/confirm?project=` | ④ 的数据：`questions`、`answers`、`pending`（待定段的 id 和起止，按时间）、`segments`（精简分段，文字最多 400 字）、`topics`（显示名 + 原名 + 段数）、`speakers`；还没有决策问题 → 404，分析结果不完整 → 409 |
+| GET | `/api/confirm?project=` | ④ 的数据：`questions`、`answers`、`custom`、`custom_understood`（上次换算的人话，只在文字没改时给）、`pending`（待定段的 id 和起止，按时间）、`segments`（精简分段，文字最多 400 字）、`topics`（显示名 + 原名 + 段数）、`speakers`；还没有决策问题 → 404，分析结果不完整 → 409 |
 | GET | `/api/prefs` | 界面偏好（快捷键、项目栏是否固定），存 `~/.config/ai-cut/ui_prefs.json`，所有项目通用 |
 | GET | `/api/job/<id>` | 任务进度（轮询，含日志）：`{status: running/done/failed/cancelled, log, exit, task, project}` |
 | GET | `/api/config` | 设置页：是否已确认数据外发说明 + 两种 Key 的状态（只给掩码） |
@@ -146,7 +148,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | POST | `/api/browse/unusable` | X：标 / 取消不可用；标记时会把手动分镜表里对应镜头移除（`removed_shots`，撤销时可 `restore_shots` 放回） |
 | POST | `/api/browse/batch` | ③ 批量标记 `{project, items:[{id, must_keep?, unusable?, level?}], restore_shots?}`（≤ 2000 条；`level: null` = 撤销人工档位）：整批成功或整批不写；响应 `segments`（这批各段最新状态）、`cleared`（`{id: 被清掉的标记}`）、`clip_list`、`wizard`、`removed_shots`、`restored`、`not_restored` |
 | POST | `/api/topics/rename` | 话题改名 `{project, name, display}`：只改显示名，选段 / 答案仍按原名匹配；`display` 为空 = 恢复原名；重名 / 超长 → 400 |
-| POST | `/api/confirm/answers` | ④ 保存答案 `{project, answers, confirmed?, manual?}`：不带 `confirmed` = 草稿（不动确认状态、不起任务）；`confirmed:true` 保存并起「重新选段」任务（`manual:'replace'|'keep'` 决定手动分镜表怎么处理；`job_id`，没能起来时 `job_error`）；响应带 `wizard` |
+| POST | `/api/confirm/answers` | ④ 保存答案 `{project, answers, custom?, confirmed?, manual?}`（`custom` = `{题 id 或 "_extra": 文字}`，不带 = 清空）：不带 `confirmed` = 草稿（不动确认状态、不起任务）；`confirmed:true` 保存并起「重新选段」任务（`manual:'replace'|'keep'` 决定手动分镜表怎么处理；`job_id`，没能起来时 `job_error`）；响应带 `wizard` |
 | POST | `/api/result/restore-ai` | ⑤ 恢复为 AI 选段：备份并删除手动分镜表；没有手动表是空操作；没有 AI 选段 / 项目有任务在跑 → 409 |
 | POST | `/api/versions/restore` | ⑥ 回到这一版 `{project, version}`：该版留存的分镜表写成当前分镜表（先备份当前手动表；含不可用片段的镜头去掉并列在 `dropped`）；无快照 / 任务在跑 / 镜头全被去掉 → 409；不删除任何版本 |
 | POST | `/api/prefs` | 改界面偏好；快捷键冲突 / 非法键位 → 400 并说明 |
@@ -202,7 +204,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | `step-analyze.js` | ② 分析进度 |
 | `step-browse.js` | ③ 看素材页面（摘要、分布条、列表、筛选、播放器） |
 | `batch-select.js` | ③ 批量选择：勾选框、Shift 连选、全选（当前筛选）、操作栏、批量标记与整批撤销 |
-| `step-criteria.js` | ④ 页面骨架与加载、目录、决策问题（草稿自动保存）、闸门、档位修改 |
+| `step-criteria.js` | ④ 页面骨架与加载、目录、决策问题（含自定义；草稿自动保存）、闸门、档位修改 |
 | `criteria-analysis.js` | ④「分析对不对」：话题改名、关键信息、说话人、逐段改档位 |
 | `criteria-pending.js` | ④「裁决待定」：一次一段、A / D、先跳过、剩下的按 AI 建议、播放器 |
 | `step-result.js` | ⑤ 看结果：页面骨架、顶栏摘要、就地改目标时长、预览片、闸门 B「看过了，去导出」 |
