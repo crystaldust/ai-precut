@@ -11,7 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from pipeline import media_io, proc, review, schema, shots_store, style
+from pipeline import media_io, proc, review, schema, shots_store, style, vision
 
 DIGEST_LEN = 12
 CORRUPT = "corrupt"
@@ -19,6 +19,8 @@ DEFAULT_TARGET_S = 175  # 与 aicut.cmd_select 传给 select.run 的默认目标
 SELECTION_KEYS = ("scored", "overrides", "answers", "target", "lines")
 PREVIEW_KEYS = ("table", "unusable", "preset", "title", "platform", "material")  # M14 E2：预览片的分项输入（都进 compose_timeline）
 PRESETS_DIR = proc.resource_path("presets")
+# 分析戳里后来才加的分项：旧戳缺这一项时按这里的值比较（改版前的项目没开画面理解，不能因此全部变「需要更新」）
+ANALYSIS_STAMP_DEFAULTS = {"vision": vision.OFF}
 
 
 def _sha(data: bytes) -> str:
@@ -89,8 +91,9 @@ def selection_inputs(workdir: Path, cfg: dict) -> dict[str, str]:
 
 
 def analysis_inputs(cfg: dict) -> dict[str, str]:
-    """AI 理解及之后各环节的输入：剪辑偏好指令 + 预设。"""
-    return {"directive": style.directive(cfg.get("calibration")), "preset": cfg.get("preset") or ""}
+    """AI 理解及之后各环节的输入：剪辑偏好指令 + 预设 + 画面理解设置。"""
+    return {"directive": style.directive(cfg.get("calibration")), "preset": cfg.get("preset") or "",
+            "vision": vision.fingerprint(vision.normalize(cfg.get("vision")))}
 
 
 def changed(saved: object, now: dict) -> list[str]:

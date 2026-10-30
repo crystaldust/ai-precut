@@ -17,6 +17,7 @@ STEPS = (("new", 1, "新建"), ("analyze", 2, "分析"), ("browse", 3, "看素�
 CIRCLED = "①②③④⑤⑥"
 LOCKED_HINT = "先完成「{n} {label}」"
 STALE_ANALYZE = "剪辑偏好或预设改过了 · 重新分析（只重跑 AI 理解及之后的环节，会重新调用 AI）"
+STALE_ANALYZE_VISION = "画面理解设置改过了 · 重新分析（已完成的转写、理解会沿用，只补跑画面相关的环节）"
 STALE_CRITERIA = "决策问题重新生成过 · 请重新作答并确认"
 STALE_RESULT_REASONS = {"scored": "分析结果更新了", "overrides": "素材标记改过了",
                         "answers": "答案改过了", "target": "目标时长改过了",
@@ -109,9 +110,12 @@ def _analyze_step(f: dict) -> dict:
     if not f["analysis_done"]:
         return _step("analyze", AVAILABLE)
     stamp, now = f["analysis_stamp"], f["analysis_inputs"]
+    if stamp and now:  # 旧戳缺后加的分项 → 两边都按默认值补齐再比较
+        stamp, now = ({**fingerprints.ANALYSIS_STAMP_DEFAULTS, **d} for d in (stamp, now))
     if stamp and now and stamp != now:  # 无戳（旧项目）→ 不判过期
-        return _step("analyze", STALE, banner=STALE_ANALYZE, action=ACTION_REANALYZE,
-                     reasons=fingerprints.changed(stamp, now))
+        reasons = fingerprints.changed(stamp, now)
+        banner = STALE_ANALYZE_VISION if "vision" in reasons else STALE_ANALYZE
+        return _step("analyze", STALE, banner=banner, action=ACTION_REANALYZE, reasons=reasons)
     return _step("analyze", DONE)
 
 

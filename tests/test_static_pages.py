@@ -122,7 +122,7 @@ def test_renumber_not_position_based():
 def test_new_project_asks_target():
     src = _read("index.html")
     assert "durationFields('np'" in src
-    create = src[src.index("async function createAndAnalyze"):]
+    create = src[src.index("async function createProject"):]
     assert "target" in create[:create.index("\n}")]
 
 
@@ -251,7 +251,7 @@ def test_index_shows_stale_job_bar():
 
 def test_create_project_has_no_hash_navigation():
     src = _read("index.html")
-    body = src[src.index("async function createAndAnalyze"):]
+    body = src[src.index("async function createProject"):]
     body = body[:body.index("\n}\n")]
     assert "location.hash" not in body and "await selectProject(name)" in body
 
@@ -278,7 +278,7 @@ def test_new_project_duration_is_free_input_above_preset():
     assert "durationFields('np'" in body and 'id="npTarget"' not in body
     assert body.index("durationFields('np'") < body.index('id="npPreset"')  # 时长在预设上面
     assert "esc(p.duration)" not in body                                     # 下拉里不再写死时长
-    create = src[src.index("async function createAndAnalyze"):]
+    create = src[src.index("async function createProject"):]
     assert "readDuration('np')" in create[:create.index("\n}")]
 
 

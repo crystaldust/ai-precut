@@ -52,6 +52,7 @@ DEFAULTS: dict[str, Any] = {
     "created": "",
     "brief": {},
     "calibration": {},
+    "vision": {"enabled": False, "tier": "economy"},  # 画面理解（pipeline/vision.DEFAULT；不 import，避免依赖环）
 }
 
 REQUIRED = ("name", "material")
