@@ -29,6 +29,7 @@ cd ~/Documents/deepseek-harness/default-workspace
 
 # 1. 新建项目（成片想剪多长由你定：--target 秒；不写会在终端里问，回车用预设时长）
 python3 aicut.py new 我的项目 --material ~/Movies/xxx.MOV --title "片名" --preset 纪实3min --target 240
+#    可选 --vision economy|balanced|quality：开启画面理解（把低清无声画面上传火山引擎；素材涉及隐私时别开），默认关闭
 
 # 2. 跑完整流程（已完成的环节自动跳过，不会重复花钱）
 python3 aicut.py run 我的项目
