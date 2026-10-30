@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>画面理解验证</title>
+<style>
+:root{--bg:#f6f5f2;--panel:#fff;--ink:#1d1d1b;--mute:#6b6a66;--line:#e3e1dc;--accent:#2f6fde;--asr:#7a8a99;--sem:#b9a27a;--warn:#c2410c;--ok:#15803d;
+ --c1:#4f7fd9;--c2:#3aa48c;--c3:#d08a3c;--c4:#9a6bd1;--c5:#d1586e}
+@media (prefers-color-scheme:dark){:root{--bg:#141413;--panel:#1e1e1c;--ink:#ecebe7;--mute:#9b9a95;--line:#33322f;--accent:#7aa5ff;--asr:#8796a5;--sem:#a48f6a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:0 0 12px}
+.sub{color:var(--mute);margin:0 0 20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:7px 8px;text-align:left;vertical-align:top}th{color:var(--mute);font-weight:500;white-space:nowrap}
+.tag{display:inline-block;padding:0 7px;border-radius:9px;font-size:12px;border:1px solid var(--line)}
+.tag.ok{color:var(--ok);border-color:currentColor}.tag.warn{color:var(--warn);border-color:currentColor}
+.tabs{display:flex;gap:8px;margin:8px 0 16px;flex-wrap:wrap}
+.tabs button{border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px 14px;border-radius:8px;cursor:pointer;font:inherit}
+.tabs button.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+.clip{display:grid;grid-template-columns:300px 1fr;gap:16px;align-items:start}
+@media (max-width:820px){.clip{grid-template-columns:1fr}}
+video{width:100%;max-height:540px;background:#000;border-radius:8px}
+.time{font-variant-numeric:tabular-nums;color:var(--mute);font-size:12px}
+.lanes{position:relative}
+.lane{display:grid;grid-template-columns:150px 1fr;gap:8px;align-items:center;margin:6px 0}
+.lane .name{font-size:12px;color:var(--mute);line-height:1.3}
+.lane .name b{color:var(--ink);font-weight:600;display:block}
+.track{position:relative;height:26px;background:var(--bg);border-radius:5px;cursor:pointer}
+.bar{position:absolute;top:2px;bottom:2px;border-radius:4px;opacity:.55;border:1px solid rgba(0,0,0,.15);overflow:hidden;font-size:11px;color:#fff;padding:3px 4px;white-space:nowrap}
+.bar:hover,.bar.cur{opacity:1}.bar.sel{outline:2px solid var(--ink)}
+.head{position:absolute;top:0;bottom:0;width:2px;background:var(--warn);pointer-events:none}
+.axis{position:relative;height:16px;margin-left:158px;font-size:11px;color:var(--mute)}
+.axis span{position:absolute;transform:translateX(-50%)}
+.now{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin-top:12px}
+.now .box{border:1px solid var(--line);border-radius:8px;padding:10px;font-size:13px}
+.now .box h4{margin:0 0 4px;font-size:12px;color:var(--mute);font-weight:500}
+.kv{margin:2px 0}.kv i{font-style:normal;color:var(--mute);margin-right:4px}
+.tx{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media (max-width:820px){.tx{grid-template-columns:1fr}}
+.tx ol{list-style:none;margin:0;padding:0;max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.tx li{padding:5px 8px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px}
+.tx li.cur{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.hint{color:var(--mute);font-size:12px;margin:6px 0 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>画面理解 · 第 1 阶段验证</h1>
+<p class="sub">MediaKit「视频理解智能策略」实测 · 素材 2026-09-01_080055 的浏览小样切片 · 2026-10-30 · 本页只在本机打开</p>
+
+<div class="card">
+<h2>结论</h2>
+<table>
+<tr><th>问题</th><th>结果</th></tr>
+<tr><td>现有 Key 能不能用</td><td><span class="tag ok">能</span> 现有 MediaKit Key 和上传流程直接可用，不需要新 Key</td></tr>
+<tr><td>输出格式</td><td><span class="tag ok">稳定</span> 9 次全部是合法 JSON，时间轴首尾相接、覆盖整段</td></tr>
+<tr><td>画面理解质量</td><td><span class="tag ok">好</span> 认得出协议书、盖章、微信界面、楼层「23F」等；无人声段落描述完整</td></tr>
+<tr><td>时间准确度</td><td><span class="tag warn">看抽帧密度</span> 省钱档误差约 2–12 秒；手动 2 fps 约 0–2 秒（看 B 片段 130 秒前后的盖章）</td></tr>
+<tr><td>「可用性」自评</td><td><span class="tag warn">不可靠</span> 所有段都给「可用」，要交给 DeepSeek + 规则判断</td></tr>
+<tr><td>替代 ASR</td><td><span class="tag warn">有潜力，未严格验证</span> 要求逐句转写时能给出时间戳和说话人（看 C 片段下方对照）；v1 保留 ASR</td></tr>
+<tr><td>智能语义切片</td><td><span class="tag warn">不采用</span> B、C 基本按 28 / 30 秒等分</td></tr>
+</table>
+<p class="hint">用法：选片段 → 播放或点任意色块跳到那一刻；下方「当前时刻」并排显示各方案对这一刻的描述，和画面对照即可。</p>
+</div>
+
+<div class="tabs" id="tabs"></div>
+<div id="view"></div>
+</div>
+
+<script>
+const DATA = /*DATA*/null;
+const COLORS = ['var(--c1)','var(--c2)','var(--c3)','var(--c4)','var(--c5)'];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = t => { t = Math.max(0, t); const m = Math.floor(t / 60), s = (t % 60).toFixed(1).padStart(4, '0'); return `${m}:${s}`; };
+const tok = u => u ? `${u.total_tokens.toLocaleString()} tokens` : '';
+let state = { clip: 'A', sel: null };
+
+function tabs() {
+  document.getElementById('tabs').innerHTML = Object.entries(DATA).map(([k, d]) =>
+    `<button class="${k === state.clip ? 'on' : ''}" data-clip="${k}">片段 ${k} · ${esc(d.desc)}</button>`).join('');
+}
+
+function lanes(d) {
+  const L = [{ name: '现有 ASR 转写', note: '句子级', color: 'var(--asr)', items: d.asr.map(x => ({ ...x, label: x.text })) }];
+  d.variants.forEach((v, i) => L.push({ name: v.label, note: `${tok(v.tokens)} · ${v.elapsed}s`, color: COLORS[i % 5], key: v.key,
+    items: v.events.map(e => ({ ...e, label: e.action })) }));
+  L.push({ name: '智能语义切片', note: '只有起止时间', color: 'var(--sem)', items: d.semantic.map((x, i) => ({ ...x, label: '#' + (i + 1) })) });
+  if (d.model_asr) L.push({ name: '模型逐句转写', note: `${tok(d.model_asr.tokens)} · ${d.model_asr.elapsed}s`, color: 'var(--c5)',
+    items: d.model_asr.lines.map(x => ({ ...x, label: x.text })) });
+  return L;
+}
+
+function render() {
+  tabs();
+  const d = DATA[state.clip], L = lanes(d), D = d.duration;
+  const ticks = []; for (let t = 0; t <= D; t += 30) ticks.push(`<span style="left:${t / D * 100}%">${fmt(t)}</span>`);
+  document.getElementById('view').innerHTML = `
+  <div class="card clip">
+    <div><video id="v" src="clips/${state.clip}.mp4" controls playsinline></video>
+      <div class="time" id="clock">0:00.0</div>
+      <p class="hint">原片位置 ${fmt(d.offset)} 起，共 ${D} 秒</p></div>
+    <div>
+      <div class="axis">${ticks.join('')}</div>
+      <div class="lanes">${L.map((l, li) => `
+        <div class="lane"><div class="name"><b>${esc(l.name)}</b>${esc(l.note)}</div>
+          <div class="track" data-lane="${li}">${l.items.map((x, xi) => `<div class="bar" data-lane="${li}" data-i="${xi}"
+            title="${esc(fmt(x.start) + '–' + fmt(x.end) + '  ' + x.label)}"
+            style="left:${x.start / D * 100}%;width:${Math.max(.4, (x.end - x.start) / D * 100)}%;background:${l.color}">${esc(x.label)}</div>`).join('')}
+            <div class="head"></div></div></div>`).join('')}
+      </div>
+      <h2 style="margin-top:16px">当前时刻 <span class="time" id="clock2"></span></h2>
+      <div class="now" id="now"></div>
+    </div>
+  </div>
+  ${d.model_asr ? txHtml(d) : ''}`;
+  const v = document.getElementById('v');
+  v.addEventListener('timeupdate', () => tick(v.currentTime));
+  document.querySelectorAll('.track').forEach(tr => tr.addEventListener('click', e => {
+    const bar = e.target.closest('.bar');
+    const t = bar ? L[+bar.dataset.lane].items[+bar.dataset.i].start
+                  : (e.offsetX / tr.clientWidth) * D;
+    seek(t);
+  }));
+  document.querySelectorAll('.tx li').forEach(li => li.addEventListener('click', () => seek(+li.dataset.t)));
+  tick(0);
+}
+
+function txHtml(d) {
+  const li = arr => arr.map(x => `<li data-t="${x.start}" data-e="${x.end}"><span class="time">${fmt(x.start)}–${fmt(x.end)} · ${esc(x.speaker)}</span><br>${esc(x.text)}</li>`).join('');
+  const asrChars = d.asr.reduce((n, x) => n + x.text.length, 0), mChars = d.model_asr.lines.reduce((n, x) => n + x.text.length, 0);
+  return `<div class="card"><h2>逐句转写对照（同一段 3 分钟）</h2>
+    <div class="tx"><div><b>现有 ASR</b> <span class="time">${d.asr.length} 句 · ${asrChars} 字</span><ol id="txA">${li(d.asr)}</ol></div>
+    <div><b>模型转写（need_audio + 要求逐句转写）</b> <span class="time">${d.model_asr.lines.length} 句 · ${mChars} 字</span><ol id="txM">${li(d.model_asr.lines)}</ol></div></div>
+    <p class="hint">点任意一句跳到那一刻，边听边对比错字、断句和说话人。</p></div>`;
+}
+
+function seek(t) { const v = document.getElementById('v'); v.currentTime = t; tick(t); }
+
+function tick(t) {
+  const d = DATA[state.clip], L = lanes(d), D = d.duration;
+  document.getElementById('clock').textContent = fmt(t) + ` · 原片 ${fmt(d.offset + t)}`;
+  document.getElementById('clock2').textContent = fmt(t);
+  document.querySelectorAll('.head').forEach(h => h.style.left = (t / D * 100) + '%');
+  document.querySelectorAll('.bar').forEach(b => {
+    const x = L[+b.dataset.lane].items[+b.dataset.i];
+    b.classList.toggle('cur', t >= x.start && t < x.end);
+  });
+  document.getElementById('now').innerHTML = L.map(l => {
+    const x = l.items.find(x => t >= x.start && t < x.end);
+    let body = '<span class="time">（这一刻没有内容）</span>';
+    if (x) {
+      body = `<div class="time">${fmt(x.start)}–${fmt(x.end)}</div>` + (x.action !== undefined
+        ? `<div class="kv"><i>景别</i>${esc(x.shot)}</div><div class="kv"><i>人物</i>${esc(x.people)}</div>
+           <div class="kv"><i>动作</i>${esc(x.action)}</div><div class="kv"><i>物品</i>${esc((x.objects || []).join('、'))}</div>
+           <div class="kv"><i>屏幕文字</i>${esc(x.text_on_screen || '—')}</div><div class="kv"><i>可用性</i>${esc(x.usable)}</div>`
+        : `<div>${esc(x.speaker ? x.speaker + '：' : '')}${esc(x.text ?? x.label)}</div>`);
+    }
+    return `<div class="box"><h4>${esc(l.name)}</h4>${body}</div>`;
+  }).join('');
+  document.querySelectorAll('.tx li').forEach(li => li.classList.toggle('cur', t >= +li.dataset.t && t < +li.dataset.e));
+}
+
+document.getElementById('tabs').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return; state.clip = b.dataset.clip; render();
+});
+render();
+</script>
+</body>
+</html>
