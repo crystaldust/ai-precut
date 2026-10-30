@@ -3,7 +3,8 @@
 
   * 账本在 work/llm_usage.json：{"total_tokens", "calls", "by_stage": {stage: {...}}}；坏文件不阻断（当空账本）；
   * 预算按项目累计 tokens，AI_CUT_LLM_BUDGET_TOKENS 调整，0 = 不限；只统计 tokens，不折算金额（D3）；
-  * MeteredClient 包住 DeepSeekClient：调用前查预算、调用后按 last_usage 记账（跨进程加锁）。
+  * MeteredClient 包住 DeepSeekClient：调用前查预算、调用后按 last_usage 记账（跨进程加锁）；
+  * 画面理解（MediaKit）另记 work/vision_usage.json，同样格式，不计入 LLM 预算。
 """
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ from pipeline import applog, schema
 from pipeline.llm import LLMError
 
 USAGE_FILE = "llm_usage.json"
+VISION_USAGE_FILE = "vision_usage.json"
+VISION_STAGE = "vision"
 BUDGET_ENV = "AI_CUT_LLM_BUDGET_TOKENS"
 DEFAULT_BUDGET_TOKENS = 3_000_000
 RECORD_FAILED = "[!] LLM 用量没记上（{exc}），本次用量不计入预算"
@@ -57,9 +60,9 @@ def _sane(data: object) -> dict:
             "by_stage": {k: v for k, v in stages.items() if isinstance(v, dict)}}
 
 
-def load(workdir: Path) -> dict:
+def load(workdir: Path, *, file: str = USAGE_FILE) -> dict:
     try:
-        return _sane(schema.read_json(Path(workdir) / USAGE_FILE, default=None, expect=None))
+        return _sane(schema.read_json(Path(workdir) / file, default=None, expect=None))
     except schema.CorruptJSON:  # 账本坏了不能挡住剪辑：按空账本继续
         return _empty()
 
@@ -70,12 +73,12 @@ def total_of(used: dict) -> int:
                                                + _int(used.get("completion_tokens")))
 
 
-def record(workdir: Path, stage: str, used: dict | None) -> None:
+def record(workdir: Path, stage: str, used: dict | None, *, file: str = USAGE_FILE) -> None:
     """把一次调用的用量累加进账本（跨进程加锁读改写）。"""
     used = used if isinstance(used, dict) else {}
-    path = Path(workdir) / USAGE_FILE
+    path = Path(workdir) / file
     with schema.locked(path):
-        led = load(workdir)
+        led = load(workdir, file=file)
         cur = dict(led["by_stage"].get(stage) or {})
         cur = {**cur, **{k: _int(cur.get(k)) + _int(used.get(k)) for k in TOKEN_KEYS[:2]},
                "total_tokens": _int(cur.get("total_tokens")) + total_of(used),
@@ -104,6 +107,19 @@ def over_budget_message(workdir: Path) -> str | None:
 def summary(workdir: Path) -> dict:
     """给界面 / status：{"total_tokens", "budget"}（budget 为 None 表示不限）。"""
     return {"total_tokens": load(workdir)["total_tokens"], "budget": budget()}
+
+
+def record_vision(workdir: Path, token_usage: object) -> int:
+    """画面理解一次任务的 token_usage{input_tokens, output_tokens, total_tokens} 记进画面账本；返回记了多少。"""
+    tu = token_usage if isinstance(token_usage, dict) else {}
+    used = {"prompt_tokens": tu.get("input_tokens"), "completion_tokens": tu.get("output_tokens"),
+            "total_tokens": tu.get("total_tokens")}
+    record(workdir, VISION_STAGE, used, file=VISION_USAGE_FILE)
+    return total_of(used)
+
+
+def vision_tokens(workdir: Path) -> int:
+    return load(workdir, file=VISION_USAGE_FILE)["total_tokens"]
 
 
 class MeteredClient:

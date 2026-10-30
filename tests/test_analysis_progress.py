@@ -232,3 +232,73 @@ def test_facts_does_not_adopt_unmarked_proxy_or_write_markers(tmp_path):
     f = analysis.facts(pdir, {"material": "/tmp/a.mp4"}, running_job())
     assert f["artifacts"]["proxy"] is False
     assert not media_io.done_marker(pdir / "work/proxy.mp4").exists()
+
+
+# ---------------------------------------------------------------- 画面理解（第 3 阶段）
+VISUAL_DONE = {"materials", "proxy", "wav", "segments", "audio_json", "visual"}
+UP_TO_VISUAL = {k: timing(JOB_START + i + 1) for i, k in
+                enumerate(("ingest", "junk", "transcribe", "analyze", "scenes", "quality"))}
+
+
+def vfacts(**kw):
+    return {**facts(**kw), "vision_on": True}
+
+
+def test_vision_on_inserts_two_steps_after_visual():
+    res = analysis.progress(vfacts())
+    keys = [s["key"] for s in res["steps"]]
+    assert keys[5:8] == ["visual", "vision_proxy", "vision_cloud"] and res["total"] == 13
+    labels = {s["key"]: s["label"] for s in res["steps"]}
+    assert labels["vision_proxy"] == "生成画面代理" and labels["vision_cloud"] == "云端画面理解"
+
+
+def test_vision_off_keeps_eleven_steps():
+    res = analysis.progress({**facts(), "vision_on": False})
+    assert res["total"] == 11 and "vision_proxy" not in statuses(res)
+
+
+def test_vision_stage_running_starts_with_proxy():
+    res = analysis.progress(vfacts(done=VISUAL_DONE, timings=UP_TO_VISUAL, job=running_job()))
+    assert res["running"] == "vision_proxy"
+    assert statuses(res)["visual"] == "done"
+
+
+def test_vision_chunks_ready_moves_to_cloud_step():
+    res = analysis.progress(vfacts(done=VISUAL_DONE | {"vision_chunks"}, timings=UP_TO_VISUAL,
+                                   job=running_job()))
+    st = statuses(res)
+    assert st["vision_proxy"] == "done" and res["running"] == "vision_cloud"
+
+
+def test_vision_done_seconds_shown_on_cloud_step():
+    timings = {**UP_TO_VISUAL, "vision": timing(JOB_START + 10, seconds=42.0)}
+    res = analysis.progress(vfacts(done=VISUAL_DONE | {"vision_chunks", "vision_timeline"},
+                                   timings=timings))
+    by = {s["key"]: s for s in res["steps"]}
+    assert by["vision_cloud"]["status"] == "done" and by["vision_cloud"]["seconds"] == 42.0
+    assert by["vision_proxy"]["seconds"] is None
+
+
+def test_vision_failure_reported_on_vision_steps():
+    timings = {**UP_TO_VISUAL, "vision": timing(JOB_START + 10, ok=False)}
+    res = analysis.progress(vfacts(done=VISUAL_DONE | {"vision_chunks"}, timings=timings,
+                                   job={"task": "prepare", "status": "failed", "started": JOB_START,
+                                        "last_error": "画面理解失败：x"}))
+    assert res["failed"] == {"key": "vision_cloud", "label": "云端画面理解", "reason": "画面理解失败：x"}
+
+
+def test_vision_off_stage_running_points_at_text():
+    timings = {**UP_TO_VISUAL}
+    res = analysis.progress({**facts(done=VISUAL_DONE, timings=timings, job=running_job()),
+                             "vision_on": False})
+    assert res["running"] == "text"
+
+
+def test_facts_vision_flags(tmp_path, monkeypatch):
+    pdir = make_project(tmp_path)
+    assert analysis.facts(pdir, {}, None)["vision_on"] is False
+    monkeypatch.setattr(analysis.vision_run, "chunks_ready", lambda w, c: True)
+    monkeypatch.setattr(analysis.vision_run, "timeline_current", lambda w, c: False)
+    f = analysis.facts(pdir, {"vision": {"enabled": True, "tier": "economy"}}, None)
+    assert f["vision_on"] is True
+    assert f["artifacts"]["vision_chunks"] is True and f["artifacts"]["vision_timeline"] is False

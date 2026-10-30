@@ -32,11 +32,13 @@ def _with_margin(nbytes: float, anything: bool) -> int:
     return int(nbytes) + MARGIN_BYTES if anything else 0
 
 
-def need_for_prepare(media_s: float, *, wav: bool = True, proxy: bool = True) -> int:
-    """处理素材：还没完成的抽音轨（wav）和 / 或 540p 分析代理。"""
+def need_for_prepare(media_s: float, *, wav: bool = True, proxy: bool = True,
+                     vision: bool = False) -> int:
+    """处理素材：还没完成的抽音轨（wav）、540p 分析代理、画面理解的分段代理（无音轨，完成后删除）。"""
     per_s = (WAV_BYTES_PER_S if wav else 0) + \
-        (_bytes_per_s(encode.PROXY_BITRATE, PROXY_AUDIO_BPS) if proxy else 0)
-    return _with_margin(max(0.0, media_s or 0.0) * per_s, wav or proxy)
+        (_bytes_per_s(encode.PROXY_BITRATE, PROXY_AUDIO_BPS) if proxy else 0) + \
+        (_bytes_per_s(encode.VISION_BITRATE, 0) if vision else 0)
+    return _with_margin(max(0.0, media_s or 0.0) * per_s, wav or proxy or vision)
 
 
 def need_for_build(cut_s: float, preview_s: float) -> int:

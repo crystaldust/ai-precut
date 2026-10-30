@@ -697,3 +697,50 @@ def test_terminal_task_failure_forgets_upload_cache(tmp_path):
     with pytest.raises(cloud.CloudError):
         c.transcribe(wav, tmp_path)
     assert not (tmp_path / cloud.UPLOAD_CACHE).exists()
+
+
+# ---------------------------------------------------------------- 通用上传 / 提交（画面理解）
+VISION = "video-understand-router"
+VSUBMIT = ("POST", f"/api/v1/tools/{VISION}")
+
+
+def test_upload_for_other_tool_uses_its_tool_name_and_skips_asr_cache(tmp_path, capsys):
+    clip = _wav(tmp_path, "c.mp4", b"x" * 2_000_000)
+    c, http, ups = make({UPLOAD: [(200, UP_TARGET)]})
+    assert c.upload(clip, tool=VISION, label="画面") == "mediakit://F1"
+    assert http.bodies(UPLOAD) == [{"tool_name": VISION}]
+    assert ups[0]["path"] == clip
+    assert not (tmp_path / cloud.UPLOAD_CACHE).exists()
+    assert "上传画面（2 MB）" in capsys.readouterr().out
+
+
+def test_upload_failure_message_follows_label(tmp_path):
+    clip = _wav(tmp_path, "c.mp4")
+    c, _, _ = make({UPLOAD: [(200, UP_TARGET)]}, uploads=[(400, "<Code>Bad</Code>")])
+    with pytest.raises(cloud.CloudError, match="上传画面失败（HTTP 400，Bad）"):
+        c.upload(clip, tool=VISION, label="画面")
+
+
+def test_asr_upload_failure_message_unchanged(tmp_path):
+    wav = _wav(tmp_path)
+    c, _, _ = make(ROUTES, uploads=[(400, "")])
+    with pytest.raises(cloud.CloudError, match="上传音轨失败（HTTP 400）"):
+        c.submit_asr(wav)
+
+
+def test_submit_tool_posts_payload_and_returns_task_id():
+    c, http, _ = make({VSUBMIT: [ok_task("v1")]})
+    assert c.submit_tool(VISION, {"video_urls": ["mediakit://F1"], "prompt": "p"}) == "v1"
+    assert http.bodies(VSUBMIT) == [{"video_urls": ["mediakit://F1"], "prompt": "p"}]
+
+
+def test_submit_tool_reads_nested_task_id():
+    c, _, _ = make({VSUBMIT: [(200, {"success": True, "result": {"task_id": "v2"}})]})
+    assert c.submit_tool(VISION, {}) == "v2"
+
+
+def test_submit_tool_without_task_id_raises_redacted():
+    c, _, _ = make({VSUBMIT: [(200, {"success": True, "note": KEY})]})
+    with pytest.raises(cloud.CloudError, match="未返回 task_id") as ei:
+        c.submit_tool(VISION, {})
+    assert KEY not in str(ei.value)

@@ -157,7 +157,8 @@ def _error_message(payload: object) -> str:
     return err if isinstance(err, str) else ""
 
 
-UPLOAD_FAILED = "上传音轨失败（HTTP {status}{code}）"
+UPLOAD_FAILED = "上传{label}失败（HTTP {status}{code}）"
+ASR_LABEL = "音轨"
 _STORAGE_CODE = re.compile(r"<Code>([A-Za-z0-9_.\-]{1,64})</Code>")
 
 
@@ -213,6 +214,10 @@ class CloudClient:
 
     def __repr__(self) -> str:
         return f"CloudClient(endpoint={self.endpoint!r}, key={secrets.mask(self.api_key)!r})"
+
+    def key_id(self) -> str:
+        """当前 Key 的不可逆短指纹：上传缓存按账号隔离，文件里不出现 Key。"""
+        return _key_id(self.api_key or "")
 
     # ------------------------------------------------------------------ 基础
     def _headers(self) -> dict:
@@ -313,8 +318,8 @@ class CloudClient:
         except OSError:
             pass  # 记不下只是下次要重传，不影响这次
 
-    def _upload_target(self) -> tuple[str, str, str, dict]:
-        data = self._request("POST", UPLOAD_PATH, {"tool_name": ASR_TOOL}, self.timeout_submit)
+    def _upload_target(self, tool: str = ASR_TOOL) -> tuple[str, str, str, dict]:
+        data = self._request("POST", UPLOAD_PATH, {"tool_name": tool}, self.timeout_submit)
         res = data.get("result") if isinstance(data.get("result"), dict) else data
         file_id, url = res.get("file_id"), res.get("upload_url")
         if not file_id or not url:
@@ -325,12 +330,18 @@ class CloudClient:
         method = str(res.get("method") or "PUT").upper()
         return file_id, url, method, _parse_upload_headers(res.get("upload_headers"))
 
-    def _upload(self, audio: Path, workdir: Path | None) -> str:
+    def upload(self, path: Path, *, tool: str, label: str) -> str:
+        """上传本地文件给某个工具用，返回 mediakit:// file_id；不写 ASR 上传缓存（调用方自己记）。"""
+        self._headers()  # 没 Key 先失败，不去读 / 传文件
+        return self._upload(Path(path), None, tool=tool, label=label)
+
+    def _upload(self, audio: Path, workdir: Path | None, *, tool: str = ASR_TOOL,
+                label: str = ASR_LABEL) -> str:
         size = Path(audio).stat().st_size
         last: Exception | None = None
         for attempt in range(self.retries + 1):
-            file_id, url, method, headers = self._upload_target()
-            print(f"[·] 上传音轨（{size / 1e6:.0f} MB）…")
+            file_id, url, method, headers = self._upload_target(tool)
+            print(f"[·] 上传{label}（{size / 1e6:.0f} MB）…")
             try:
                 status, text = self.uploader(method, url, headers, Path(audio), self.timeout_upload)
             except CloudError as exc:
@@ -341,7 +352,8 @@ class CloudClient:
                 if status < 300:
                     self._remember_upload(audio, workdir, file_id)
                     return file_id
-                last = CloudError(UPLOAD_FAILED.format(status=status, code=_storage_code(text)))
+                last = CloudError(UPLOAD_FAILED.format(label=label, status=status,
+                                                        code=_storage_code(text)))
                 if status not in UPLOAD_RETRY_STATUS:
                     raise last
             self._backoff(attempt)
@@ -382,7 +394,16 @@ class CloudClient:
             _forget_upload(workdir)
             _clear_submit_token(workdir)
             data = submit(self._upload(Path(audio), workdir), uuid.uuid4().hex)
-        task_id = data.get("task_id") or (data.get("result") or {}).get("task_id")
+        return self._task_id(data)
+
+    def submit_tool(self, tool: str, payload: dict) -> str:
+        """提交一个异步工具任务（如画面理解），返回 task_id。"""
+        data = self._request("POST", f"/api/v1/tools/{tool}", payload, self.timeout_submit)
+        return self._task_id(data)
+
+    def _task_id(self, data: dict) -> str:
+        result = data.get("result") if isinstance(data.get("result"), dict) else {}
+        task_id = data.get("task_id") or result.get("task_id")
         if not task_id:
             raise CloudError(f"未返回 task_id：{_redact(json.dumps(data, ensure_ascii=False), self.api_key)}")
         return str(task_id)

@@ -88,7 +88,7 @@ def _project(projects, transcript=False):
     return pdir
 
 
-STAGES = ("cmd_ingest", "cmd_junk", "cmd_transcribe", "cmd_analyze", "cmd_scenes", "cmd_quality",
+STAGES = ("cmd_ingest", "cmd_junk", "cmd_transcribe", "cmd_analyze", "cmd_scenes", "cmd_quality", "cmd_vision",
           "cmd_text", "cmd_score", "cmd_summary", "cmd_questions", "cmd_select", "cmd_brief")
 
 

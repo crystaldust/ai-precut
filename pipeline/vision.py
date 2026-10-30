@@ -3,7 +3,9 @@
 
 按项目存进 project.json 的 vision 字段（每条素材的隐私情况不同，不做全局开关）；
 进分析输入指纹（fingerprints.analysis_inputs），改了之后 ② 标「需要更新」。
-档位用英文 key，界面另行映射中文，第 3 阶段再映射到 MediaKit 的抽帧参数。
+档位用英文 key，界面另行映射中文；TIER_FPS 映射到 MediaKit video-understand-router 的抽帧参数。
+档位只按手动 fps 区分：第 1 阶段实测手动 2 fps 时间最准、费用与 Economy 相当；
+level 与 manual_option 同传虽被接受，但看不出哪个生效，所以不传 level。
 """
 from __future__ import annotations
 
@@ -11,6 +13,11 @@ TIERS = ("economy", "balanced", "quality")
 DEFAULT_TIER = "economy"
 DEFAULT = {"enabled": False, "tier": DEFAULT_TIER}  # 与 schema.DEFAULTS["vision"] 一致（测试锁定）
 OFF = "off"
+TIER_FPS = {"economy": 2.0, "balanced": 2.5, "quality": 3.0}
+CHUNK_S = 300        # 每段 5 分钟
+MIN_TAIL_S = 20      # 最后一段不足这么长就并进前一段
+MAX_FRAMES = 1000    # 接口单视频帧数上限
+PROMPT_VERSION = 1   # 提示词或解析规则变了就加 1：旧段结果作废
 BAD_SETTING_MSG = "画面理解设置不对：enabled 要是开 / 关，档位只能是省钱 / 均衡 / 精细"
 
 
@@ -32,3 +39,12 @@ def check(body: dict) -> dict:
     if not isinstance(enabled, bool) or not isinstance(tier, str) or tier not in TIERS:
         raise ValueError(BAD_SETTING_MSG)
     return {"enabled": enabled, "tier": tier}
+
+
+def is_on(cfg: dict) -> bool:
+    return normalize(cfg.get("vision")).get("enabled") is True
+
+
+def tier_params(tier: str) -> dict:
+    """提交给接口的抽帧参数（新 dict）。不传音轨：画面代理本来就没有声音。"""
+    return {"manual_option": {"fps": TIER_FPS[tier], "need_audio": False}}

@@ -14,6 +14,7 @@ TEXT_INCOMPLETE_STATUS = "未完成"
 MEDIA_SUFFIXES = (".wav", ".mp4")  # 这些产物以完成标记判定（GL-15；旧项目可被认领），其余看存在
 USAGE_LINE = "LLM 用量：{used} tokens（上限 {budget}）"
 USAGE_UNLIMITED = "不限"
+VISION_USAGE_LINE = "画面理解用量：{used} tokens（不计入 LLM 上限）"
 LIST_CORRUPT = "（project.json 损坏）"
 CLEAN_ITEM = "  {label}：{path}（{mb:.1f} MB）"
 CLEAN_NOTHING = "没有可清理的缓存"
@@ -39,6 +40,8 @@ def status(pdir: Path, c: dict) -> None:
     print(f"\n已出片：{outs or '无'}")
     used = usage.summary(pdir / "work")
     print(USAGE_LINE.format(used=used["total_tokens"], budget=used["budget"] or USAGE_UNLIMITED))
+    if vision_used := usage.vision_tokens(pdir / "work"):
+        print(VISION_USAGE_LINE.format(used=vision_used))
 
 
 def list_projects(root: Path) -> None:

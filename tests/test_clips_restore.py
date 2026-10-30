@@ -121,7 +121,7 @@ def test_build_preflight_counts_only_pending(project, monkeypatch):
 
 def test_prepare_skips_disk_check_when_media_done(project, monkeypatch, consented):
     from pipeline import diskspace
-    monkeypatch.setattr(aicut.readiness, "missing_keys", lambda w: [])
+    monkeypatch.setattr(aicut.readiness, "missing_keys", lambda w, c=None: [])
     monkeypatch.setattr(aicut.media_io, "complete_or_adopt", lambda p, **k: True)
     seen = []
     monkeypatch.setattr(aicut.diskspace, "shortfall", lambda path, need, **k: seen.append(need))

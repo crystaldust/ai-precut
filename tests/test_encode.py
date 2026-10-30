@@ -51,7 +51,7 @@ def test_chosen_encoder_is_used_by_h264_args(monkeypatch):
 
 def test_bitrates_are_named_constants():
     assert encode.BITRATES == {"proxy": encode.PROXY_BITRATE, "clip": encode.CLIP_BITRATE,
-                               "preview": encode.PREVIEW_BITRATE}
+                               "preview": encode.PREVIEW_BITRATE, "vision": encode.VISION_BITRATE}
 
 
 def test_h264_args_returns_fresh_list():

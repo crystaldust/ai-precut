@@ -17,6 +17,7 @@
   brief <项目名>               生成"给 AI/给人看"的策划分派单
   select <项目名> [--target 秒]  改目标时长后只重跑选段（不转写、不调 LLM）
   build <项目名> [--version v2] [--no-draft]   分镜表 → 切片 → 预览 → 剪映草稿
+  vision <项目名>              画面理解（可选，project.json 的 vision 开启时才上传）
   status <项目名>              看每个环节的状态
   list                         列出所有项目
 """
@@ -34,7 +35,7 @@ from pipeline.pyver import require_supported_python; require_supported_python() 
 from pipeline import (applog, build_documentary, classify, cloud, consent, diskspace, encode, exclusions, export_draft,  # noqa: E402
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
                       select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
-                      usage)
+                      usage, vision, vision_run)
 from pipeline import brief, cli_args, clips, config_cli, custom_rules, export_flow, fingerprints, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
 from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
 from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
@@ -79,6 +80,8 @@ DIR_NOT_EMPTY = "{pdir} 已存在且不是空目录（也不是项目），换�
 MUST_KEEP_OVER_HINT = ("剪辑列表共 {must}，超过目标 {target}。想剪成多长？"
                        "运行：aicut.py select {name} --target <秒>（建议 --target {suggest}）")
 INGEST_FAILED = "素材读不出来：{reason}"
+VISION_OFF = "画面理解没开，跳过（在「② 分析」或 `aicut new --vision` 里开启）"
+VISION_FAILED = "画面理解失败：{exc}（可以重试，或在「② 分析」关掉画面理解后继续）"
 PRESET_MISSING = "找不到预设 {preset}（presets/{preset}.json），可用：{names}"
 TEXT_CACHED = "输入没变，沿用上次的标注结果（不重新计费）"
 SUMMARY_CACHED = "输入没变，沿用上次的内容摘要（不重新计费）"
@@ -163,12 +166,14 @@ def metered(work: Path, stage: str, model: str = DEFAULT_MODEL) -> usage.Metered
 
 
 def prepare_need(pdir: Path) -> int:
-    """处理素材要写的字节：只算还没完成的音轨 / 代理；素材时长读不到按 0 估（只查余量）。"""
-    material = cfg(pdir)["material"]
+    """处理素材要写的字节：只算还没完成的音轨 / 代理 / 画面代理；素材时长读不到按 0 估（只查余量）。"""
+    c = cfg(pdir)
+    material = c["material"]
     wav = not media_io.complete_or_adopt(pdir / "work/audio/asr.wav", source=material)
     proxy = not media_io.complete_or_adopt(pdir / "work/proxy.mp4", source=material)
-    media_s = media_io.duration_or_zero(Path(material)) if wav or proxy else 0.0
-    return diskspace.need_for_prepare(media_s, wav=wav, proxy=proxy)
+    shots = vision.is_on(c) and not vision_run.timeline_current(pdir / "work", c)
+    media_s = media_io.duration_or_zero(Path(material)) if wav or proxy or shots else 0.0
+    return diskspace.need_for_prepare(media_s, wav=wav, proxy=proxy, vision=shots)
 
 
 def build_need(pdir: Path, c: dict, shots: list[dict], version: str | None) -> int:
@@ -215,6 +220,7 @@ def cmd_new(args) -> None:
         target_duration=target,
         created=time.strftime("%Y-%m-%d %H:%M:%S"),
         calibration=calibration,
+        vision=_vision_setting(getattr(args, "vision", "off")),
     )
     created = not pdir.exists()
     pdir.mkdir(parents=True, exist_ok=True)
@@ -228,6 +234,13 @@ def cmd_new(args) -> None:
         raise
     ok(f"项目已创建：{pdir}")
     info(f"下一步：python3 aicut.py run {args.name}")
+
+
+def _vision_setting(choice: str | None) -> dict:
+    """--vision off|economy|balanced|quality → project.json 的 vision 字段。"""
+    if choice in vision.TIERS:
+        return {"enabled": True, "tier": choice}
+    return dict(vision.DEFAULT)
 
 
 def cmd_ingest(args) -> None:
@@ -356,6 +369,29 @@ def cmd_junk(args) -> None:
             die(f"生成分析代理失败：{exc}")
     _run_pipeline("pipeline.junk_detect", [str(proxy), "-o", str(work), "--scene"])
     ok("废片检测完成 → work/junk_report.csv")
+
+
+def cmd_vision(args) -> None:
+    """画面理解（可选）：没开立即返回；开了就分段上传低清无声画面，产出 work/visual_timeline.json。"""
+    pdir = project_dir(args.name)
+    c = cfg(pdir)
+    if not vision.is_on(c):
+        info(VISION_OFF)
+        return
+    work = pdir / "work"
+    proxy = work / "proxy.mp4"
+    if not media_io.complete_or_adopt(proxy, source=c["material"]):
+        die("先跑 junk（需要 work/proxy.mp4）")
+    if not vision_run.timeline_current(work, c):
+        require_consent()
+        if not secrets.get("mediakit"):
+            die("未配置 MEDIAKIT_API_KEY：运行 `uv run python aicut.py config set mediakit`")
+        info("云端画面理解（按 5 分钟一段上传低清无声画面，中断后重跑会接着做）…")
+    try:
+        timeline = vision_run.run(work, c, proxy)
+    except (vision_run.VisionError, cloud.CloudError) as exc:
+        die(VISION_FAILED.format(exc=exc))
+    ok(f"画面理解完成：{len(timeline.get('events') or [])} 个画面事件 → work/{vision_run.TIMELINE_FILE}")
 
 
 def cmd_scenes(args) -> None:
@@ -650,7 +686,7 @@ def cmd_prepare(args) -> None:
     """GUI 用：只做前期（不 build），完成后再由人挑镜头。缺告知 / 缺 Key 一开始就停（GL-02）。"""
     pdir = project_dir(args.name)
     require_consent()
-    if missing := readiness.missing_keys(pdir / "work"):
+    if missing := readiness.missing_keys(pdir / "work", cfg(pdir)):
         die(PREPARE_KEYS_MISSING.format(names=readiness.describe(missing)))
     if problem := encode.preflight():  # 付费步骤之前确认能出片
         die(problem)

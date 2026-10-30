@@ -43,7 +43,11 @@ def config_payload() -> dict:
 def check_prepare_ready(pdir: Path) -> None:
     if not consent.accepted():
         raise PrepareBlocked("consent", NEED_CONSENT_MSG)
-    missing = readiness.missing_keys(Path(pdir) / "work")
+    try:  # 看画面理解开关；project.json 读不出就按没开（打开项目时已另行报错）
+        project = schema.read_json(Path(pdir) / "project.json", expect=dict)
+    except (OSError, schema.CorruptJSON):
+        project = None
+    missing = readiness.missing_keys(Path(pdir) / "work", project)
     if missing:
         names = "、".join(secrets.PROVIDER_LABELS[k]["label"] for k in missing)
         raise PrepareBlocked("keys", NEED_KEYS_MSG.format(names=names), missing)

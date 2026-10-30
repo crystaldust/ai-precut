@@ -135,3 +135,23 @@ def test_missing_total_falls_back_to_prompt_plus_completion(tmp_path):
             return {}
     usage.MeteredClient(Partial(), tmp_path, "text").chat_json("s", "u")
     assert usage.load(tmp_path)["total_tokens"] == 42
+
+
+# ---------------------------------------------------------------- 画面理解账本
+def test_vision_ledger_is_separate_and_outside_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv(usage.BUDGET_ENV, "100")
+    usage.record_vision(tmp_path, {"input_tokens": 900, "output_tokens": 100, "total_tokens": 1000})
+    usage.record_vision(tmp_path, {"input_tokens": 9, "output_tokens": 1})
+    led = json.loads((tmp_path / usage.VISION_USAGE_FILE).read_text(encoding="utf-8"))
+    assert led["total_tokens"] == 1010 and led["calls"] == 2
+    assert led["by_stage"]["vision"]["prompt_tokens"] == 909
+    assert usage.vision_tokens(tmp_path) == 1010
+    assert not (tmp_path / usage.USAGE_FILE).exists()
+    usage.check(tmp_path)  # 不抛：画面用量不计入 LLM 预算
+    assert usage.summary(tmp_path)["total_tokens"] == 0
+
+
+@pytest.mark.parametrize("bad", [None, "x", {"total_tokens": "9"}])
+def test_vision_ledger_tolerates_bad_usage(tmp_path, bad):
+    usage.record_vision(tmp_path, bad)
+    assert usage.vision_tokens(tmp_path) == 0

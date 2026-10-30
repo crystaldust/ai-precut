@@ -189,3 +189,31 @@ def test_api_post_vision_change_after_analysis_marks_step_stale(gui_server, monk
     status, data = post(gui_server, "/api/project/vision", {"project": "p1", "enabled": True, "tier": "economy"})
     analyze = next(s for s in data["wizard"]["steps"] if s["key"] == "analyze")
     assert status == 200 and analyze["status"] == wizard.STALE and analyze["reasons"] == ["vision"]
+
+
+# ---------------------------------------------------------------- 第 3 阶段：接口参数
+def test_every_tier_has_params_and_frames_fit_api_limit():
+    assert set(vision.TIER_FPS) == set(vision.TIERS)
+    longest = vision.CHUNK_S + vision.MIN_TAIL_S
+    for tier in vision.TIERS:
+        opt = vision.tier_params(tier)["manual_option"]
+        assert opt["need_audio"] is False and 0.2 <= opt["fps"] <= 5
+        assert opt["fps"] * longest <= vision.MAX_FRAMES
+
+
+def test_tier_params_returns_fresh_dict():
+    a = vision.tier_params("economy")
+    a["manual_option"]["fps"] = 99
+    assert vision.tier_params("economy")["manual_option"]["fps"] == 2.0
+
+
+@pytest.mark.parametrize("cfg,on", [({}, False), ({"vision": OFF}, False),
+                                    ({"vision": {"enabled": True, "tier": "quality"}}, True),
+                                    ({"vision": {"enabled": "yes"}}, False)])
+def test_is_on(cfg, on):
+    assert vision.is_on(cfg) is on
+
+
+def test_vision_bitrate():
+    from pipeline import encode
+    assert "300k" in encode.h264_args("vision", "h264_videotoolbox")
