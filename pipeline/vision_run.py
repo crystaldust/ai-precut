@@ -2,7 +2,7 @@
 """画面理解编排：浏览小样 → 分段画面代理 → 上传 → 云端理解 → 解析 → work/visual_timeline.json。
 
 续跑（「停止分析」会直接杀进程，所以每一步的结果先落盘再做下一步）：
-  * work/vision/state.json：key（浏览小样指纹 + 档位 + 提示词版本 + 段长）与每段的 file_id / task_id；
+  * work/vision/state.json：key（浏览小样大小 + 内容抽样 + 档位 + 提示词版本 + 段长）与每段的 file_id / task_id；
     key 变了 → 旧段结果全部作废；
   * work/vision/chunk_NNN.raw.json：云端已返回、还没解析完的原始输出（先落盘再清任务号、再记账）：
     这之后被杀，重跑直接用它，不重新提交、不重复记账（被杀在记账前只会少记一次）；
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import threading
 import time
@@ -38,6 +39,7 @@ PARALLEL = 3                  # 同时处理的段数（429 由 CloudClient 退�
 VISION_TASK_TIMEOUT_S = 900   # 单段等待上限；超时可重试，下次续查同一任务
 PARSE_ATTEMPTS = 2            # 看不懂就同一段重新提交一次
 STATE_SCHEMA = 1
+KEY_SAMPLE_BYTES = 1 << 20     # 浏览小样指纹：开头 / 中间 / 结尾各读这么多（不看修改时间）
 
 NO_DURATION = "读不出浏览小样的时长，没法给画面分段：重新生成浏览小样后再试"
 ENCODE_FAILED = "第 {n} 段（{span}）的画面代理没生成出来：{exc}"
@@ -78,13 +80,26 @@ def _proxy(work: Path) -> Path:
     return Path(work) / "proxy.mp4"
 
 
+def _proxy_sample(proxy: Path) -> tuple[int, str]:
+    """浏览小样的大小 + 开头 / 中间 / 结尾抽样哈希。不用修改时间：复制、备份恢复会丢掉它，
+    一变就要整条重传、再花一遍钱；重新转码则内容一定变。只读三处，剪辑台轮询时调用也不慢。
+    残余风险：换了素材重新转码后，大小一字节不差、且三处抽样完全相同，才会误认成旧结果，有损编码下可忽略。"""
+    h = hashlib.sha256()
+    with open(proxy, "rb") as f:
+        size = os.fstat(f.fileno()).st_size
+        for offset in sorted({0, max(0, size // 2 - KEY_SAMPLE_BYTES // 2), max(0, size - KEY_SAMPLE_BYTES)}):
+            f.seek(offset)
+            h.update(f.read(KEY_SAMPLE_BYTES))
+    return size, h.hexdigest()
+
+
 def run_key(proxy: Path, setting: dict) -> str | None:
-    """浏览小样（只看大小与修改时间：项目目录搬家不算变）+ 档位 + 提示词版本 + 段长。读不到 → None。"""
+    """浏览小样（大小 + 内容抽样，项目搬家 / 复制不算变）+ 档位 + 提示词版本 + 段长。读不到 → None。"""
     try:
-        st = Path(proxy).stat()
+        size, sample = _proxy_sample(Path(proxy))
     except OSError:
         return None
-    raw = json.dumps({"size": st.st_size, "mtime_ns": st.st_mtime_ns, "tier": setting["tier"],
+    raw = json.dumps({"size": size, "sample": sample, "tier": setting["tier"],
                       "prompt": vision.PROMPT_VERSION, "chunk_s": vision.CHUNK_S}, sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 

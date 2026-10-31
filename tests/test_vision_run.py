@@ -1,5 +1,6 @@
 """画面理解第 3 阶段：编排（pipeline/vision_run.py）。假 ffmpeg、假云端，不发真实请求。"""
 import json
+import os
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -141,6 +142,82 @@ def test_key_change_discards_old_results(work):
     go(work, c, cfg)
     assert len(c.submits) == 2 and c.submits[0][1]["manual_option"]["fps"] == 3.0
     assert timeline(work)["setting"]["tier"] == "quality"
+
+
+def test_copied_project_with_lost_mtime_keeps_timeline(work):
+    """rsync / 备份恢复会丢掉亚秒或整个修改时间：内容没变，不能整条重传、再花一遍钱。"""
+    go(work, FakeClient())
+    proxy = work / "proxy.mp4"
+    st = proxy.stat()
+    os.utime(proxy, ns=(st.st_atime_ns, st.st_mtime_ns // 10**9 * 10**9 - 3600 * 10**9))
+    assert vision_run.timeline_current(work, ON)
+    c = FakeClient()
+    go(work, c)
+    assert c.uploads == [] and c.submits == []
+
+
+def test_reencoded_proxy_of_same_size_invalidates_timeline(work):
+    go(work, FakeClient())
+    proxy = work / "proxy.mp4"
+    st = proxy.stat()
+    assert len(b"PROXY") == st.st_size
+    proxy.write_bytes(b"PROXY")                      # 大小相同、内容不同（素材换过后重新转码）
+    os.utime(proxy, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert not vision_run.timeline_current(work, ON)
+
+
+def test_run_key_ignores_bytes_outside_samples_of_large_proxy(tmp_path):
+    big = tmp_path / "proxy.mp4"
+    with open(big, "wb") as f:
+        f.truncate(vision_run.KEY_SAMPLE_BYTES * 10)
+    key = vision_run.run_key(big, ON["vision"])
+    with open(big, "r+b") as f:                      # 改动落在抽样区之外 → 不影响（只读三处）
+        f.seek(vision_run.KEY_SAMPLE_BYTES * 2)
+        f.write(b"x")
+    assert vision_run.run_key(big, ON["vision"]) == key
+    with open(big, "r+b") as f:                      # 改动落在中间抽样区 → key 变
+        f.seek(vision_run.KEY_SAMPLE_BYTES * 5)
+        f.write(b"x")
+    assert vision_run.run_key(big, ON["vision"]) != key
+
+
+MIB = 1 << 20
+
+
+@pytest.mark.parametrize("size", [1, MIB - 1, MIB, 2 * MIB + 1, 3 * MIB])
+def test_run_key_covers_every_byte_of_small_proxy(tmp_path, size):
+    """3 个抽样窗口在 ≤ 3 MiB 时覆盖整个文件：任何一个字节变了 key 都变。"""
+    assert vision_run.KEY_SAMPLE_BYTES == MIB
+    proxy = tmp_path / "proxy.mp4"
+    proxy.write_bytes(bytes(size))
+    key = vision_run.run_key(proxy, ON["vision"])
+    for pos in sorted({0, size // 3, size // 2, 2 * size // 3, size - 1}):
+        data = bytearray(size)
+        data[pos] = 1
+        proxy.write_bytes(bytes(data))
+        assert vision_run.run_key(proxy, ON["vision"]) != key, pos
+
+
+def test_run_key_sees_first_and_last_byte_of_large_proxy(tmp_path):
+    proxy = tmp_path / "proxy.mp4"
+    size = 10 * MIB
+    with open(proxy, "wb") as f:
+        f.truncate(size)
+    key = vision_run.run_key(proxy, ON["vision"])
+    for pos in (0, size - 1):
+        with open(proxy, "r+b") as f:
+            f.seek(pos)
+            f.write(b"x")
+        assert vision_run.run_key(proxy, ON["vision"]) != key, pos
+        with open(proxy, "r+b") as f:
+            f.seek(pos)
+            f.write(b"\0")
+
+
+def test_run_key_of_empty_proxy_is_stable(tmp_path):
+    proxy = tmp_path / "proxy.mp4"
+    proxy.write_bytes(b"")
+    assert vision_run.run_key(proxy, ON["vision"]) == vision_run.run_key(proxy, ON["vision"]) is not None
 
 
 def test_unparseable_once_resubmits(work):
