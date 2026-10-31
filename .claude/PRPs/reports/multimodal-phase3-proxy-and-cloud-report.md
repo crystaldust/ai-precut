@@ -35,7 +35,7 @@
 | Build | Pass | spec hiddenimports 加 3 个模块（`test_structure`） |
 | Integration | Pass | 全量 4021 passed, 12 skipped；覆盖率 95%（vision_run 97%、vision_timeline 96%、vision_proxy 100%） |
 | Edge Cases | Pass | 极短 / 3 小时素材、尾段并入、乱码重提、终态失败、续查、key 变化、上传过期 / 被作废、被杀在各写盘点之间、鉴权失败中止、超深嵌套 JSON |
-| Manual（真账号） | 待做 | PROGRESS #33：60 分钟素材、停止后重跑、账本、关开关回 11 项（需用户确认后上传） |
+| Manual（真账号） | Pass | 2026-10-31，PROGRESS #33 第 3 阶段各项，见下「真账号验收」 |
 
 ## Files Changed
 - 新建：`pipeline/vision_proxy.py`、`pipeline/vision_timeline.py`、`pipeline/vision_run.py`；`tests/test_vision_proxy.py`、`test_vision_timeline.py`、`test_vision_run.py`、`test_vision_wiring.py`
@@ -56,7 +56,17 @@
 - `ecc:python-reviewer`：H1、H2（被杀窗口）已修，复审通过；M2（鉴权失败后其它段继续上传）、M3（failed.json 并发写）、L1（缺 key 时误判当前）、L2/L3（私有函数）已修。未改、写进模块说明：M1（不传 `client_token`，提交响应丢失可能多一个任务）、M4（续用上传被拒就重传一次，同 ASR）、M5（上传后记 file_id 前被杀只是重传）、同一项目两个进程同时分析不互斥。
 - `ecc:security-reviewer`：无 CRITICAL / HIGH。MEDIUM 元数据、超深嵌套 / 超长输出、本地读写错误不进 failed.json 已修。未改：上传地址没有域名白名单（已有 https 限制、不跟随重定向、不带 Authorization）；第 4 阶段把画面文字喂给 DeepSeek 时要当数据包起来（提示词注入）。
 
+## 真账号验收（2026-10-31）
+素材：54 分钟（3258 s）第一视角实拍，省钱档（手动 2 fps），11 段。
+- **时间轴**：133 个事件，0–3258 s，相邻事件间没有超过 5 s 的空档；每段 7–15 个事件，事件中位 20 s（最长 110 s，比提示词要求的 3–20 s 粗）。issues：画面晃动 10、背对镜头 2、人物出画 1、遮挡 1。
+- **停止后再开始**：完成 3 段时停掉。重跑时记录每次提交 / 续查：第 4–6 段续查原任务号，只新提交第 7–11 段，共 11 次提交、没有重复。再跑一次直接完成，不调云端。
+- **账本**：`vision_usage.json` 11 次、460,037 tokens，与时间轴合计一致；`aicut status` 显示「画面理解用量：460037 tokens（不计入 LLM 上限）」。完成后 `work/vision/` 只剩 state 与 11 个段结果。
+- **用量**：每段约 4.2 万 tokens，约 50 万 / 小时，比第 1 阶段短片段估算（27 万）高近一倍；档位提示已改（`419c180`）。
+- **剪辑台**（真实配置、无头 Chrome）：开启 → ② 13 项（含「生成画面代理」「云端画面理解」），档位提示为新文案；重新分析时卡片变锁定条；画面结果已是最新时不重传、LLM 用量不变；关闭开关 → ② 变 ⚠、出现「画面理解设置改过了」、档位置灰；重新分析 → 11 项、② 回到 ✓、画面与 LLM 用量都不变、没有上传。
+- **发现**：`run_key` 用浏览小样的 `mtime_ns`。用 rsync 复制项目后纳秒部分丢失，时间轴被判为不是当前，下次分析会整条重传、再花一遍用量。浏览小样自身的 `.done` 指纹是否同样受影响未查。
+
 ## Next Steps
-- [ ] 真账号验收（PROGRESS #33 第 3 阶段项），通过后 PRD 第 3 阶段标 complete
-- [ ] 提交：按项目约定，由用户确认后提交
+- [x] 真账号验收（PROGRESS #33 第 3 阶段项），PRD 第 3 阶段已标 complete
+- [x] 提交（`2bc9158` `379a1df` `8d1a493`；档位提示修正 `419c180`）
+- [ ] 复制项目时浏览小样修改时间丢掉纳秒会让时间轴失效、整条重传（见上「发现」）
 - [ ] 第 4 阶段：整合与判定

@@ -144,7 +144,7 @@ Must 全部：开关和新的创建 / 开始流程、代理素材与 MediaKit �
 |---|-------|-------------|--------|----------|---------|----------|
 | 1 | 技术验证 | 用真实素材调 MediaKit 视频理解：开通条件、抽帧上限、各档位 tokens 与效果、音频、JSON 稳定性、时间轴误差、语义切片；出结论报告 | complete | with 2 | - | `.claude/PRPs/reports/multimodal-phase1-spike.report.md` |
 | 2 | 流程与开关 | 「创建项目」不自动分析；② 准备开始状态 + 开关 + 档位 + 运行中锁定；"需要更新"；外发告知；设计图、界面流程、PRD 红线同步 | complete | with 1 | - | `.claude/PRPs/plans/completed/multimodal-phase2-flow-and-toggle.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase2-flow-and-toggle-report.md`） |
-| 3 | 代理素材与云端理解 | 代理转码 + 切段；扩展 MediaKit 客户端（上传、提交、轮询、重试、续跑）；`visual_timeline.json`；档位；单独记账 | in-progress | - | 1, 2 | `.claude/PRPs/plans/completed/multimodal-phase3-proxy-and-cloud.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase3-proxy-and-cloud-report.md`） |
+| 3 | 代理素材与云端理解 | 代理转码 + 切段；扩展 MediaKit 客户端（上传、提交、轮询、重试、续跑）；`visual_timeline.json`；档位；单独记账 | complete | - | 1, 2 | `.claude/PRPs/plans/completed/multimodal-phase3-proxy-and-cloud.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase3-proxy-and-cloud-report.md`） |
 | 4 | 整合与判定 | 时间对齐、画面片段、DeepSeek 画面判断、档位判定 | pending | - | 3 | - |
 | 5 | ③ 呈现与收尾 | ③ 显示画面描述和画面片段（可放入剪辑列表）；GUI 文档、PROGRESS、放行检查；开 / 关对比验收 | pending | - | 4 | - |
 
@@ -164,7 +164,7 @@ Must 全部：开关和新的创建 / 开始流程、代理素材与 MediaKit �
 - **Goal**: 稳定拿到全片画面时间轴
 - **Scope**: 代理转码与切段、MediaKit 视频理解客户端、时间轴校验与换算、按段缓存续跑、用量账本
 - **Success signal**: 60 分钟素材产出完整的 `visual_timeline.json`；中途停止后重跑只补未完成的段
-- **状态说明（2026-10-30）**：代码与自动化测试已完成；成功信号要真账号 60 分钟素材验收（PROGRESS #33），验收前保持 in-progress
+- **状态说明（2026-10-31）**：真账号验收通过（54 分钟素材，省钱档 11 段，460,037 tokens）：时间轴覆盖全片、停止后再开始只续查 / 补提未完成的段、剪辑台 13 / 11 项切换且关闭后无上传。详见报告「真账号验收」一节
 
 **Phase 4: 整合与判定**
 - **Goal**: 画面信息进入片段判断
