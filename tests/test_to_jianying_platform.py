@@ -3,9 +3,11 @@
 剪映运行检测 / 同名草稿不覆盖。Windows 分支在 Mac 上 monkeypatch plat.IS_WIN 测纯逻辑，真实行为用 WIN_ONLY。"""
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 
@@ -117,8 +119,40 @@ def test_mac_jianying_running_uses_same_pgrep(monkeypatch):
     calls = []
     monkeypatch.setattr(tj.subprocess, "run", _run_stub(code=0, calls=calls))
     assert tj.jianying_running() is True
-    assert calls[0][0] == ["pgrep", "-f", "MacOS/VideoFusion-macOS"]
+    assert calls[0][0] == ["pgrep", "-f", tj.JY_PROCESS_MAC]
     assert calls[0][1] == {"capture_output": True}
+
+
+JY_APP = "/Applications/VideoFusion-macOS.app/Contents"
+
+
+def _wait_for_argv(pid, prefix, timeout_s=5.0):
+    """等 exec -a 真的换掉 argv：exec 之前 bash 的命令行里已经带着这个路径（作为 $0），只看 pgrep 证明不了。"""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+        if cmd.startswith(prefix):
+            return
+        time.sleep(0.05)
+    pytest.fail(f"exec -a 没生效：{cmd!r}")
+
+
+@pytest.mark.skipif(shutil.which("pgrep") is None or plat.IS_WIN, reason="需要 pgrep")
+@pytest.mark.parametrize("argv0,args,matched", [
+    (f"{JY_APP}/MacOS/VideoFusion-macOS", [], True),
+    (f"{JY_APP}/MacOS/VideoFusion-macOS", ["1"], True),  # 本体带参数（sleep 只认数字参数）
+    # 剪映 Cmd+Q 后菜单栏小助手还常驻：它不是剪映本体，不能把导出拦下
+    (f"{JY_APP}/Frameworks/VideoFusion-macOSTrayHelper.app/Contents/MacOS/VideoFusion-macOSTrayHelper", [], False),
+])
+def test_mac_pgrep_pattern_matches_only_main_app(argv0, args, matched):
+    proc = subprocess.Popen(["bash", "-c", 'exec -a "$0" sleep 30 "$@"', argv0, *args])
+    try:
+        _wait_for_argv(proc.pid, f"{argv0} 30")
+        out = subprocess.run(["pgrep", "-f", tj.JY_PROCESS_MAC], capture_output=True, text=True).stdout
+        assert (str(proc.pid) in out.split()) is matched
+    finally:
+        proc.kill()
+        proc.wait()
 
 
 @pytest.mark.parametrize("out,expected", [

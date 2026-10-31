@@ -57,6 +57,9 @@ TEMPLATE = jy_version.TEMPLATE   # 保留这个名字：测试会替换它
 JY_RUNNING = "剪映正在运行，请先完全退出（Cmd+Q）再安装"
 JY_RUNNING_WIN = "剪映正在运行，请先关闭剪映窗口（含托盘图标）再安装"
 JY_PROCESS_WIN = "JianyingPro.exe"
+# pgrep -f 的扩展正则：只认剪映本体。名字后面必须是空格或结尾——剪映退出后菜单栏小助手
+# …/Contents/MacOS/VideoFusion-macOSTrayHelper 还常驻，旧的子串匹配会把它当成剪映开着
+JY_PROCESS_MAC = "/Contents/MacOS/VideoFusion-macOS( |$)"
 JY_CHECK_FAILED_WIN = "无法确认剪映是否在运行（{detail}）；为避免剪映覆盖草稿库，已停止。请先关闭剪映窗口（含托盘图标）后重试"
 TASKLIST_TIMEOUT_S = 10
 TEMPLATE_MISSING = jy_version.TEMPLATE_MISSING
@@ -501,7 +504,7 @@ def _jianying_running_win() -> bool:
 def jianying_running() -> bool:
     if plat.IS_WIN:
         return _jianying_running_win()
-    return subprocess.run(["pgrep", "-f", "MacOS/VideoFusion-macOS"],
+    return subprocess.run(["pgrep", "-f", JY_PROCESS_MAC],
                           capture_output=True).returncode == 0
 
 
