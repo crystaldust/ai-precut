@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """画面理解第 2 阶段：设置模型（pipeline/vision.py）、schema 默认、分析指纹、向导「需要更新」、POST /api/project/vision。"""
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -217,3 +219,21 @@ def test_is_on(cfg, on):
 def test_vision_bitrate():
     from pipeline import encode
     assert "300k" in encode.h264_args("vision", "h264_videotoolbox")
+
+
+# ---------------------------------------------------------------- 档位提示（真账号验收 2026-10-30）
+STEP_ANALYZE_JS = Path(__file__).resolve().parent.parent / "gui" / "static" / "step-analyze.js"
+MEASURED_ECONOMY_TOKENS_PER_HOUR = 460_037 / 3258.4 * 3600  # 54 分钟素材、省钱档实测，约 51 万
+
+
+def _tier_hint() -> str:
+    match = re.search(r"const COPY_VISION_TIER_HINT = '([^']*)'", STEP_ANALYZE_JS.read_text(encoding="utf-8"))
+    assert match, "step-analyze.js 里找不到 COPY_VISION_TIER_HINT"
+    return match.group(1)
+
+
+def test_tier_hint_states_economy_fps_and_measured_tokens():
+    hint = _tier_hint()
+    assert f"每秒看 {vision.TIER_FPS['economy']:g} 帧" in hint
+    stated = int(re.search(r"约 (\d+) 万 tokens", hint).group(1)) * 10_000
+    assert abs(stated - MEASURED_ECONOMY_TOKENS_PER_HOUR) / MEASURED_ECONOMY_TOKENS_PER_HOUR < 0.15
