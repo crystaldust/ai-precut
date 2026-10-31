@@ -41,6 +41,19 @@ AUDIO_MISSING_WARNING = ("没有声音特征（segments_audio.json）：本次�
 VISUAL_MISSING_WARNING = "没有画面质量结果（visual_quality.json）：本次分档没有识别过暗画面"
 PENDING_OVER_WARNING = ("待定 {left} 段超过上限 {limit} 段：其中 {kept} 段属于必留话题或 AI 标注失败，"
                         "不自动降级，需要你逐条裁决")
+# 画面理解开启时才用到（第 4 阶段）：画面问题最多把「可用」降到「待定」，说到关键信息的不降
+PENDING_OVER_WARNING_VISION = ("待定 {left} 段超过上限 {limit} 段：其中 {kept} 段属于必留话题、AI 标注失败"
+                               "或因画面降为待定，不自动降级，需要你逐条裁决")
+VISION_KEY_REASON = "画面可见关键信息：{why}"
+VISION_KEY_FALLBACK = "见画面"
+VISION_PROBLEM_REASON = "画面：{problems}；{why}"
+VISION_MISMATCH = "画面与对白不符"
+VISUAL_SEGMENT_REASON = "画面片段，需要你判断"
+VISUAL_SEGMENT_PROBLEM_REASON = "画面片段：{problems}"
+VISUAL_SEGMENT_FAILED_REASON = "画面片段 AI 标注失败，需要你判断"
+VISION_TEXT_MISSING_ERROR = ("画面理解已开启，但逐句标注不是按现在的画面结果做的：先跑 `aicut.py align` 和 `aicut.py text`"
+                             "（或在「② 分析」点「重新分析」）")
+_VISION_FIELDS = ("visual", "visual_match", "visual_key", "visual_reason")
 
 
 class TextIncomplete(ValueError):
@@ -148,9 +161,52 @@ def _protected(s: dict, must_names: set[str]) -> bool:
 def _apply_dark(s: dict, must_names: set[str]) -> dict:
     if "dark" not in s["visual_flags"] or s["level"] == 3:
         return s
-    if s["level"] == 2 and _protected(s, must_names):  # 只防降级，不把废片抬成待定
+    # 只防降级，不把废片抬成待定；因画面降为待定的也不再降（画面问题最多降到待定，审查 H1）
+    if s["level"] == 2 and (_protected(s, must_names) or s.get("vision_demoted")):
         return {**s, "level": 2, "level_reason": f"画面过暗；{s['level_reason']}"}
     return {**s, "level": 1, "level_reason": DARK_REASON}
+
+
+def _apply_vision(s: dict) -> dict:
+    """只对开启画面理解的片段生效（带 visual_match）：升一档或降一档，不会降成废片。"""
+    if "visual_match" not in s:
+        return s
+    issues = (s.get("visual") or {}).get("issues") or []
+    if (s["level"] == 2 and s.get("visual_key") and not issues and not s.get("annotation_failed")
+            and "dark" not in s.get("visual_flags", [])):
+        why = s.get("visual_reason") or VISION_KEY_FALLBACK
+        return {**s, "level": 3, "level_reason": VISION_KEY_REASON.format(why=why)}
+    problems = [*issues, *([VISION_MISMATCH] if s.get("visual_match") == "不一致" else [])]
+    if s["level"] == 3 and problems and not s.get("key_info"):
+        why = VISION_PROBLEM_REASON.format(problems="、".join(problems), why=s["level_reason"])
+        return {**s, "level": 2, "level_reason": why, "vision_demoted": True}
+    return s
+
+
+def classify_visual(visual_segments: list[dict]) -> list[dict]:
+    """无对白的画面片段单独判档：不计入汇总、话题、预算和待定上限（第 5 阶段再接入 ③）。"""
+    out = []
+    for v in visual_segments:
+        issues = (v.get("visual") or {}).get("issues") or []
+        if v.get("annotation_failed"):
+            lv, why = 2, VISUAL_SEGMENT_FAILED_REASON
+        elif issues:
+            lv, why = 2, VISUAL_SEGMENT_PROBLEM_REASON.format(problems="、".join(issues))
+        elif v.get("visual_key"):
+            lv, why = 3, VISION_KEY_REASON.format(why=v.get("visual_reason") or VISION_KEY_FALLBACK)
+        else:
+            lv, why = 2, VISUAL_SEGMENT_REASON
+        out.append({**v, "level": lv, "level_reason": why})
+    return out
+
+
+def picture_note(result: dict) -> str:
+    """命令行汇总里画面带来的变化；关闭画面理解时为空串。"""
+    by_picture = sum(1 for x in result["segments"] if x.get("vision_demoted") and x["level"] == 2)
+    vsegs = result.get("visual_segments")
+    return ((f" · 因画面降为待定 {by_picture}" if by_picture else "")
+            + (f" · 画面片段 {len(vsegs)} 段（可用 {sum(1 for v in vsegs if v['level'] == 3)}）"
+               if vsegs is not None else ""))
 
 
 def _cap_pending(scored: list[dict], must_names: set[str],
@@ -164,13 +220,16 @@ def _cap_pending(scored: list[dict], must_names: set[str],
 
     pending = [s for s in scored if s["level"] == 2]
     excess = max(0, len(pending) - limit)
-    demotable = sorted((s for s in pending if not _protected(s, must_names)), key=weakness)
+    # 因画面降为待定的段内容本身可用：不再被上限降成废片
+    demotable = sorted((s for s in pending if not _protected(s, must_names) and not s.get("vision_demoted")),
+                       key=weakness)
     demote = {s["id"] for s in demotable[:excess]}
     out = [{**s, "level": 1, "level_reason": PENDING_DEMOTED_REASON}
            if s["id"] in demote else s for s in scored]
     left = sum(1 for s in out if s["level"] == 2)
-    kept = sum(1 for s in out if s["level"] == 2 and _protected(s, must_names))
-    warnings = ([PENDING_OVER_WARNING.format(left=left, limit=limit, kept=kept)]
+    kept = sum(1 for s in out if s["level"] == 2 and (_protected(s, must_names) or s.get("vision_demoted")))
+    template = PENDING_OVER_WARNING_VISION if any(s.get("vision_demoted") for s in out) else PENDING_OVER_WARNING
+    warnings = ([template.format(left=left, limit=limit, kept=kept)]
                 if left > limit else [])
     return out, {"limit": limit, "demoted": len(demote)}, warnings
 
@@ -178,7 +237,8 @@ def _cap_pending(scored: list[dict], must_names: set[str],
 def classify(segments: list[dict], audio_by_id: dict | None = None,
              topics: list[dict] | None = None,
              total_target: float = 175.0,
-             visual_by_id: dict | None = None, *, must_topic: dict | None = None) -> dict:
+             visual_by_id: dict | None = None, *, must_topic: dict | None = None,
+             visual_segments: list[dict] | None = None) -> dict:
     audio_by_id = audio_by_id or {}
     visual_by_id = visual_by_id or {}
     topic_of = {}
@@ -193,10 +253,13 @@ def classify(segments: list[dict], audio_by_id: dict | None = None,
         lv, why = _level_of(seg, seg["signals"], (seg["topic"] or "未归类") in must_names)
         flags = visual_by_id.get(seg["id"], {}).get("flags") or []
         base.append({**seg, "level": lv, "level_reason": why, "visual_flags": flags})
-    scored = [_apply_dark(s, must_names) for s in base]
+    scored = [_apply_dark(_apply_vision(s), must_names) for s in base]
     scored, pending, warnings = _cap_pending(scored, must_names, audio_by_id)
     result = _assemble(scored, total_target, must_names)
-    return {**result, "pending": pending, "warnings": warnings}
+    result = {**result, "pending": pending, "warnings": warnings}
+    if visual_segments is not None:  # 只有开启画面理解才有这一项
+        result = {**result, "visual_segments": classify_visual(visual_segments)}
+    return result
 
 
 def allocate_budget(topics: list[dict], total: float,
@@ -265,12 +328,29 @@ def _assemble(scored: list[dict], total_target: float = 175.0,
             "target": total_target}
 
 
+def _match_vision_setting(text: dict, vision: str | bool | None) -> dict:
+    """按现在的画面理解取用标注（vision 来自 vision_align.score_key）：
+    None → 不检查（老调用方）；False → 关着，去掉上次开启时留下的画面字段；
+    字符串 → 开着，标注必须是按这份画面时间轴做的（空串 = 整合结果不是最新的）。
+    """
+    if vision is None:
+        return text
+    if vision is not False:
+        made_with = text.get("vision") if isinstance(text.get("vision"), dict) else {}
+        if not vision or made_with.get("timeline_key") != vision:
+            raise TextIncomplete(VISION_TEXT_MISSING_ERROR)
+        return text
+    segments = [{k: v for k, v in s.items() if k not in _VISION_FIELDS} for s in text.get("segments") or []]
+    return {**{k: v for k, v in text.items() if k not in ("visual_segments", "vision")}, "segments": segments}
+
+
 def run(text_path: Path, audio_path: Path | None, out_path: Path,
         total_target: float = 175.0, visual_path: Path | None = None,
-        must_topic: dict | None = None) -> dict:
+        must_topic: dict | None = None, vision: str | bool | None = None) -> dict:
     text = schema.read_json(text_path)
     if text.get("complete") is False:
         raise TextIncomplete(TEXT_INCOMPLETE_ERROR)
+    text = _match_vision_setting(text, vision)
     # 旧版程序：失败批次只记在 failures 里，句子本身看不出来 → 补上标记
     legacy_failed = {sid for f in text.get("failures") or [] for sid in f.get("ids") or []}
     segments = [{**s, "annotation_failed": True} if s["id"] in legacy_failed else s
@@ -290,8 +370,10 @@ def run(text_path: Path, audio_path: Path | None, out_path: Path,
             missing.append(VISUAL_MISSING_WARNING)
         else:
             visual_by_id = schema.require_key(visual, "segments", visual_path, dict)
+    visual_segments = text.get("visual_segments")  # 开启画面理解时逐句标注才会写这一项
     result = classify(segments, audio_by_id, text.get("topics"), total_target, visual_by_id,
-                      must_topic=must_topic)
+                      must_topic=must_topic,
+                      visual_segments=visual_segments if isinstance(visual_segments, list) else None)
     marked = sum(1 for s in segments if s["id"] in legacy_failed)
     legacy = [LEGACY_FAILED_WARNING.format(n=marked)] if marked else []
     if missing or legacy:

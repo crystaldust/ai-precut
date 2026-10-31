@@ -13,9 +13,9 @@ from pipeline import schema, secrets, vision, vision_run
 TRANSCRIPT_RAW = "transcript_raw.json"  # 与 aicut.cmd_transcribe 的跳过条件一致
 # 「分析」依次跑的步骤（aicut.cmd_<名>），每段计时进 work/timings.json。
 # M13 D10：顺序 = 界面「② 分析」的人话列表顺序（浏览小样提到转写前；总耗时不变，本来就是串行）
-# vision：画面理解，没开时立即返回（第 4 阶段的标注要用时间轴，所以在 text 之前）
-PREPARE_STEPS = ("ingest", "junk", "transcribe", "analyze", "scenes", "quality", "vision", "text",
-                 "score", "summary", "questions", "select", "brief")
+# vision / align：画面理解与画面整合，没开时立即返回（逐句标注要用整合结果，所以在 text 之前）
+PREPARE_STEPS = ("ingest", "junk", "transcribe", "analyze", "scenes", "quality", "vision", "align",
+                 "text", "score", "summary", "questions", "select", "brief")
 ANALYSIS_STAMP = "analysis_inputs.json"  # 分析成功时写：当时的剪辑偏好 + 预设指纹（判断「需要更新」）
 # `aicut status` 逐项列出的产物（标签, 相对项目目录的路径）
 STATUS_ARTIFACTS = (
@@ -24,7 +24,8 @@ STATUS_ARTIFACTS = (
     ("声音特征 (a)", "work/segments_audio.json"), ("文本标注 (b)", "work/segments_text.json"),
     ("分析代理", "work/proxy.mp4"), ("废片表", "work/junk_report.csv"),
     ("镜头切分 (c)", "work/shots_visual.json"),
-    ("画面时间轴", "work/visual_timeline.json"), ("三档判定", "work/segments_scored.json"),
+    ("画面时间轴", "work/visual_timeline.json"), ("画面与对白整合", "work/vision_aligned.json"),
+    ("三档判定", "work/segments_scored.json"),
     ("内容摘要", "work/content_summary.json"), ("决策问题", "work/questions.json"),
     ("人工裁决", "work/overrides.json"), ("策划分派单", "work/brief.md"),
     ("分镜表", "shots.json"), ("选段时间线", "work/shots-selected.json"),

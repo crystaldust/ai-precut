@@ -13,7 +13,7 @@ from pipeline.llm import DEFAULT_MODEL  # 唯一定义在 llm（L13）
 
 DEFAULT_PRESET = "纪实3min"
 NAME_ONLY = ("prepare", "ingest", "analyze", "transcribe", "junk", "brief", "status", "quality",
-             "score", "preview", "vision")
+             "score", "preview", "vision", "align")
 VISION_CHOICES = ("off", *vision.TIERS)
 
 

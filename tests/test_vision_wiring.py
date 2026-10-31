@@ -156,3 +156,134 @@ def test_cmd_vision_needs_proxy(cli_env, monkeypatch, capsys):
 
 def test_status_lists_visual_timeline():
     assert ("画面时间轴", "work/visual_timeline.json") in readiness.STATUS_ARTIFACTS
+
+
+# ---------------------------------------------------------------- 第 4 阶段：画面与对白整合
+def test_cmd_align_off_returns_without_touching_files(cli_env, monkeypatch, capsys):
+    projects, _ = cli_env
+    _project(projects)
+    monkeypatch.setattr(aicut.vision_align, "run", lambda *a, **k: pytest.fail("不应调用"))
+    aicut.main(["align", "p1"])
+    assert "画面理解没开" in capsys.readouterr().out
+
+
+def test_cmd_align_on_reports_counts_and_warnings(cli_env, monkeypatch, capsys):
+    projects, _ = cli_env
+    pdir = _project(projects)
+    _with_vision(pdir)
+    seen = {}
+
+    def fake_run(work, cfg):
+        seen.update(work=work, tier=cfg["vision"]["tier"])
+        return {"by_segment": {"S001": {}, "S002": {}}, "visual_segments": [{}], "warnings": ["没有镜头切点"]}
+
+    monkeypatch.setattr(aicut.vision_align, "run", fake_run)
+    aicut.main(["align", "p1"])
+    out = capsys.readouterr().out
+    assert seen == {"work": pdir / "work", "tier": "balanced"}
+    assert "挂到 2 句" in out and "画面片段 1 段" in out and "没有镜头切点" in out
+
+
+def test_cmd_align_stale_timeline_dies(cli_env, monkeypatch, capsys):
+    projects, _ = cli_env
+    _with_vision(_project(projects))
+
+    def stale(*a, **k):
+        raise aicut.vision_align.AlignError(aicut.vision_align.STALE_TIMELINE)
+
+    monkeypatch.setattr(aicut.vision_align, "run", stale)
+    with pytest.raises(SystemExit):
+        aicut.main(["align", "p1"])
+    assert "画面时间轴不是最新的" in capsys.readouterr().out
+
+
+def test_status_lists_aligned_file():
+    assert ("画面与对白整合", "work/vision_aligned.json") in readiness.STATUS_ARTIFACTS
+
+
+def _text_ready(projects, monkeypatch, *, vision_on):
+    from argparse import Namespace
+    pdir = _project(projects)
+    if vision_on:
+        _with_vision(pdir)
+    (pdir / "work/segments.json").write_text(json.dumps({"segments": []}), encoding="utf-8")
+    aicut.secrets.set("deepseek", "sk-abcdefghij1234")
+    seen = {}
+
+    def fake_run(*a, **k):
+        seen.update(visual=k.get("visual"))
+        return {"topics": [], "segments": [], "failures": []}
+
+    monkeypatch.setattr(aicut.understand_text, "run", fake_run)
+    return pdir, seen, Namespace(name="p1", batch=40, model="m")
+
+
+def test_cmd_text_off_passes_no_visual_even_with_leftover_files(cli_env, monkeypatch):
+    projects, _ = cli_env
+    pdir, seen, args = _text_ready(projects, monkeypatch, vision_on=False)
+    (pdir / "work/vision_aligned.json").write_text(json.dumps({"by_segment": {"S001": {}}}), encoding="utf-8")
+    aicut.cmd_text(args)
+    assert seen == {"visual": None}
+
+
+def test_cmd_text_on_with_stale_alignment_dies(cli_env, monkeypatch, capsys):
+    projects, _ = cli_env
+    _, seen, args = _text_ready(projects, monkeypatch, vision_on=True)
+    monkeypatch.setattr(aicut.vision_align, "current", lambda w, c: False)
+    with pytest.raises(SystemExit):
+        aicut.cmd_text(args)
+    assert "画面整合不是最新的" in capsys.readouterr().out and seen == {}
+
+
+def test_cmd_text_on_passes_aligned_data(cli_env, monkeypatch):
+    projects, _ = cli_env
+    pdir, seen, args = _text_ready(projects, monkeypatch, vision_on=True)
+    aligned = {"timeline_key": "k", "by_segment": {"S001": {"desc": "签合同"}}, "visual_segments": []}
+    (pdir / "work/vision_aligned.json").write_text(json.dumps(aligned, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(aicut.vision_align, "current", lambda w, c: True)
+    aicut.cmd_text(args)
+    assert seen == {"visual": aligned}
+
+
+def test_cmd_text_reports_visual_segment_count_only_when_on(cli_env, monkeypatch, capsys):
+    projects, _ = cli_env
+    _, _, args = _text_ready(projects, monkeypatch, vision_on=False)
+    monkeypatch.setattr(aicut.understand_text, "run", lambda *a, **k: {
+        "topics": [], "segments": [], "failures": [], "visual_segments": [{}, {}]})
+    aicut.cmd_text(args)
+    assert "画面片段 2 段" in capsys.readouterr().out
+
+
+def test_cmd_score_reports_picture_effects(cli_env, monkeypatch, capsys):
+    from argparse import Namespace
+    projects, _ = cli_env
+    pdir = _project(projects)
+    (pdir / "work/segments_text.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(aicut.classify, "run", lambda *a, **k: {
+        "summary": {"waste": 1, "pending": 2, "usable": 3},
+        "segments": [{"vision_demoted": True, "level": 2}, {"level": 3}], "pending": {"demoted": 0}, "warnings": [],
+        "visual_segments": [{"level": 3}, {"level": 2}]})
+    aicut.cmd_score(Namespace(name="p1"))
+    out = capsys.readouterr().out
+    assert "因画面降为待定 1" in out and "画面片段 2 段（可用 1）" in out
+
+
+@pytest.mark.parametrize("on", [False, True])
+def test_cmd_score_passes_current_vision_setting(cli_env, monkeypatch, on):
+    from argparse import Namespace
+    projects, _ = cli_env
+    pdir = _project(projects)
+    if on:
+        _with_vision(pdir)
+    (pdir / "work/segments_text.json").write_text("{}", encoding="utf-8")
+    seen = {}
+
+    def fake_run(*a, **k):
+        seen.update(vision=k.get("vision"))
+        return {"summary": {"waste": 0, "pending": 0, "usable": 0}, "segments": [], "warnings": []}
+
+    monkeypatch.setattr(aicut.classify, "run", fake_run)
+    monkeypatch.setattr(aicut.vision_align, "current", lambda w, c: True)
+    (pdir / "work/vision_aligned.json").write_text(json.dumps({"timeline_key": "k9"}), encoding="utf-8")
+    aicut.cmd_score(Namespace(name="p1"))
+    assert seen == {"vision": "k9" if on else False}

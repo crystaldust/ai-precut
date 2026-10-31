@@ -18,6 +18,7 @@
   select <项目名> [--target 秒]  改目标时长后只重跑选段（不转写、不调 LLM）
   build <项目名> [--version v2] [--no-draft]   分镜表 → 切片 → 预览 → 剪映草稿
   vision <项目名>              画面理解（可选，project.json 的 vision 开启时才上传）
+  align <项目名>               画面与对白整合（画面理解开启时；纯本地，不上传）
   status <项目名>              看每个环节的状态
   list                         列出所有项目
 """
@@ -35,7 +36,7 @@ from pipeline.pyver import require_supported_python; require_supported_python() 
 from pipeline import (applog, build_documentary, classify, cloud, consent, diskspace, encode, exclusions, export_draft,  # noqa: E402
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
                       select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
-                      usage, vision, vision_run)
+                      usage, vision, vision_align, vision_run)
 from pipeline import brief, cli_args, clips, config_cli, custom_rules, export_flow, fingerprints, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
 from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
 from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
@@ -309,14 +310,19 @@ def cmd_text(args) -> None:
         die("未配置 DEEPSEEK_API_KEY：运行 `uv run python aicut.py config set deepseek`")
     batch = getattr(args, "batch", 40)
     model = getattr(args, "model", None) or DEFAULT_MODEL
+    c = cfg(pdir)
+    try:
+        visual = vision_align.for_text(work, c)  # 关着为 None；开着但整合不是最新 → 停
+    except vision_align.AlignError as exc:
+        die(str(exc))
     info(f"调用 {model} 做话题分段与逐句标注（{batch} 句/批）…")
-    pref = style.directive(cfg(pdir).get("calibration"))
+    pref = style.directive(c.get("calibration"))
     if pref:
         info("已应用剪辑偏好：" + pref)
     client = metered(work, "text", model)
     try:
         res = understand_text.run(segs, work / "segments_text.json", client=client,
-                                  batch=batch, model=model, style=pref)
+                                  batch=batch, model=model, style=pref, visual=visual)
     except LLMError as exc:  # GL-09：含 AnnotationIncomplete；不能当成功往下走
         budget = usage.over_budget_message(work)  # 中途超预算：原因要说出来
         die(str(exc) + (f"；{budget}" if budget and budget not in str(exc) else ""))
@@ -324,6 +330,7 @@ def cmd_text(args) -> None:
         info(TEXT_CACHED)
     key = sum(1 for x in res["segments"] if x["key_info"])
     ok(f"话题 {len(res['topics'])} 个 · 关键信息 {key} 句"
+       + (f" · 画面片段 {len(res['visual_segments'])} 段" if "visual_segments" in res else "")
        + (" · 已补齐上次失败的句子" if res.get("resumed") else ""))
 
 
@@ -340,7 +347,7 @@ def cmd_score(args) -> None:
     try:
         res = classify.run(text, work / "segments_audio.json", work / "segments_scored.json",
                            total_target=float(c.get("target_duration") or 175), visual_path=work / "visual_quality.json",
-                           must_topic=load_json(PRESETS / f"{c.get('preset')}.json", {}).get("must_topic"))  # KI-07：必留话题口径在预设里
+                           must_topic=load_json(PRESETS / f"{c.get('preset')}.json", {}).get("must_topic"), vision=vision_align.score_key(work, c))  # KI-07
     except classify.TextIncomplete as exc:
         die(str(exc))
     s = res["summary"]
@@ -348,7 +355,7 @@ def cmd_score(args) -> None:
     demoted = (res.get("pending") or {}).get("demoted", 0)
     ok(f"废片 {s['waste']} · 待定 {s['pending']} · 可用 {s['usable']}"
        + (f" · 画面异常 {flagged}" if flagged else "")
-       + (f" · 自动降级 {demoted}" if demoted else ""))
+       + (f" · 自动降级 {demoted}" if demoted else "") + classify.picture_note(res))
     for w in res.get("warnings") or []:
         warn(w)
 
@@ -392,6 +399,22 @@ def cmd_vision(args) -> None:
     except (vision_run.VisionError, cloud.CloudError) as exc:
         die(VISION_FAILED.format(exc=exc))
     ok(f"画面理解完成：{len(timeline.get('events') or [])} 个画面事件 → work/{vision_run.TIMELINE_FILE}")
+
+
+def cmd_align(args) -> None:
+    """画面与对白整合：没开立即返回；开了就把画面事件挂到对白片段、生成画面片段（纯本地）。"""
+    pdir = project_dir(args.name)
+    c = cfg(pdir)
+    if not vision.is_on(c):
+        info(VISION_OFF)
+        return
+    try:
+        res = vision_align.run(pdir / "work", c)
+    except vision_align.AlignError as exc:
+        die(str(exc))
+    for w in res["warnings"]:
+        warn(w)
+    ok(f"画面整合：挂到 {len(res['by_segment'])} 句 · 画面片段 {len(res['visual_segments'])} 段 → work/{vision_align.ALIGNED_FILE}")
 
 
 def cmd_scenes(args) -> None:

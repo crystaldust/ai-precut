@@ -51,7 +51,7 @@ def test_select_run_stamp_taken_before_selection_runs(tmp_path, monkeypatch):
 
 def test_prepare_steps_follow_spec_order():
     assert readiness.PREPARE_STEPS == (
-        "ingest", "junk", "transcribe", "analyze", "scenes", "quality", "vision", "text", "score",
+        "ingest", "junk", "transcribe", "analyze", "scenes", "quality", "vision", "align", "text", "score",
         "summary", "questions", "select", "brief")
 
 

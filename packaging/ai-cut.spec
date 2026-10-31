@@ -43,7 +43,7 @@ hidden = [
     "pipeline.shot_diff", "pipeline.shot_sub", "pipeline.shots_store", "pipeline.style", "pipeline.summarize", "pipeline.timeline", "pipeline.topic_names",
     "pipeline.to_jianying", "pipeline.transcript_stamp", "pipeline.understand_audio", "pipeline.understand_text",
     "pipeline.understand_visual", "pipeline.usage", "pipeline.vision", "pipeline.vision_proxy",
-    "pipeline.vision_run", "pipeline.vision_timeline",
+    "pipeline.vision_align", "pipeline.vision_run", "pipeline.vision_timeline",
     "research.validate_draft",
 ]
 if IS_WIN:

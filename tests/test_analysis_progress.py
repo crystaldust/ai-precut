@@ -244,12 +244,13 @@ def vfacts(**kw):
     return {**facts(**kw), "vision_on": True}
 
 
-def test_vision_on_inserts_two_steps_after_visual():
+def test_vision_on_inserts_three_steps_after_visual():
     res = analysis.progress(vfacts())
     keys = [s["key"] for s in res["steps"]]
-    assert keys[5:8] == ["visual", "vision_proxy", "vision_cloud"] and res["total"] == 13
+    assert keys[5:10] == ["visual", "vision_proxy", "vision_cloud", "vision_merge", "text"] and res["total"] == 14
     labels = {s["key"]: s["label"] for s in res["steps"]}
     assert labels["vision_proxy"] == "生成画面代理" and labels["vision_cloud"] == "云端画面理解"
+    assert labels["vision_merge"] == "整合画面与对白"
 
 
 def test_vision_off_keeps_eleven_steps():
@@ -302,3 +303,35 @@ def test_facts_vision_flags(tmp_path, monkeypatch):
     f = analysis.facts(pdir, {"vision": {"enabled": True, "tier": "economy"}}, None)
     assert f["vision_on"] is True
     assert f["artifacts"]["vision_chunks"] is True and f["artifacts"]["vision_timeline"] is False
+    assert f["artifacts"]["vision_aligned"] is False  # 时间轴不是当前的，整合结果也不算
+
+
+def test_facts_aligned_flag_follows_vision_align_current(tmp_path, monkeypatch):
+    pdir = make_project(tmp_path)
+    monkeypatch.setattr(analysis.vision_align, "current", lambda w, c: True)
+    assert analysis.facts(pdir, {"vision": {"enabled": True, "tier": "economy"}}, None)["artifacts"]["vision_aligned"]
+    assert analysis.facts(pdir, {}, None)["artifacts"]["vision_aligned"] is False  # 关着就不算
+
+
+def test_vision_timeline_done_moves_to_merge_step():
+    timings = {**UP_TO_VISUAL, "vision": timing(JOB_START + 10)}
+    res = analysis.progress(vfacts(done=VISUAL_DONE | {"vision_chunks", "vision_timeline"},
+                                   timings=timings, job=running_job()))
+    assert statuses(res)["vision_cloud"] == "done" and res["running"] == "vision_merge"
+
+
+def test_vision_merge_done_shows_align_seconds():
+    timings = {**UP_TO_VISUAL, "vision": timing(JOB_START + 10), "align": timing(JOB_START + 11, seconds=0.4)}
+    res = analysis.progress(vfacts(done=VISUAL_DONE | {"vision_chunks", "vision_timeline", "vision_aligned"},
+                                   timings=timings, job=running_job()))
+    by = {s["key"]: s for s in res["steps"]}
+    assert by["vision_merge"]["status"] == "done" and by["vision_merge"]["seconds"] == 0.4
+    assert res["running"] == "text"
+
+
+def test_align_failure_reported_on_merge_step():
+    timings = {**UP_TO_VISUAL, "vision": timing(JOB_START + 10), "align": timing(JOB_START + 11, ok=False)}
+    res = analysis.progress(vfacts(done=VISUAL_DONE | {"vision_chunks", "vision_timeline"}, timings=timings,
+                                   job={"task": "prepare", "status": "failed", "started": JOB_START,
+                                        "last_error": "画面时间轴不是最新的"}))
+    assert res["failed"]["key"] == "vision_merge"

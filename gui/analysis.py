@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""② 分析页的人话进度（M13 D11）：11 项（开了画面理解 13 项），完成看产物，耗时 / 失败看 work/timings.json。
+"""② 分析页的人话进度（M13 D11）：11 项（开了画面理解 14 项），完成看产物，耗时 / 失败看 work/timings.json。
 
 `progress(facts)` 是纯函数（只吃 dict，不碰盘）；`facts()` 负责读盘。
 「正在跑哪一步」= 本次任务开始后第一个还没有计时记录的 PREPARE_STEPS 阶段（applog.stage 只在阶段
@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pipeline import media_io, readiness, schema, vision, vision_run
+from pipeline import media_io, readiness, schema, vision, vision_align, vision_run
 
 NOTICE = "分析大约 10–15 分钟，可以关掉窗口，回来接着跑"
 PREPARE_TASK = "prepare"
@@ -30,10 +30,11 @@ ANALYSIS_STEPS = (
     ("questions", "准备决策问题", ("questions",), "questions"),
     ("select", "初步选段", ("select", "brief"), "selection"),
 )
-# 开了画面理解才有的两步，插在「画面检查」之后（与 PREPARE_STEPS 里 vision 的位置一致）
+# 开了画面理解才有的三步，插在「画面检查」之后（与 PREPARE_STEPS 里 vision / align 的位置一致）
 VISION_STEPS = (
     ("vision_proxy", "生成画面代理", ("vision",), "vision_chunks"),
     ("vision_cloud", "云端画面理解", ("vision",), "vision_timeline"),
+    ("vision_merge", "整合画面与对白", ("align",), "vision_aligned"),
 )
 VISION_AFTER = "visual"
 ARTIFACT_FILES = {  # 完成判据 → 相对 work/ 的文件（proxy / wav 另有完整性检查，绑定当前素材）
@@ -43,7 +44,8 @@ ARTIFACT_FILES = {  # 完成判据 → 相对 work/ 的文件（proxy / wav 另�
     "questions": "questions.json", "selection": "selection.json",
 }
 ARTIFACT_KEYS = ("materials", "proxy", "wav", "segments", "audio_json", "visual", "text_json",
-                 "scored", "summary", "questions", "selection", "vision_chunks", "vision_timeline")
+                 "scored", "summary", "questions", "selection", "vision_chunks", "vision_timeline",
+                 "vision_aligned")
 # 整个「分析」算完成的判据，与 gui/wizard.py 的 analysis_done 同一份（旧项目没有戳也适用）
 COMPLETE_KEYS = ("proxy", "scored", "summary", "questions", "selection")
 # 画面质量检查失败只是警告、不产出文件：这些步骤的依赖阶段全部 ok 也算完成
@@ -70,6 +72,7 @@ def facts(pdir: Path, cfg: dict, job: dict | None) -> dict:
     vision_on = vision.is_on(cfg)
     artifacts["vision_chunks"] = vision_on and vision_run.chunks_ready(work, cfg)
     artifacts["vision_timeline"] = vision_on and vision_run.timeline_current(work, cfg)
+    artifacts["vision_aligned"] = vision_on and vision_align.current(work, cfg)
     timings = schema.read_json_lenient(work / "timings.json", {})
     return {"artifacts": artifacts, "timings": timings if isinstance(timings, dict) else {},
             "job": job, "vision_on": vision_on}

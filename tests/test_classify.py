@@ -321,3 +321,130 @@ def test_artifact_schema_stamped(tmp_path):  # KI-37
     classify.run(tp, None, tmp_path / "s.json")
     from pipeline import schema
     assert json.loads((tmp_path / "s.json").read_text())["artifact_schema"] == schema.ARTIFACT_SCHEMA
+
+
+# ---------------------------------------------------------------- 画面理解开启（第 4 阶段）
+def vis(issues=(), match="一致", key=False, why="合同特写"):
+    return {"visual": {"desc": "两人", "text_on_screen": "", "objects": [], "issues": list(issues)},
+            "visual_match": match, "visual_key": key, "visual_reason": why}
+
+
+def one(s, **kw):
+    return classify.classify([s], **kw)["segments"][0]
+
+
+def test_visual_key_lifts_pending_to_usable():
+    s = one(seg(1, 0, dur=8, info_type="事实陈述", **vis(key=True)))
+    assert s["level"] == 3 and s["level_reason"] == "画面可见关键信息：合同特写"
+
+
+def test_visual_key_does_not_lift_when_frame_has_issue_or_is_dark():
+    assert one(seg(1, 0, dur=8, info_type="事实陈述", **vis(["遮挡"], key=True)))["level"] == 2
+    assert one(seg(1, 0, dur=8, info_type="事实陈述", **vis(key=True)), visual_by_id=DARK)["level"] != 3
+
+
+def test_visual_key_does_not_lift_failed_annotation():
+    s = one(seg(1, 0, dur=8, annotation_failed=True, **vis(key=True)))
+    assert s["level"] == 2 and s["level_reason"] == classify.ANNOTATION_FAILED_REASON
+
+
+@pytest.mark.parametrize("extra, said", [({"issues": ["背对镜头"]}, "画面：背对镜头；"),
+                                         ({"match": "不一致"}, "画面：画面与对白不符；"),
+                                         ({"issues": ["人物出画", "画面晃动"], "match": "不一致"},
+                                          "画面：人物出画、画面晃动、画面与对白不符；")])
+def test_visual_problem_drops_usable_to_pending_once(extra, said):
+    s = one(seg(1, 0, dur=8, info_type="条款期限", **vis(**extra)))
+    assert s["level"] == 2 and s["level_reason"] == said + "信息类型为条款期限"
+    assert s["vision_demoted"] is True
+
+
+def test_key_info_is_never_dropped_by_picture():
+    s = one(seg(1, 0, key_info=True, entities=["九千八"], **vis(["背对镜头"], match="不一致")))
+    assert s["level"] == 3 and "vision_demoted" not in s
+
+
+def test_picture_never_drops_pending_or_waste():
+    assert one(seg(1, 0, dur=8, info_type="事实陈述", **vis(["背对镜头"])))["level"] == 2
+    assert one(seg(1, 0, info_type="闲聊寒暄", **vis(["背对镜头"])))["level"] == 1
+
+
+def test_vision_demoted_pending_is_not_capped_to_waste():
+    segs = [seg(i, i * 10, dur=8, info_type="条款期限", topic="闲聊日常", **vis(["背对镜头"])) for i in range(1, 61)]
+    res = classify.classify(segs)
+    assert res["summary"] == {"waste": 0, "pending": 60, "usable": 0} and res["pending"]["demoted"] == 0
+    assert "因画面降为待定" in res["warnings"][0]
+
+
+def test_vision_off_segments_get_no_vision_keys():
+    s = one(seg(1, 0, dur=8, info_type="条款期限"))
+    assert not {"vision_demoted", "visual_match"} & set(s)
+    assert "visual_segments" not in classify.classify([seg(1, 0)])
+
+
+def vseg(n, *, key=False, issues=(), failed=False):
+    return {"id": f"V{n:03d}", "kind": "visual", "start": n * 100.0, "end": n * 100.0 + 12, "text": "",
+            "label": "坐电梯下楼", "visual": {"desc": "", "text_on_screen": "", "objects": [], "issues": list(issues)},
+            "visual_key": key, "visual_reason": "楼层显示", "annotation_failed": failed}
+
+
+def test_visual_segments_judged_separately_from_counts():
+    segs = [vseg(1), vseg(2, key=True), vseg(3, key=True, issues=["过暗"]), vseg(4, failed=True)]
+    res = classify.classify([seg(1, 0, info_type="闲聊寒暄")], visual_segments=segs)
+    got = [(v["id"], v["level"], v["level_reason"]) for v in res["visual_segments"]]
+    assert got == [("V001", 2, classify.VISUAL_SEGMENT_REASON),
+                   ("V002", 3, "画面可见关键信息：楼层显示"),
+                   ("V003", 2, "画面片段：过暗"),
+                   ("V004", 2, classify.VISUAL_SEGMENT_FAILED_REASON)]
+    assert res["summary"] == {"waste": 1, "pending": 0, "usable": 0}
+    assert [t["name"] for t in res["topics"]] == ["未归类"] and res["topics"][0]["count"] == 1
+
+
+def test_classify_with_vision_does_not_mutate_input():
+    segs = [seg(i, i * 10, dur=8, info_type="条款期限", **vis(["背对镜头"])) for i in range(1, 5)]
+    vsegs = [vseg(1, key=True)]
+    before = json.dumps([segs, vsegs], ensure_ascii=False, sort_keys=True)
+    classify.classify(segs, visual_segments=vsegs)
+    assert json.dumps([segs, vsegs], ensure_ascii=False, sort_keys=True) == before
+
+
+def test_run_reads_visual_segments_from_text(tmp_path):
+    text = {"complete": True, "topics": [], "segments": [seg(1, 0, info_type="条款期限", **vis(["遮挡"]))],
+            "visual_segments": [vseg(1, key=True)]}
+    (tmp_path / "t.json").write_text(json.dumps(text, ensure_ascii=False), encoding="utf-8")
+    res = classify.run(tmp_path / "t.json", None, tmp_path / "s.json")
+    assert res["segments"][0]["level"] == 2 and res["visual_segments"][0]["level"] == 3
+    saved = json.loads((tmp_path / "s.json").read_text(encoding="utf-8"))
+    assert saved["visual_segments"][0]["id"] == "V001"
+
+
+def test_vision_demoted_dark_segment_stays_pending():
+    """画面问题把可用降成待定后，本机「过暗」也不能再把它打成废片（审查 H1）。"""
+    s = one(seg(1, 0, dur=8, info_type="金额价格", **vis(["遮挡"])), visual_by_id=DARK)
+    assert s["level"] == 2 and s["level_reason"].startswith("画面过暗；画面：遮挡；")
+    res = classify.classify([seg(1, 0, dur=8, info_type="金额价格", **vis(["遮挡"]))], visual_by_id=DARK)
+    assert classify.picture_note(res) == " · 因画面降为待定 1"
+
+
+@pytest.mark.parametrize("vision_on", [False, True])
+def test_run_respects_current_vision_setting(tmp_path, vision_on):
+    text = {"complete": True, "topics": [], "vision": {"timeline_key": "k"},
+            "segments": [seg(1, 0, info_type="条款期限", **vis(["遮挡"]))], "visual_segments": [vseg(1)]}
+    (tmp_path / "t.json").write_text(json.dumps(text, ensure_ascii=False), encoding="utf-8")
+    res = classify.run(tmp_path / "t.json", None, tmp_path / "s.json", vision="k" if vision_on else False)
+    if vision_on:
+        assert res["segments"][0]["level"] == 2 and "visual_segments" in res
+    else:  # 关掉画面理解后单独跑 score：上次开启时留下的画面字段不能起作用
+        assert res["segments"][0]["level"] == 3 and "visual_segments" not in res
+        assert not {"visual", "visual_match", "visual_key", "visual_reason"} & set(res["segments"][0])
+
+
+@pytest.mark.parametrize("made_with, now", [(None, "k"),        # 标注是关闭时做的
+                                           ("old", "k"),       # 画面时间轴后来重做过
+                                           ("k", "")])         # 整合结果不是最新的
+def test_run_with_vision_on_but_text_not_for_current_timeline_raises(tmp_path, made_with, now):
+    text = {"complete": True, "topics": [], "segments": [seg(1, 0, info_type="条款期限")]}
+    if made_with:
+        text = {**text, "vision": {"timeline_key": made_with}}
+    (tmp_path / "t.json").write_text(json.dumps(text, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(classify.TextIncomplete, match="画面理解"):
+        classify.run(tmp_path / "t.json", None, tmp_path / "s.json", vision=now)
