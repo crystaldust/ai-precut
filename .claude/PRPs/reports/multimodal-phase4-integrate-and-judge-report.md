@@ -35,7 +35,7 @@
 | Build | Pass | spec hiddenimports 加 `pipeline.vision_align`（`test_structure`） |
 | Integration | Pass | 全量 4116 passed, 12 skipped；覆盖率 95%（vision_align 98%、classify 98%、understand_text 95%） |
 | Edge Cases | Pass | 空时间轴、全程有对白、事件重叠 / 有空档、长空档切分、吸附越界、开启后关闭的残留文件、时间轴 / 整合过期、模型返回枚举外的值、注入文本、不可重试错误 |
-| Manual（真账号） | Pending | 需要你确认后再花 DeepSeek tokens，见 Next Steps |
+| Manual（真账号） | Pass | 见下方「真账号验收」，2026-11-01 确认通过 |
 
 ## Files Changed
 - 新建：`pipeline/vision_align.py`；`tests/test_vision_align.py`、`tests/test_vision_off_golden.py`
@@ -44,7 +44,7 @@
 - 文档：`docs/GUI.md`、`docs/PRD-AI粗剪工具.md`（隐私行）、`docs/PROGRESS.md`（#33）
 
 ## Deviations from Plan
-- **画面判断单独一次调用**（安全审查 M1）：计划是在原标注提示词里加画面规则、一次调用拿全部字段。画面文字（含画面上读到的字，可被拍摄内容影响）如果和 `info_type` / `key_info` 同一次调用，夹带的指令可能改动整批 30 句的对白标注，档位影响不止一档。改为：对白标注那轮与关闭时完全相同、看不到画面；画面三项另问一轮（`ANNOTATE_VISION_USER`），只能影响画面三项 → 档位最多动一档。代价：开启时多一轮 DeepSeek 调用（对白文本会再发一次）。附带好处：开 / 关画面理解时对白标注（key_info）不会漂移。
+- **画面判断单独一次调用**（安全审查 M1）：计划是在原标注提示词里加画面规则、一次调用拿全部字段。画面文字（含画面上读到的字，可被拍摄内容影响）如果和 `info_type` / `key_info` 同一次调用，夹带的指令可能改动整批 30 句的对白标注，档位影响不止一档。改为：对白标注那轮与关闭时完全相同、看不到画面；画面三项另问一轮（`ANNOTATE_VISION_USER`），只能影响画面三项 → 档位最多动一档。代价：开启时多一轮 DeepSeek 调用（对白文本会再发一次）。对白标注那轮按对白输入单独缓存（`input_hash`），画面两轮按 `vision_hash` 另算：开 / 关画面理解时对白标注直接复用、不重做、不漂移（真账号验收发现原先共用一个指纹会整轮重跑，已修）。
 - **外发告知升到 v3**（安全审查 M2）：计划没提。开启画面理解时 DeepSeek 会收到画面文字描述，是新的外发内容，告知加第四条，已确认过的用户下次分析前重新确认一次。
 - **`classify.run(vision=)`**（审查 M1 与复审 MEDIUM）：单独跑 `aicut score` 时按现在的画面理解取用标注（`vision_align.score_key`）：关着就去掉上次开启时留下的画面字段；开着但标注不是按当前画面时间轴做的（关闭时做的、时间轴重做过、整合不是最新）→ 停下说原因。
 - PRD 写「DeepSeek 给出画面可用性」：按计划改为程序按云端 `issues` 判定（第 1 阶段结论：模型自评不可靠）。
@@ -66,7 +66,17 @@
 | `tests/test_classify.py` | +18 | 升 / 降档、key_info 不降、待定上限、过暗、画面片段、按开关取用 |
 | `tests/test_vision_wiring.py` 等 | +10 | `aicut align` / `text` / `score` 接入、② 14 项、告知 v3 |
 
+## 真账号验收（2026-10-31）
+项目：`projects/vision-gui-acceptance` 的副本 `vision-p4-acceptance`（54 分钟素材，138 句对白；画面时间轴沿用已付费结果，不重新上传）。
+
+- **整合**（本机）：138 句都挂上画面；参与判档的画面问题 17 句（晃动 15、背对镜头 2）；画面片段 44 段，合计 293 秒，最长 22.7 秒，无警告。
+- **第一次**（修复前）：开 / 关对比 26 句变档，其中 21 句来自对白标注整轮重跑的随机漂移（12 句 info_type、2 句 key_info 变化），画面规则只占 6 句升档，且有「对」、寒暄句靠背景里的签合同被升为可用。由此做了两处修改：
+  1. 对白标注缓存与画面分开（见 Deviations）；
+  2. 收紧升档：对白是「闲聊寒暄」或不足 4 个字的，不因画面升档（`VISION_LIFT_MIN_CHARS`），画面价值交给画面片段。
+- **第二次**（修复后，复用关闭时的对白标注）：话题与对白标注与关闭时逐句一致；开 / 关只差 5 句，全部来自画面规则：3 句待定 → 可用（签合同场景里说签合同、行业说法），2 句可用 → 待定（画面在盖章、对白在说别的）。画面片段 8 段可用（翻看 / 签署 / 盖章培训协议、扫码付款 9600 元），36 段待定。
+- **增量用量**：开启画面理解后 DeepSeek 只多画面两轮，7 次调用约 3.2 万 token（关闭时对白标注约 1.5 万 token）。
+- **已知局限**：升档只能看 `info_type`，模型把闲聊标成「事实陈述」时（S084、S090）仍会因画面升档。
+
 ## Next Steps
-- [ ] 真账号验收（需你确认，只花 DeepSeek tokens，不重新上传画面）：在 `projects/vision-acceptance` 跑 `align` → `text` → `score`；抽查画面片段与原片；开 / 关两次 `segments_scored.json` 档位变化逐条看理由；记录开启时 DeepSeek 的增量用量
-- [ ] 验收通过后 PRD 第 4 阶段标 complete
+- [x] 验收通过，PRD 第 4 阶段已标 complete（2026-11-01）
 - [ ] 第 5 阶段：③ 显示画面描述与画面片段、放入剪辑列表（空文本片段的手动改档锚点要另设）

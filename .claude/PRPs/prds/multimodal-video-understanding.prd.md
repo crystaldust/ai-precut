@@ -145,7 +145,7 @@ Must 全部：开关和新的创建 / 开始流程、代理素材与 MediaKit �
 | 1 | 技术验证 | 用真实素材调 MediaKit 视频理解：开通条件、抽帧上限、各档位 tokens 与效果、音频、JSON 稳定性、时间轴误差、语义切片；出结论报告 | complete | with 2 | - | `.claude/PRPs/reports/multimodal-phase1-spike.report.md` |
 | 2 | 流程与开关 | 「创建项目」不自动分析；② 准备开始状态 + 开关 + 档位 + 运行中锁定；"需要更新"；外发告知；设计图、界面流程、PRD 红线同步 | complete | with 1 | - | `.claude/PRPs/plans/completed/multimodal-phase2-flow-and-toggle.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase2-flow-and-toggle-report.md`） |
 | 3 | 代理素材与云端理解 | 代理转码 + 切段；扩展 MediaKit 客户端（上传、提交、轮询、重试、续跑）；`visual_timeline.json`；档位；单独记账 | complete | - | 1, 2 | `.claude/PRPs/plans/completed/multimodal-phase3-proxy-and-cloud.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase3-proxy-and-cloud-report.md`） |
-| 4 | 整合与判定 | 时间对齐、画面片段、DeepSeek 画面判断、档位判定 | in-progress | - | 3 | `.claude/PRPs/plans/completed/multimodal-phase4-integrate-and-judge.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase4-integrate-and-judge-report.md`） |
+| 4 | 整合与判定 | 时间对齐、画面片段、DeepSeek 画面判断、档位判定 | complete | - | 3 | `.claude/PRPs/plans/completed/multimodal-phase4-integrate-and-judge.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase4-integrate-and-judge-report.md`） |
 | 5 | ③ 呈现与收尾 | ③ 显示画面描述和画面片段（可放入剪辑列表）；GUI 文档、PROGRESS、放行检查；开 / 关对比验收 | pending | - | 4 | - |
 
 ### Phase Details
@@ -170,7 +170,7 @@ Must 全部：开关和新的创建 / 开始流程、代理素材与 MediaKit �
 - **Goal**: 画面信息进入片段判断
 - **Scope**: 对齐模块、画面片段、`understand_text` 标注扩展、`classify` 规则
 - **Success signal**: 开关关闭时结果与现在完全一致；打开时片段带画面字段，档位理由能引用画面
-- **状态说明（2026-10-31）**：代码完成、测试通过（关闭时产物逐字节不变有金标准测试），审查无 CRITICAL / HIGH；画面判断改为单独一次调用（防画面文字影响对白标注），外发告知升到第 3 版。等真账号验收（只花 DeepSeek tokens）后标 complete
+- **状态说明（2026-11-01）**：真账号验收通过（54 分钟素材，138 句对白）：对白标注开 / 关逐句一致，开 / 关只差 5 句且都来自画面规则（3 升 2 降），画面片段 44 段（8 段可用）；开启后 DeepSeek 只多画面两轮（7 次调用约 3.2 万 token）。验收中修了对白标注缓存随画面数据失效、收紧了闲聊 / 一两个字的对白靠画面升档。已知局限：模型把闲聊标成「事实陈述」时仍会因画面升档。详见报告「真账号验收」一节
 
 **Phase 5: ③ 呈现与收尾**
 - **Goal**: 剪辑师看得到、用得上，并完成验收
