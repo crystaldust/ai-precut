@@ -45,7 +45,6 @@ VISION_PROMPT_VERSION = 1    # 画面相关的提示词 / 字段改了就加一�
 VISUAL_MATCH = ("一致", "不一致", "无关")
 DEFAULT_VISUAL_MATCH = "无关"
 _VISION_KEYS = ("visual_match", "visual_key", "visual_reason")
-_ANN_KEYS_VISION = (*_ANN_KEYS, *_VISION_KEYS)
 _VISUAL_SEG_KEYS = ("label", "visual_key", "visual_reason")
 ANNOTATE_BATCH_VISION = 30   # 开启画面理解时每行更长，一批少送几句，免得输出被截断
 VISUAL_FIELDS = ("desc", "text_on_screen", "objects", "issues")  # 送给模型的画面数据
@@ -413,14 +412,20 @@ def _annotate(client, segments: list[dict], *, batch: int, style: str = "",
     return result, failures, fatal
 
 
-def _fingerprint(segments: list[dict], style: str, model: str, visual: dict | None = None) -> str:
+def _fingerprint(segments: list[dict], style: str, model: str) -> str:
+    """话题与对白标注的输入：不含画面——对白那轮开不开画面理解都一样，结果互相复用。"""
     items = ([[s["id"], s.get("text", ""), s.get("start"), s.get("end"), s.get("speaker")]
               for s in segments]  # 时间 / 说话人也进指纹（审查修复 M7）
              + [style, model, PROMPT_VERSION])
-    if visual is not None:  # 关闭画面理解时不追加：旧结果的缓存继续有效
-        items = [*items, "vision", VISION_PROMPT_VERSION,
-                 visual.get("by_segment") or {}, visual.get("visual_segments") or []]
-    payload = json.dumps(items, ensure_ascii=False, sort_keys=visual is not None)
+    payload = json.dumps(items, ensure_ascii=False)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _vision_fingerprint(text_fp: str, visual: dict) -> str:
+    """画面两轮的输入：对白输入 + 画面数据 + 时间轴 key（三档判定按 key 核对，key 变了要重写）。"""
+    items = [text_fp, "vision", VISION_PROMPT_VERSION, visual.get("timeline_key"),
+             visual.get("by_segment") or {}, visual.get("visual_segments") or []]
+    payload = json.dumps(items, ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
@@ -493,51 +498,74 @@ def _merge_visual(segments: list[dict], annotations: dict, failed: set[str]) -> 
 
 
 def _done(prev: dict, key: str, fields: tuple) -> dict:
+    """上次已标好的：标注失败或缺字段（旧版 / 手改过的文件）的不算，重新问。"""
     return {s["id"]: {k: s[k] for k in fields}
-            for s in prev.get(key) or [] if not s.get("annotation_failed")}
+            for s in prev.get(key) or []
+            if isinstance(s, dict) and not s.get("annotation_failed") and all(k in s for k in fields)}
 
 
-def _vision_passes(client, todo: list[dict], visual: dict, prev: dict | None, *, batch: int, style: str,
+def _vision_passes(client, todo: list[dict], visual: dict, vdone: dict, *, batch: int, style: str,
                    sleep, fatal: str) -> tuple[dict, list[dict], dict, list[dict]]:
     """开启画面理解时多出的两轮：对白句的画面三项、无对白画面片段的标题（结果单独存，不进 segments / 话题）。
 
-    返回 (对白句 id → 画面三项, 画面片段, 画面片段 id → 标注, failures)。
+    vdone：上次画面输入相同时已标好的画面片段。返回 (对白句 id → 画面三项, 画面片段, 画面片段 id → 标注, failures)。
     """
     batch = min(batch, ANNOTATE_BATCH_VISION)
     seen, failures, fatal = _annotate(client, todo, batch=batch, style=style, sleep=sleep, fatal=fatal,
                                       ask=_vision_asker(client, style, visual.get("by_segment") or {}))
     vsegs = visual.get("visual_segments") or []
-    vdone = _done(prev, "visual_segments", _VISUAL_SEG_KEYS) if prev else {}
     vfresh, vfailures, _ = _annotate(client, [s for s in vsegs if s["id"] not in vdone], batch=batch,
                                      style=style, sleep=sleep, fatal=fatal,
                                      ask=_visual_segment_asker(client, style))
     return seen, vsegs, {**vdone, **vfresh}, [*failures, *vfailures]
 
 
+def _full_hit(prev: dict | None, vfp: str | None) -> bool:
+    """完整结果且画面这边也对得上（关着 → 结果里没有画面；开着 → 画面输入相同），直接复用。"""
+    if prev is None:
+        return False
+    return "vision" not in prev if vfp is None else prev.get("vision_hash") == vfp
+
+
 def run(segments_path: Path, out_path: Path, *, client=None,
         batch: int = 40, model: str | None = None, style: str = "",
         sleep=None, visual: dict | None = None) -> dict:
-    """visual：work/vision_aligned.json 的内容（开启画面理解时）；None = 关闭，行为与原来完全一样。"""
+    """visual：work/vision_aligned.json 的内容（开启画面理解时）；None = 关闭，行为与原来完全一样。
+
+    话题与对白标注按对白输入缓存，画面两轮按画面输入另算：开关画面理解不会重做对白标注。
+    """
     segments = schema.read_field(segments_path, "segments")  # 结构不对 → CorruptJSON（带文件名）
     # 只把有文本的句子送进模型
     usable = [s for s in segments if (s.get("text") or "").strip()]
     label = model or (getattr(client, "model", "") if client is not None else DEFAULT_MODEL)
-    fp = _fingerprint(segments, style, label, visual)
+    fp = _fingerprint(segments, style, label)
+    vfp = None if visual is None else _vision_fingerprint(fp, visual)
     partial = partial_path(out_path)
-    if (hit := _cached(out_path, fp)) is not None:  # 命中缓存时连 Key 都不读
+    main = _cached(out_path, fp)
+    if _full_hit(main, vfp):  # 完整结果优先，哪怕留着另一种开关状态的未完成文件；命中时连 Key 都不读
         partial.unlink(missing_ok=True)
-        return {**hit, "cached": True, "resumed": False}
-    client = client or (DeepSeekClient(model=model) if model else DeepSeekClient())  # KI-10
-    prev = _resumable(partial, fp)
-    done = _done(prev, "segments", _ANN_KEYS if visual is None else _ANN_KEYS_VISION) if prev else {}
-    topics = prev["topics"] if prev else segment_topics(client, usable, sleep=sleep)
+        return {**main, "cached": True, "resumed": False}
+    resumed = _resumable(partial, fp)
+    prev = resumed if resumed is not None else main  # 续跑优先，其次复用完整结果里的对白标注
+    vprev = prev if prev is not None and vfp is not None and prev.get("vision_hash") == vfp else None
+    done = _done(prev, "segments", _ANN_KEYS) if prev else {}
+    vision_done = _done(vprev, "segments", _VISION_KEYS) if vprev else {}
+    vdone = _done(vprev, "visual_segments", _VISUAL_SEG_KEYS) if vprev else {}
     todo = [s for s in usable if s["id"] not in done]
+    vtodo = [] if visual is None else [s for s in usable if s["id"] not in vision_done]
+    vseg_todo = [] if visual is None else [s for s in visual.get("visual_segments") or [] if s["id"] not in vdone]
+    old_topics = prev.get("topics") if prev else None
+    if not isinstance(old_topics, list) or todo or vtodo or vseg_todo:  # 都能复用时不读 Key（KI-10）
+        client = client or (DeepSeekClient(model=model) if model else DeepSeekClient())
+    topics = old_topics if isinstance(old_topics, list) else segment_topics(client, usable, sleep=sleep)
     fresh, failures, fatal = _annotate(client, todo, batch=batch, style=style, sleep=sleep)
     annotations = {**done, **fresh}
     if visual is not None:
         text_failed = {sid for f in failures for sid in f["ids"]}  # 对白标注已失败的句子，画面轮不再问
-        seen, vsegs, vann, vfailures = _vision_passes(client, [s for s in todo if s["id"] not in text_failed],
-                                                      visual, prev, batch=batch, style=style, sleep=sleep, fatal=fatal)
+        seen, vsegs, vann, vfailures = _vision_passes(client, [s for s in vtodo if s["id"] not in text_failed],
+                                                      visual, vdone, batch=batch, style=style, sleep=sleep,
+                                                      fatal=fatal)
+        seen = {**vision_done, **seen}
         annotations = {sid: {**ann, **seen.get(sid, {})} for sid, ann in annotations.items()}
         failures = [*failures, *vfailures]
     failed = {sid for f in failures for sid in f["ids"]}
@@ -548,13 +576,13 @@ def run(segments_path: Path, out_path: Path, *, client=None,
         "failures": failures,
         "complete": not failed,
         "input_hash": fp,
-        "resumed": bool(prev),
+        "resumed": resumed is not None,
         "segments": _merge(segments, topics, annotations, failed,
                            None if visual is None else (visual.get("by_segment") or {})),
     }
     if visual is not None:
         result = {**result, "visual_segments": _merge_visual(vsegs, vann, failed),
-                  "vision": {"timeline_key": visual.get("timeline_key")}}
+                  "vision": {"timeline_key": visual.get("timeline_key")}, "vision_hash": vfp}
     if failed:  # 先落盘（单独的 partial 文件）再报错：重跑时只补这些句子
         schema.write_json(partial, result)
         raise AnnotationIncomplete(sorted(failed))

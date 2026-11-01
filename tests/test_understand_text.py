@@ -667,14 +667,41 @@ def test_vision_batch_is_capped(tmp_path):
     assert max(sizes) <= ut.ANNOTATE_BATCH_VISION
 
 
-def test_vision_on_and_off_do_not_share_cache(tmp_path):
-    _, sp, vis = _vision_run(tmp_path, VisionClient())
-    off = FakeClient()
-    res_off = ut.run(sp, tmp_path / "o.json", client=off)
-    assert off.calls > 0 and "visual_match" not in res_off["segments"][0]
-    again = VisionClient()
-    ut.run(sp, tmp_path / "o.json", client=again, visual=vis)
-    assert again.calls > 0  # 关闭版覆盖了缓存，开启要重新算
+TEXT_KEYS = ("id", "topic", "info_type", "key_info", "entities", "reason")
+
+
+def _text_part(res):
+    return res["topics"], [{k: s[k] for k in TEXT_KEYS} for s in res["segments"]]
+
+
+def test_turning_vision_on_reuses_text_annotation(tmp_path):
+    """对白标注那轮与关闭时完全相同：打开画面理解只补画面两轮，不重做话题和对白标注（验收发现）。"""
+    sp = _seg_file(tmp_path)
+    off = ut.run(sp, tmp_path / "o.json", client=FakeClient(), model="fake")
+    client = VisionClient()
+    on = ut.run(sp, tmp_path / "o.json", client=client, model="fake", visual=make_visual(make_segments(6)))
+    assert client.prompts and all("visual_match" in p for p in client.prompts)
+    assert _text_part(on) == _text_part(off) and on["segments"][0]["visual_match"] == "不一致"
+
+
+def test_turning_vision_off_reuses_text_annotation_without_model(tmp_path, monkeypatch):
+    sp = _seg_file(tmp_path)
+    fresh = ut.run(sp, tmp_path / "fresh.json", client=FakeClient(), model="fake")
+    ut.run(sp, tmp_path / "o.json", client=FakeClient(), model="fake")
+    ut.run(sp, tmp_path / "o.json", client=VisionClient(), model="fake", visual=make_visual(make_segments(6)))
+    monkeypatch.setattr(ut, "DeepSeekClient", lambda **kw: pytest.fail("对白标注都在，不应建客户端"))
+    off = ut.run(sp, tmp_path / "o.json", model="fake")
+    assert off["segments"] == fresh["segments"] and "visual_segments" not in off and "vision" not in off
+    assert json.loads((tmp_path / "o.json").read_text(encoding="utf-8"))["segments"] == fresh["segments"]
+
+
+def test_new_visual_data_reruns_only_vision_passes(tmp_path):
+    _, sp, vis = _vision_run(tmp_path, VisionClient(), model="fake")
+    changed = {**vis, "timeline_key": "k2"}
+    client = VisionClient()
+    res = ut.run(sp, tmp_path / "o.json", client=client, model="fake", visual=changed)
+    assert client.prompts and not any("归并成" in p or "info_type" in p for p in client.prompts)
+    assert res["vision"] == {"timeline_key": "k2"}
 
 
 def test_vision_cache_hit_and_invalidated_by_new_visual_data(tmp_path):
@@ -684,7 +711,8 @@ def test_vision_cache_hit_and_invalidated_by_new_visual_data(tmp_path):
     changed = {**vis, "by_segment": {"S001": {**vis["by_segment"]["S001"], "issues": []}}}
     client = VisionClient()
     ut.run(sp, tmp_path / "o.json", client=client, model="fake", visual=changed)
-    assert client.calls > 0
+    assert any("visual_match" in p for p in client.prompts)
+    assert not any("info_type" in p for p in client.prompts)  # 对白标注照旧复用
 
 
 def test_vision_prompt_version_change_invalidates_cache(tmp_path, monkeypatch):
@@ -692,7 +720,7 @@ def test_vision_prompt_version_change_invalidates_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(ut, "VISION_PROMPT_VERSION", ut.VISION_PROMPT_VERSION + 1)
     client = VisionClient()
     ut.run(sp, tmp_path / "o.json", client=client, visual=vis)
-    assert client.calls > 0
+    assert any("visual_match" in p for p in client.prompts)
 
 
 def test_off_cache_unchanged_by_vision_code(tmp_path):
@@ -724,3 +752,41 @@ def test_vision_pass_skips_segments_whose_text_annotation_failed(tmp_path):
     with pytest.raises(ut.AnnotationIncomplete):
         _vision_run(tmp_path, client)
     assert not any("visual_match" in p for p in client.prompts)  # 失败的句子不再问画面
+
+
+def test_complete_result_beats_leftover_partial_from_other_vision_state(tmp_path, monkeypatch):
+    """开着画面理解失败留下未完成文件，再关掉：完整的关闭结果照样命中，不调模型、不读 Key（审查 HIGH）。"""
+    sp = _seg_file(tmp_path)
+    ut.run(sp, tmp_path / "o.json", client=FakeClient(), model="fake")
+    with pytest.raises(ut.AnnotationIncomplete):
+        ut.run(sp, tmp_path / "o.json", client=VisionClient(visual_fail=True), model="fake",
+               visual=make_visual(make_segments(6), visual_segments=[vseg(1, 40, 52)]))
+    assert ut.partial_path(tmp_path / "o.json").exists()
+    monkeypatch.setattr(ut, "DeepSeekClient", lambda **kw: pytest.fail("完整结果在，不应建客户端"))
+    res = ut.run(sp, tmp_path / "o.json", model="fake")
+    assert res["cached"] is True and not ut.partial_path(tmp_path / "o.json").exists()
+
+
+def test_result_from_older_version_is_redone_not_crashed(tmp_path):
+    sp = _seg_file(tmp_path)
+    (tmp_path / "o.json").write_text(json.dumps({"complete": True, "failures": [], "input_hash": "旧版指纹",
+                                                 "topics": [], "segments": [{"id": "S001"}]}), encoding="utf-8")
+    client = VisionClient()
+    res = ut.run(sp, tmp_path / "o.json", client=client, model="fake", visual=make_visual(make_segments(6)))
+    assert any("归并成" in p for p in client.prompts) and res["complete"] is True
+
+
+def test_matching_vision_hash_with_missing_fields_reasks_instead_of_crashing(tmp_path):
+    _, sp, vis = _vision_run(tmp_path, VisionClient(), model="fake")
+    out = tmp_path / "o.json"
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    rows = [{k: v for k, v in s.items() if k != "visual_match"} if s["id"] == "S002" else s
+            for s in saved["segments"]]
+    out.write_text(json.dumps({**saved, "segments": rows, "failures": [{"ids": ["V009"], "error": "x"}]},
+                              ensure_ascii=False), encoding="utf-8")
+    ut.partial_path(out).write_text(json.dumps({**saved, "segments": rows, "complete": False},
+                                               ensure_ascii=False), encoding="utf-8")
+    client = VisionClient()
+    res = ut.run(sp, out, client=client, model="fake", visual=vis)
+    asked = [p for p in client.prompts if "visual_match" in p]
+    assert len(asked) == 1 and "S002 " in asked[0] and "S001 " not in asked[0] and res["complete"] is True
