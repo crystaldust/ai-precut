@@ -46,6 +46,8 @@ PENDING_OVER_WARNING_VISION = ("待定 {left} 段超过上限 {limit} 段：其�
                                "或因画面降为待定，不自动降级，需要你逐条裁决")
 VISION_KEY_REASON = "画面可见关键信息：{why}"
 VISION_KEY_FALLBACK = "见画面"
+# 对白本身是寒暄、或只有一两个字（「对」「嗯好的」）时不因画面升档：画面价值留给画面片段
+VISION_LIFT_MIN_CHARS = 4
 VISION_PROBLEM_REASON = "画面：{problems}；{why}"
 VISION_MISMATCH = "画面与对白不符"
 VISUAL_SEGMENT_REASON = "画面片段，需要你判断"
@@ -167,13 +169,19 @@ def _apply_dark(s: dict, must_names: set[str]) -> dict:
     return {**s, "level": 1, "level_reason": DARK_REASON}
 
 
+def _speaks_for_itself(s: dict) -> bool:
+    """对白本身有内容（不是寒暄、也不只是一两个字的应答），才值得靠画面升档。"""
+    chars = sum(1 for ch in s.get("text") or "" if ch.isalnum())
+    return s.get("info_type") not in WASTE_TYPES and chars >= VISION_LIFT_MIN_CHARS
+
+
 def _apply_vision(s: dict) -> dict:
     """只对开启画面理解的片段生效（带 visual_match）：升一档或降一档，不会降成废片。"""
     if "visual_match" not in s:
         return s
     issues = (s.get("visual") or {}).get("issues") or []
     if (s["level"] == 2 and s.get("visual_key") and not issues and not s.get("annotation_failed")
-            and "dark" not in s.get("visual_flags", [])):
+            and "dark" not in s.get("visual_flags", []) and _speaks_for_itself(s)):
         why = s.get("visual_reason") or VISION_KEY_FALLBACK
         return {**s, "level": 3, "level_reason": VISION_KEY_REASON.format(why=why)}
     problems = [*issues, *([VISION_MISMATCH] if s.get("visual_match") == "不一致" else [])]

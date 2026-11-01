@@ -343,6 +343,19 @@ def test_visual_key_does_not_lift_when_frame_has_issue_or_is_dark():
     assert one(seg(1, 0, dur=8, info_type="事实陈述", **vis(key=True)), visual_by_id=DARK)["level"] != 3
 
 
+@pytest.mark.parametrize("info_type, text", [("闲聊寒暄", "就是咱俩我知道他来的时候我都记得"),
+                                             ("事实陈述", "对"), ("事实陈述", "嗯 好的。")])
+def test_visual_key_does_not_lift_chitchat_or_bare_reply(info_type, text):
+    """对白本身是寒暄或只有一两个字：画面再有内容也不升档，画面价值留给画面片段（验收收紧）。"""
+    s = one(seg(1, 0, dur=8, info_type=info_type, topic="讲解合同条款", text=text, **vis(key=True)))
+    assert s["level"] == 2 and "画面" not in s["level_reason"]
+
+
+def test_visual_key_lifts_dialogue_of_four_characters():
+    s = one(seg(1, 0, dur=8, info_type="事实陈述", topic="讲解合同条款", text="盖个章吧", **vis(key=True)))
+    assert s["level"] == 3
+
+
 def test_visual_key_does_not_lift_failed_annotation():
     s = one(seg(1, 0, dur=8, annotation_failed=True, **vis(key=True)))
     assert s["level"] == 2 and s["level_reason"] == classify.ANNOTATION_FAILED_REASON
