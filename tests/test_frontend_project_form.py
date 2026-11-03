@@ -14,7 +14,7 @@ def test_new_modal_has_two_sections_prefs_collapsed_with_info_default():
     assert "素材与成片" in html and "剪辑偏好（可跳过）" in html
     assert '<details class="prefs" id="npPrefs">' in html  # 没有 open 属性 = 默认折叠
     assert 'name="npTone" value="info" checked' in html and 'value="balanced"' not in html
-    assert "必须保留的原话（每行一句，最多 3 句）" in html and "创建并开始分析" in html
+    assert "必须保留的原话（每行一句，最多 3 句）" in html and "创建项目" in html and "可选画面理解，再点开始分析" in html
     assert "&lt;b&gt;" in html and "<b>" not in html  # 预设警告过 esc
     assert html.index("npMin") < html.index("npPreset")  # KI-92：时长在预设上面
 
@@ -33,25 +33,24 @@ def test_read_calibration_cleans_blank_lines_and_rejects_more_than_three():
     assert out[1] is None and out[2] == "必须保留的原话最多 3 句"
 
 
-def test_create_posts_new_with_calibration_then_starts_analysis_and_lands_on_step_two():
+def test_create_posts_new_with_calibration_then_lands_on_step_two_without_starting_analysis():
     out = run_app("""(async () => {""" + FILL_NEW + """
-      await createAndAnalyze();
+      await createProject();
       const order = calls.filter(c => c.method === 'POST').map(c => c.path);
-      return [order, calls.find(c => c.path === '/api/new').body, calls.find(c => c.path === '/api/job').body,
-              state.project, state.view, el('#mask').classList.contains('on')];
+      return [order, calls.find(c => c.path === '/api/new').body,
+              state.project, state.view, el('#mask').classList.contains('on'), el('#toast').textContent];
     })()""", routes=NEW_ROUTES)
-    order, new_body, job_body, project, view, modal = out
-    assert order == ["/api/new", "/api/job"]
+    order, new_body, project, view, modal, toast = out
+    assert order == ["/api/new"]  # 只创建：不起分析任务，剪辑师在 ② 选好画面理解后再点「开始分析」
     assert new_body == {"material": "/m/a.mp4", "name": "新项目", "title": "片名", "preset": "纪实3min",
                         "target": 180, "calibration": {"tone": "info", "audience": "", "must_lines": ""}}
-    assert job_body == {"project": "新项目", "task": "prepare"}
-    assert (project, view, modal) == ("新项目", "analyze", False)
+    assert (project, view, modal, toast) == ("新项目", "analyze", False, "项目已创建")
 
 
 def test_create_failure_keeps_modal_shows_reason_and_starts_nothing():
     out = run_app("""(async () => {""" + FILL_NEW + """
       showModal('新建项目', 'x');
-      await createAndAnalyze();
+      await createProject();
       return [el('#mask').classList.contains('on'), el('#toast').textContent,
               calls.filter(c => c.path === '/api/job').length, state.project];
     })()""", routes={**NEW_ROUTES, "POST /api/new": [400, {"error": "项目已存在"}]})
@@ -61,7 +60,7 @@ def test_create_failure_keeps_modal_shows_reason_and_starts_nothing():
 def test_create_rejects_too_many_lines_without_posting():
     out = run_app("""(async () => {""" + FILL_NEW + """
       el('#npMust').value = '1\\n2\\n3\\n4';
-      await createAndAnalyze();
+      await createProject();
       return [calls.filter(c => c.method === 'POST').length, el('#toast').textContent];
     })()""", routes=NEW_ROUTES)
     assert out == [0, "必须保留的原话最多 3 句"]
@@ -69,24 +68,19 @@ def test_create_rejects_too_many_lines_without_posting():
 
 @pytest.mark.parametrize("field,toast_text", [("#npPath", "先选素材"), ("#npName", "填个项目名")])
 def test_create_requires_material_and_name(field, toast_text):
-    out = run_app("(async () => {" + FILL_NEW + f"el({field!r}).value = ''; await createAndAnalyze();"
+    out = run_app("(async () => {" + FILL_NEW + f"el({field!r}).value = ''; await createProject();"
                   " return [calls.length, el('#toast').textContent]; })()", routes=NEW_ROUTES)
     assert out == [0, toast_text]
 
 
-def test_create_with_missing_keys_stays_on_analysis_page_without_settings_modal():
+def test_create_with_missing_keys_lands_on_analysis_page_and_asks_nothing_yet():
     cfg = {"consent": True, "providers": [provider("mediakit", True), provider("deepseek", False)]}
     out = run_app("""(async () => {""" + FILL_NEW + """
-      await createAndAnalyze();
-      return [state.view, state.block && state.block.need, el('#mask').classList.contains('on'),
-              el('#stage').innerHTML];
-    })()""", routes={**NEW_ROUTES, "GET /api/config": cfg,
-                     "POST /api/job": [409, {"error": "还没有填写 API Key：DeepSeek", "need": "keys",
-                                             "missing": ["deepseek"]}]})
-    view, need, modal, html = out
-    assert (view, need, modal) == ("analyze", "keys", False)
-    assert 'id="key_deepseek"' in html and "还没有填写 API Key" in html
-    assert "disabled" in html.split("填好了，继续分析")[0].split("<button")[-1]
+      await createProject();
+      return [state.view, state.block, el('#mask').classList.contains('on'),
+              calls.filter(c => c.path === '/api/job').length];
+    })()""", routes={**NEW_ROUTES, "GET /api/config": cfg})
+    assert out == ["analyze", None, False, 0]  # 缺 Key 等点了「开始分析」再在 ② 内联处理
 
 
 def test_project_settings_prefills_and_offers_legacy_balanced_only_when_current():

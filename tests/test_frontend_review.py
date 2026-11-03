@@ -108,15 +108,15 @@ def test_pick_file_failure_toasts():
 
 def test_create_still_selects_new_project_when_project_list_fails_to_load():
     out = run_app("(async () => {" + FILL_NEW + """
-      await createAndAnalyze();
-      return [state.project, calls.some(c => c.path === '/api/job')]; })()""",
+      await createProject();
+      return [state.project, state.view]; })()""",
                   routes={**NEW_ROUTES, "GET /api/projects": [500, {"error": "项目列表读不出来"}]})
-    assert out == ["新项目", True]
+    assert out == ["新项目", "analyze"]
 
 
 def test_create_double_submit_posts_new_once():
     out = run_app("(async () => {" + FILL_NEW + """
-      const a = createAndAnalyze(); const b = createAndAnalyze(); await Promise.all([a, b]);
+      const a = createProject(); const b = createProject(); await Promise.all([a, b]);
       return calls.filter(c => c.path === '/api/new').length; })()""", routes=NEW_ROUTES)
     assert out == 1
 

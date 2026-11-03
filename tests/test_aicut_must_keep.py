@@ -420,3 +420,14 @@ def test_status_prints_llm_usage(monkeypatch, tmp_path, capsys):
     usage.record(pdir / "work", "text", {"total_tokens": 1234})
     aicut.cmd_status(Namespace(name="p"))
     assert "LLM 用量：1234 tokens（上限 3000000）" in capsys.readouterr().out
+
+
+def test_status_prints_vision_usage_only_when_recorded(monkeypatch, tmp_path, capsys):
+    from pipeline import usage
+    monkeypatch.setattr(aicut, "PROJECTS", tmp_path)
+    pdir = _project(tmp_path)
+    aicut.cmd_status(Namespace(name="p"))
+    assert "画面理解用量" not in capsys.readouterr().out
+    usage.record_vision(pdir / "work", {"total_tokens": 4321})
+    aicut.cmd_status(Namespace(name="p"))
+    assert "画面理解用量：4321 tokens（不计入 LLM 上限）" in capsys.readouterr().out

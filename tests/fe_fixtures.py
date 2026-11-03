@@ -57,7 +57,8 @@ NEW_RESULT = {"topbar": {"target": 180, "total": 0, "shots": 0, "clip": {"count"
 NEW_ROUTES = {"GET /api/presets": PRESETS, "GET /api/result": NEW_RESULT, "POST /api/new": {"ok": True, "name": "新项目"},
               "GET /api/projects": {"projects": [], "stale_job": None}, "GET /api/state": NEW_STATE,
               "GET /api/analysis": {"steps": [], "done": 0, "total": 11, "complete": False, "running": None,
-                                    "failed": None, "notice": "分析大约 10–15 分钟，可以关掉窗口，回来接着跑"},
+                                    "failed": None, "notice": "分析大约 10–15 分钟，可以关掉窗口，回来接着跑",
+                                    "vision": {"enabled": False, "tier": "economy"}},
               "POST /api/job": {"job_id": "j1"}}
 
 
@@ -71,7 +72,7 @@ LABELS = ["读取素材", "生成浏览小样", "抽音轨", "云端转写", "�
           "判定档位", "写内容摘要", "准备决策问题", "初步选段"]
 
 
-def progress(done=0, running=None, failed=None, complete=False, seconds=None):
+def progress(done=0, running=None, failed=None, complete=False, seconds=None, vision=None):
     steps = []
     for i, label in enumerate(LABELS):
         status = "done" if i < done else ("failed" if failed and i == done else
@@ -81,7 +82,7 @@ def progress(done=0, running=None, failed=None, complete=False, seconds=None):
     return {"steps": steps, "done": done, "total": 11, "complete": complete,
             "running": f"s{running}" if running is not None else None,
             "notice": "分析大约 10–15 分钟，可以关掉窗口，回来接着跑",
-            "failed": failed}
+            "failed": failed, "vision": vision or {"enabled": False, "tier": "economy"}}
 
 
 def in_project(script, routes=None):

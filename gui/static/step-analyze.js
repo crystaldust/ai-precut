@@ -1,7 +1,8 @@
-// 剪辑台主页 · ② 分析（M13）：11 项人话进度 + 每项耗时，失败说清哪一步和原因，可离开页面。
+// 剪辑台主页 · ② 分析（M13）：11 项人话进度（开了画面理解 14 项，按接口返回的 total） + 每项耗时，失败说清哪一步和原因，可离开页面。
 // 缺告知 / 缺 Key 在本页内联处理；编码器等其它前置条件弹说明（jobs.js 的 showNeedModal，KI-97）。
 // 分析不自动重跑（P5）：中断后回来显示「继续分析」，已完成的步骤会跳过。
 // 本页只轮询 /api/analysis；顶栏胶囊用 /api/job（jobs.js），两者各一套计时器、互不干扰。
+// 画面理解（可选）：不在运行时显示开关和档位，按项目存；运行中只显示锁定条，后端也会拒绝修改（409）。
 
 /* 界面文案：产品可直接改这里 */
 const COPY_ANALYZE_NOTICE = '分析大约 10–15 分钟，可以关掉窗口，回来接着跑';
@@ -24,9 +25,22 @@ const COPY_BLOCK_RESUME = '填好了，继续分析';
 const STEP_MARKS = {done: '✓', running: '●', failed: '✕', waiting: '○'};
 const STEP_STATUS_TEXT = {done: '已完成', running: '进行中', failed: '失败', waiting: '等待'};
 const ANALYSIS_POLL_MS = 1500;
+const COPY_VISION_TITLE = '画面理解（AI 多模态）';
+const COPY_VISION_OPTIONAL = '可选 · 默认关闭';
+const COPY_VISION_DESC = '除了听对话，再让 AI 看画面：认出人、动作、物品和画面上的文字，补上没人说话的镜头，并结合画面判断片段能不能用。';
+const COPY_VISION_PRIVACY = '开启后会把低清代理视频（不是原始视频）上传到火山引擎。素材涉及隐私时不要开启。';
+const COPY_VISION_TIER = '档位';
+const VISION_TIERS = [['economy', '省钱（默认）'], ['balanced', '均衡'], ['quality', '精细']];
+const COPY_VISION_TIER_HINT = '省钱：每秒看 2 帧，每小时素材约 50 万 tokens；均衡 / 精细看得更细、更贵';
+const COPY_VISION_LOCKED = '画面理解：{state} · 分析中不能修改；停止或完成后可以改，再重新运行';
+const COPY_VISION_ON = '已开启 · {tier}';
+const COPY_VISION_OFF = '未开启';
+const VISION_DEFAULT = {enabled: false, tier: 'economy'};  // 与 pipeline/vision.py 的 DEFAULT 一致
 
 // project：data 属于哪个项目；req：请求序号（切项目 / 新请求让旧响应作废）；seq：轮询会话；html 缓存见 app.js 的 renderView
 const analysisUi = {data: null, project: null, error: null, req: 0, seq: 0, timer: null};
+// 画面理解设置的保存：saving 防重复点击；req 让切项目 / 更新的请求作废旧响应
+const visionUi = {saving: false, req: 0};
 
 /* ---------------- 轮询 ---------------- */
 function isAnalyzing(){
@@ -94,6 +108,38 @@ async function analysisConsent(){
   return startAnalysis();
 }
 
+/* ---------------- 画面理解设置 ---------------- */
+function visionOf(p){ return {...VISION_DEFAULT, ...(p && p.vision ? p.vision : {})}; }
+function tierLabel(tier){ return (VISION_TIERS.find(([k])=>k === tier) || VISION_TIERS[0])[1]; }
+async function saveVision(next){
+  const project = state.project;
+  if(!project || visionUi.saving) return;
+  visionUi.saving = true;
+  const req = ++visionUi.req;
+  try{
+    const r = await postJson('/api/project/vision', {project, ...next});
+    if(req !== visionUi.req || project !== state.project) return;  // 切了项目：别把旧项目的设置画过来
+    if(analysisUi.project === project && analysisUi.data) analysisUi.data = {...analysisUi.data, vision: r.vision};
+    applyWizard(r.wizard);  // 分析过的项目改了设置 → ② 变「需要更新」
+    if(state.view === 'analyze') renderView();
+  }catch(e){
+    if(req !== visionUi.req || project !== state.project) return;
+    toast(e.message, TOAST_ERROR_MS);
+    if(e.status === 409 && state.view === 'analyze') startAnalysisPoll();  // 正在分析：刷新进度，卡片换成锁定条
+  }finally{
+    visionUi.saving = false;
+  }
+}
+function toggleVision(){
+  const v = visionOf(analysisUi.data);
+  return saveVision({enabled: !v.enabled, tier: v.tier});
+}
+function setVisionTier(target){
+  const tier = target.getAttribute('data-tier');
+  if(!VISION_TIERS.some(([k])=>k === tier)) return;
+  return saveVision({enabled: visionOf(analysisUi.data).enabled, tier});
+}
+
 /* ---------------- 页面 ---------------- */
 function blockHtml(block){
   if(block.need === 'consent')
@@ -135,15 +181,34 @@ function statusCardHtml(p){
     <p class="hint">${esc(p.notice || COPY_ANALYZE_NOTICE)}</p>
     ${button('primary', 'startAnalysis', began ? COPY_ANALYZE_CONTINUE : COPY_ANALYZE_START, true)}</div>`;
 }
+function visionCardHtml(v, locked){
+  if(locked){
+    const text = v.enabled ? COPY_VISION_ON.replace('{tier}', tierLabel(v.tier)) : COPY_VISION_OFF;
+    return `<p class="vision-lock hint">🔒 ${esc(COPY_VISION_LOCKED.replace('{state}', text))}</p>`;
+  }
+  const tiers = VISION_TIERS.map(([key, label])=>
+    `<button class="seg-item" data-act="setVisionTier" data-tier="${esc(key)}" aria-pressed="${key === v.tier}"${v.enabled ? '' : ' disabled'}>${esc(label)}</button>`).join('');
+  return `<div class="card vision-card">
+    <div class="vision-head"><h3>${esc(COPY_VISION_TITLE)}</h3><span class="hint">${esc(COPY_VISION_OPTIONAL)}</span>
+      <button class="switch" role="switch" aria-checked="${v.enabled}" aria-label="${esc(COPY_VISION_TITLE)}" data-act="toggleVision"><span></span></button></div>
+    <p class="hint">${esc(COPY_VISION_DESC)}</p>
+    <div class="vision-tiers"><span>${esc(COPY_VISION_TIER)}</span><div class="seg" role="group" aria-label="${esc(COPY_VISION_TIER)}">${tiers}</div></div>
+    <p class="hint">${esc(COPY_VISION_TIER_HINT)}</p>
+    <p class="hint warn">⚠ ${esc(COPY_VISION_PRIVACY)}</p></div>`;
+}
 function viewAnalyze(progress=(analysisUi.project === state.project ? analysisUi.data : null)){
   if(state.block) return blockHtml(state.block) + (progress ? stepsListHtml(progress.steps || []) : '');
   if(!progress)
     return `<div class="empty">${esc(analysisUi.error || COPY_ANALYZE_LOADING)}</div>`;
   const stale = analysisUi.error
     ? `<p class="hint warn">${esc(COPY_ANALYZE_STALE_NOTE.replace('{reason}', analysisUi.error))}</p>` : '';
-  return stale + statusCardHtml(progress) + stepsListHtml(progress.steps || []);
+  const running = isAnalyzing(), vision = visionCardHtml(visionOf(progress), running);
+  // 还要点「开始 / 继续 / 重试」时先选画面理解再点按钮（卡片在上）；完成或运行中，状态卡在上
+  const cards = running || progress.complete ? statusCardHtml(progress) + vision : vision + statusCardHtml(progress);
+  return stale + cards + stepsListHtml(progress.steps || []);
 }
 
 Object.assign(ACTIONS, {
   startAnalysis: ()=>startAnalysis(), analysisConsent: ()=>analysisConsent(),
+  toggleVision: ()=>toggleVision(), setVisionTier: el=>setVisionTier(el),
 });

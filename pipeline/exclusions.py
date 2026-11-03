@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import applog, review, schema, select
+from pipeline import applog, review, schema, select, visual_clips
 
 UNUSABLE_OVERLAP_S = 0.1   # D12：与不可用片段重叠超过这么多秒的镜头整镜剔除（隐私优先）
 DROPPED_WARNING = "已自动剔除 {n} 个含「不可用」片段的镜头：{ids}"
@@ -41,7 +41,7 @@ def spans(workdir: Path) -> list[Span]:
     scored = schema.read_json(scored_path, default=None)
     if scored is None:
         return []
-    segments = review.apply(schema.require_key(scored, "segments", scored_path), review.load(workdir))
+    segments = review.apply(visual_clips.markable(scored, scored_path), review.load(workdir))
     return [(float(s["start"]), float(s["end"]), s["id"]) for s in segments if s.get("unusable")]
 
 

@@ -829,3 +829,77 @@ def test_unused_cause_excluded_not_must_and_duration():
 
 def test_with_lines_is_public():
     assert callable(select.with_lines) and not hasattr(select, "_with_lines")
+
+
+# ================================================================ 画面片段（第 5 阶段）：只靠剪辑列表整段进片
+def vseg(n, start, end, *, level=3, label="扫码付款"):
+    return {"id": f"V{n:03d}", "kind": "visual", "start": start, "end": end, "text": "", "level": level,
+            "level_reason": "画面：画面上能看到关键信息", "label": label, "visual": {"desc": "一人扫码", "issues": []}}
+
+
+def _run_with_visual(tmp_path, overrides, *, vsegs=None):
+    scored = {"target": 60, "topics": TOPICS,
+              "segments": [seg(1, 0, 6, "讲合同", key=True), seg(2, 40, 6, "讲合同")],
+              "visual_segments": vsegs or [vseg(1, 10, 30)]}
+    sp = tmp_path / "scored.json"
+    sp.write_text(json.dumps(scored, ensure_ascii=False), encoding="utf-8")
+    ap = tmp_path / "answers.json"
+    ap.write_text(json.dumps({"answers": {}}), encoding="utf-8")
+    (tmp_path / "overrides.json").write_text(json.dumps(overrides), encoding="utf-8")
+    return select.run(sp, ap, tmp_path, title="片名", material="/tmp/a.mp4")
+
+
+def test_usable_visual_segment_is_not_auto_selected(tmp_path):
+    res = _run_with_visual(tmp_path, {})
+    assert all(s["segment_id"] != "V001" for s in res["shots"])
+    assert all(u["segment_id"] != "V001" for u in res["unused"])
+
+
+def test_visual_segment_in_clip_list_becomes_whole_shot_without_subtitle(tmp_path):
+    res = _run_with_visual(tmp_path, {"V001": {"must_keep": True}})
+    shot = next(s for s in res["shots"] if s["segment_id"] == "V001")
+    assert (shot["start"], shot["end"], shot["sub"], shot["topic"]) == (10, 30, "", "画面片段")
+    assert shot.get("role") != "hook"
+    listed = json.loads((tmp_path / "shots-selected.json").read_text(encoding="utf-8"))["shots"]
+    assert next(x for x in listed if x["in"] == 10)["note"] == "画面：扫码付款"
+    assert select.missing_must_keep(tmp_path, listed) == []
+
+
+def test_unusable_visual_segment_is_not_selected_even_if_listed(tmp_path):
+    res = _run_with_visual(tmp_path, {"V001": {"must_keep": True, "unusable": True}})
+    assert all(s["segment_id"] != "V001" for s in res["shots"])
+
+
+def test_missing_must_keep_reports_visual_segment_dropped_from_table(tmp_path):
+    _run_with_visual(tmp_path, {"V001": {"must_keep": True}})
+    (tmp_path / "segments_scored.json").write_text((tmp_path / "scored.json").read_text(encoding="utf-8"),
+                                                    encoding="utf-8")
+    missing = select.missing_must_keep(tmp_path, [{"id": "a", "in": 0, "out": 6}])
+    assert [m["id"] for m in missing] == ["V001"]
+
+
+def test_visual_shot_is_never_cold_open_hook():
+    segs = [seg(1, 0, 6, "讲合同"), seg(2, 10, 6, "讲合同"), seg(3, 20, 6, "讲合同"),
+            {**vseg(1, 30, 40), "topic": "画面片段", "must_keep": True, "key_info": True, "signals": {}}]
+    res = select.select(segs, TOPICS, {}, 60)
+    assert all(s.get("role") != "hook" or s["segment_id"] != "V001" for s in res["shots"])
+    assert any(s["segment_id"] == "V001" for s in res["shots"])
+
+
+def test_picked_visual_segment_does_not_trigger_audio_signal_backfill(tmp_path, monkeypatch):
+    monkeypatch.setattr(select.classify, "load_audio_signals", lambda *_: 1 / 0)
+    res = _run_with_visual(tmp_path, {"V001": {"must_keep": True}})
+    assert any(s["segment_id"] == "V001" for s in res["shots"])
+
+
+def test_visual_overrides_left_after_vision_off_are_not_warned_as_stale(tmp_path):
+    scored = {"target": 60, "topics": TOPICS, "segments": [seg(1, 0, 6, "讲合同")]}
+    sp = tmp_path / "scored.json"
+    sp.write_text(json.dumps(scored, ensure_ascii=False), encoding="utf-8")
+    ap = tmp_path / "answers.json"
+    ap.write_text(json.dumps({"answers": {}}), encoding="utf-8")
+    (tmp_path / "overrides.json").write_text(json.dumps({
+        "V001": {"must_keep": True, "anchor": {"text": "visual", "start": 10.0, "end": 30.0}},
+        "S009": {"level": 1, "anchor": {"text": "abc", "start": 99.0}}}), encoding="utf-8")
+    warns = " ".join(select.run(sp, ap, tmp_path)["warnings"])
+    assert "S009" in warns and "V001" not in warns

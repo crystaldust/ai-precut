@@ -92,7 +92,7 @@ def test_pick_only_toggles_highlight_not_rerender():
 
 # ---------------------------------------------------------------- 任务弹窗按钮
 @pytest.mark.parametrize("kind, has, lacks", [
-    ("running", ["取消任务", 'data-act="cancelJob"'], ["重试"]),
+    ("running", ["取消任务", 'data-act="cancelJob"', "关闭窗口", 'data-act="closeModal"'], ["重试"]),
     ("ended", ["重试", "关闭", 'data-act="retryJob"', 'data-act="closeModal"'], ["取消任务"]),
     ("conflict", ["查看进行中的任务", 'data-act="attachJob"', "关闭"], ["重试"]),
     ("ack", ["知道了"], ["取消任务"]),
@@ -255,6 +255,47 @@ def test_modal_dismissable_only_when_no_job_polling():
 def test_other_modals_stay_dismissable_while_a_background_job_polls():  # M13：胶囊模式下任务常驻后台
     out = run_js("state.modalKind = null; jobUi.polling = 'x'; modalDismissable()", files=["jobs.js"])
     assert out is True
+
+
+# ---------------------------------------------------------------- 任务日志：轮询刷新不抢滚动条
+LOG_BOX = ("var box = {clientHeight: 300, scrollHeight: 1000, scrollTop: %d, writes: 0, _t: 'a',"
+           " get textContent(){ return this._t; }, set textContent(v){ this._t = v; this.writes++; }};")
+
+
+def test_log_refresh_keeps_position_when_user_scrolled_up():
+    out = run_js(LOG_BOX % 100 + "showLog(box, 'a\\nb'); [box.textContent, box.scrollTop]", files=["jobs.js"])
+    assert out == ["a\nb", 100]
+
+
+def test_log_refresh_follows_new_lines_when_at_bottom():
+    out = run_js(LOG_BOX % 700 + "showLog(box, 'a\\nb'); box.scrollTop", files=["jobs.js"])
+    assert out == 1000
+
+
+def test_log_refresh_skips_rewrite_when_text_unchanged():  # 每 0.9 秒重写一次会打断拖动滚动条
+    out = run_js(LOG_BOX % 100 + "showLog(box, 'a'); [box.writes, box.scrollTop]", files=["jobs.js"])
+    assert out == [0, 100]
+
+
+def test_reopening_job_detail_starts_at_latest_log_line():
+    out = run_js("el('log').scrollHeight = 900; jobUi.view = {id: 'j1', task: 'preview', status: 'running', log: ['a', 'b']};"
+                 "openJobDetail(); el('log').scrollTop", files=["jobs.js"])
+    assert out == 900
+
+
+def _base_fn(name):  # 只取 base.js 里的真函数：整个文件顶层要绑 DOM 事件，桩里跑不了
+    src = (STATIC / "base.js").read_text(encoding="utf-8")
+    m = re.search(r"^function %s\(.*?^}\n" % name, src, re.S | re.M)
+    assert m, f"base.js 里找不到 {name}"
+    return m.group(0)
+
+
+def test_closing_running_job_window_keeps_job_polling():
+    out = run_js("jobUi.view = {id: 'j1', task: 'preview', status: 'running', log: []}; jobUi.polling = 'j1';"
+                 "openJobDetail(); const before = state.modalKind; realCloseModal();"
+                 "[before, state.modalKind, jobUi.polling, modalDismissable()]", files=["jobs.js"],
+                 extra=_base_fn("closeModal").replace("function closeModal(", "function realCloseModal("))  # 桩里的同名 var 会盖掉它
+    assert out == ["job", None, "j1", True]
 
 
 # ---------------------------------------------------------------- MEDIUM-4：查看别人的任务后不能「重试」它

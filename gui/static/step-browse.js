@@ -2,6 +2,7 @@
 // 标记（S / A / D / X / Z）与剪辑列表面板在 cliplist.js；快捷键在 shortcuts.js。
 // 页面骨架是固定的（viewBrowse 恒返回同一段 HTML，轮询刷新不会重画它）；内容由 enterBrowse 加载后分块填进去。
 // 勾选与批量操作在 batch-select.js。
+// 画面理解（第 5 阶段）：对白句多一行「画面：…」；画面片段（kind=visual，没有对白）按时间插在列表里。
 // 140 段要滚得动：筛选 / 换当前段 / 标记只切 class 和文字，不重画整张列表（只有切视图 / 切筛选才重画列表）。
 
 /* 界面文案：产品可直接改这里 */
@@ -24,19 +25,27 @@ const COPY_NOW_HINT = '按 ↓ 选一段，空格播放，S 放入剪辑列表';
 const COPY_GROUP_STATS = '可用 {u} · 待定 {p} · 废片 {w} · 可用时长 {d}';
 const COPY_NO_TOPIC = '未归类';
 const COPY_NOT_IN_FILTER = '当前这一段已不在「{f}」里（切换筛选后会隐藏）';
+const COPY_PICTURE = '画面：';
+const COPY_VISUAL_MARK = '▣ ';
+const COPY_VISUAL_SEG = '画面片段';
+const COPY_ON_SCREEN = '画面上的字：';
+const COPY_PICTURE_ISSUES = '画面问题：';
 
 const FILTERS = [['all', '全部'], ['pending', '待定'], ['usable', '可用'], ['waste', '废片'],
                  ['list', '剪辑列表'], ['unusable', '不可用'], ['unused', '未用']];
+const VISUAL_FILTER = ['visual', COPY_VISUAL_SEG];   // 只在有画面片段时出现（关闭画面理解时仍是七个）
 // 待定 / 可用 / 废片不含不可用的段；未用 = 不在当前分镜表里（KI-99：没有手动分镜表时看 AI 选段）
 const FILTER_TESTS = {
   all: () => true, pending: s => s.level === 2 && !s.unusable, usable: s => s.level === 3 && !s.unusable,
   waste: s => s.level === 1 && !s.unusable, list: s => !!s.must_keep, unusable: s => !!s.unusable, unused: s => !s.inCut,
+  visual: s => s.kind === 'visual',
 };
 const VISUAL_TAGS = {soft: '虚焦', shaky: '抖动', dark: '过暗', still: '静止'};
 const PAD_S = 0.3;                // 试听前后各多放 0.3 秒（D15）
 const KEYPOINT_LISTEN_S = 4;      // 点关键信息试听的秒数
 const TEXT_PREVIEW_CHARS = 60;
 const NOW_PREVIEW_CHARS = 40;
+const PICTURE_PREVIEW_CHARS = 40;
 const STOP_POLL_MS = 40;         // 播放中每 40ms 看一次有没有跨过出点
 
 let browseGen = 0;   // 每次进入 / 重置 +1：过期的加载结果一律丢掉（同 stateSeq 思路）
@@ -120,15 +129,29 @@ function renderDensity(){
 }
 
 /* ---------------- 筛选条与列表 ---------------- */
+function filtersOf(b){ return b.segs.some(FILTER_TESTS.visual) ? [...FILTERS, VISUAL_FILTER] : FILTERS; }
 function renderFilters(){
   const b = bs();
   const view = [['time', COPY_VIEW_TIME], ['topic', COPY_VIEW_TOPIC]].map(([k, label]) =>
     `<button data-act="setView" data-v="${esc(k)}"${b.view === k ? ' class="on"' : ''}>${esc(label)}</button>`).join('');
-  const chips = FILTERS.map(([k, label]) =>
+  const chips = filtersOf(b).map(([k, label]) =>
     `<button data-act="setFilter" data-v="${esc(k)}"${b.filter === k ? ' class="on"' : ''}>`
     + `${esc(label)} ${b.segs.filter(FILTER_TESTS[k]).length}</button>`).join('');
   $('#bFilters').innerHTML = pickAllHtml() + `<span class="view-toggle">${view}</span><span class="chips">${chips}</span>`;
   paintPickAll();
+}
+// 列表 / 当前段里的正文：对白句是原文，画面片段是 ▣ + 画面标题
+function segText(s){
+  if(s.kind !== 'visual') return String(s.text ?? '');
+  return COPY_VISUAL_MARK + String(s.label || (s.visual || {}).desc || COPY_VISUAL_SEG);
+}
+// 画面一小行：描述（画面片段的描述已在标题里，只补画面上的字）+ 画面问题标签
+function pictureHtml(s){
+  const v = s.visual || {}, parts = [];
+  if(s.kind !== 'visual' && v.desc) parts.push(COPY_PICTURE + String(v.desc).slice(0, PICTURE_PREVIEW_CHARS));
+  if(v.text_on_screen) parts.push(COPY_ON_SCREEN + String(v.text_on_screen).slice(0, PICTURE_PREVIEW_CHARS));
+  const issues = (Array.isArray(v.issues) ? v.issues : []).map(x => `<span class="vt">${esc(String(x))}</span>`).join('');
+  return parts.length || issues ? `<small class="vis">${esc(parts.join(' · '))}${issues}</small>` : '';
 }
 function rowHtml(s){
   const i = num(s._i), b = bs(), lv = num(s.level);
@@ -138,10 +161,10 @@ function rowHtml(s){
     + `<div class="tc">${fmt(num(s.start))}</div>`
     + `<div class="lv lv${lv}" id="lv${i}">${esc(LEVEL_NAMES[lv] || '')}</div>`
     + `<div class="cat" title="${esc(s.topic || '')}">${esc(s.topic || '—')}</div>`
-    + `<div class="sum">${esc(String(s.text ?? '').slice(0, TEXT_PREVIEW_CHARS))}`
+    + `<div class="sum">${esc(segText(s).slice(0, TEXT_PREVIEW_CHARS))}`
     + `<span class="tag-list">${esc(COPY_TAG_IN_LIST)}</span><span class="tag-un">${esc(COPY_TAG_UNUSABLE)}</span>`
     + (s.inCut ? `<span class="used">${esc(COPY_TAG_USED)}</span>` : '')
-    + `<small><span id="rs${i}">${esc(s.level_reason || '')}</span>${flags}</small></div>`
+    + `<small><span id="rs${i}">${esc(s.level_reason || '')}</span>${flags}</small>${pictureHtml(s)}</div>`
     + `<div class="dur">${num(s.dur).toFixed(1)}s</div>`
     + `<button class="add" id="t${i}" data-act="toggleListIdx" data-i="${num(i)}">${esc(s.must_keep ? COPY_IN_LIST : COPY_ADD_LIST)}</button>`
     + `<button class="ban" data-act="markUnusableIdx" data-i="${num(i)}" title="${esc(COPY_MARK_UNUSABLE)}" aria-label="${esc(COPY_MARK_UNUSABLE)}">⊘</button></div>`;
@@ -162,6 +185,7 @@ function paintGroups(){   // 标记后只更新组头的数字
 }
 function renderList(){
   const b = bs(), list = $('#bList'), keep = list.scrollTop;
+  if(!filtersOf(b).some(([k]) => k === b.filter)) b.filter = 'all';   // 重新读后画面片段没了：退回「全部」
   const items = b.segs.filter(FILTER_TESTS[b.filter]);
   if(b.view === 'time'){
     list.innerHTML = items.map(rowHtml).join('');
@@ -170,9 +194,11 @@ function renderList(){
   }else{
     const groups = new Map();
     items.forEach(s => { const k = s.topic || COPY_NO_TOPIC; groups.set(k, [...(groups.get(k) || []), s]); });
-    b.groups = [...groups.keys()];
-    list.innerHTML = [...groups].map(([name, rows], k) => groupHtml(name, k, rows)).join('');
-    b.shown = [...groups.values()].flat().map(s => s._i);
+    const isVisualGroup = rows => rows.every(FILTER_TESTS.visual);
+    const ordered = [...groups].sort(([, a], [, z]) => isVisualGroup(a) - isVisualGroup(z));   // 画面片段一组放最后
+    b.groups = ordered.map(([name]) => name);
+    list.innerHTML = ordered.map(([name, rows], k) => groupHtml(name, k, rows)).join('');
+    b.shown = ordered.map(([, rows]) => rows).flat().map(s => s._i);
   }
   list.scrollTop = keep;
   pruneSelection(); paintPickAll();
@@ -191,7 +217,7 @@ function setFilter(v){
 function renderNote(){
   const b = bs(), s = curSeg(), note = $('#bNote');
   if(!b || !note) return;
-  const label = (FILTERS.find(f => f[0] === b.filter) || [])[1];
+  const label = (filtersOf(b).find(f => f[0] === b.filter) || [])[1];
   note.textContent = s && !FILTER_TESTS[b.filter](s) ? COPY_NOT_IN_FILTER.replace('{f}', label) : '';
 }
 // 镜头有变动 / 响应没拼出来之后，静默重读一遍：原地更新（在途的标记不覆盖），不重建页面状态
@@ -232,9 +258,17 @@ function paintRow(s){
 function renderNow(){
   const s = curSeg(), now = $('#bNow');
   now.innerHTML = s
-    ? `<b>${esc(fmt(num(s.start)))}–${esc(fmt(num(s.end)))}</b>　${esc(String(s.text ?? '').slice(0, NOW_PREVIEW_CHARS))}`
-      + `<br><span class="why">${esc(s.level_reason || '')}</span>`
+    ? `<b>${esc(fmt(num(s.start)))}–${esc(fmt(num(s.end)))}</b>　${esc(segText(s).slice(0, NOW_PREVIEW_CHARS))}`
+      + `<br><span class="why">${esc(s.level_reason || '')}</span>` + nowPictureHtml(s)
     : `<span class="why">${esc(COPY_NOW_HINT)}</span>`;
+}
+// 当前段的完整画面信息（列表里只放得下一行）
+function nowPictureHtml(s){
+  const v = s.visual || {}, issues = Array.isArray(v.issues) ? v.issues : [];
+  const titled = s.kind === 'visual' && !s.label;   // 没有标题时正文已经是画面描述
+  const lines = [v.desc && !titled ? COPY_PICTURE + String(v.desc) : '', v.text_on_screen ? COPY_ON_SCREEN + String(v.text_on_screen) : '',
+                 issues.length ? COPY_PICTURE_ISSUES + issues.map(String).join('、') : ''].filter(Boolean);
+  return lines.map(t => `<br><span class="vis">${esc(t)}</span>`).join('');
 }
 function setCurrent(s){   // 只换焦点框，不动播放器
   const b = bs(), prev = b.cur;

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""② 分析页的人话进度（M13 D11）：11 项，完成看产物，耗时 / 失败看 work/timings.json。
+"""② 分析页的人话进度（M13 D11）：11 项（开了画面理解 14 项），完成看产物，耗时 / 失败看 work/timings.json。
 
 `progress(facts)` 是纯函数（只吃 dict，不碰盘）；`facts()` 负责读盘。
 「正在跑哪一步」= 本次任务开始后第一个还没有计时记录的 PREPARE_STEPS 阶段（applog.stage 只在阶段
@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pipeline import media_io, readiness, schema
+from pipeline import media_io, readiness, schema, vision, vision_align, vision_run
 
 NOTICE = "分析大约 10–15 分钟，可以关掉窗口，回来接着跑"
 PREPARE_TASK = "prepare"
@@ -30,6 +30,13 @@ ANALYSIS_STEPS = (
     ("questions", "准备决策问题", ("questions",), "questions"),
     ("select", "初步选段", ("select", "brief"), "selection"),
 )
+# 开了画面理解才有的三步，插在「画面检查」之后（与 PREPARE_STEPS 里 vision / align 的位置一致）
+VISION_STEPS = (
+    ("vision_proxy", "生成画面代理", ("vision",), "vision_chunks"),
+    ("vision_cloud", "云端画面理解", ("vision",), "vision_timeline"),
+    ("vision_merge", "整合画面与对白", ("align",), "vision_aligned"),
+)
+VISION_AFTER = "visual"
 ARTIFACT_FILES = {  # 完成判据 → 相对 work/ 的文件（proxy / wav 另有完整性检查，绑定当前素材）
     "materials": "materials.json", "segments": "segments.json", "audio_json": "segments_audio.json",
     "visual": "shots_visual.json", "text_json": "segments_text.json",
@@ -37,13 +44,15 @@ ARTIFACT_FILES = {  # 完成判据 → 相对 work/ 的文件（proxy / wav 另�
     "questions": "questions.json", "selection": "selection.json",
 }
 ARTIFACT_KEYS = ("materials", "proxy", "wav", "segments", "audio_json", "visual", "text_json",
-                 "scored", "summary", "questions", "selection")
+                 "scored", "summary", "questions", "selection", "vision_chunks", "vision_timeline",
+                 "vision_aligned")
 # 整个「分析」算完成的判据，与 gui/wizard.py 的 analysis_done 同一份（旧项目没有戳也适用）
 COMPLETE_KEYS = ("proxy", "scored", "summary", "questions", "selection")
 # 画面质量检查失败只是警告、不产出文件：这些步骤的依赖阶段全部 ok 也算完成
 TIMINGS_DONE_STEPS = frozenset({"visual"})
 # 同一个阶段里中途就产出文件的步骤：转写阶段先抽音轨再转写，抽完音轨就算「抽音轨」完成
-INTRA_STAGE_STEPS = frozenset({"audio"})
+# 画面理解阶段同理：段视频都生成了就算「生成画面代理」完成
+INTRA_STAGE_STEPS = frozenset({"audio", "vision_proxy"})
 # timings 的时间戳截断到秒，任务开始是小数秒：同一秒内记录的阶段不能被当成「上一轮」的
 FRESH_TOLERANCE_S = 1.0
 
@@ -60,9 +69,21 @@ def facts(pdir: Path, cfg: dict, job: dict | None) -> dict:
     # 只读判断：不认领旧版无标记文件（会跑 ffprobe 并写标记）。认领留给 prepare / 项目打开时的 has_proxy
     artifacts["proxy"] = media_io.is_complete(work / "proxy.mp4", source=material)
     artifacts["wav"] = media_io.is_complete(work / "audio/asr.wav", source=material)
+    vision_on = vision.is_on(cfg)
+    artifacts["vision_chunks"] = vision_on and vision_run.chunks_ready(work, cfg)
+    artifacts["vision_timeline"] = vision_on and vision_run.timeline_current(work, cfg)
+    artifacts["vision_aligned"] = vision_on and vision_align.current(work, cfg)
     timings = schema.read_json_lenient(work / "timings.json", {})
     return {"artifacts": artifacts, "timings": timings if isinstance(timings, dict) else {},
-            "job": job}
+            "job": job, "vision_on": vision_on}
+
+
+def steps_for(vision_on: bool) -> tuple:
+    """这次要显示的步骤表：没开画面理解时与原来的 11 项完全一样。"""
+    if not vision_on:
+        return ANALYSIS_STEPS
+    at = [k for k, *_ in ANALYSIS_STEPS].index(VISION_AFTER) + 1
+    return (*ANALYSIS_STEPS[:at], *VISION_STEPS, *ANALYSIS_STEPS[at:])
 
 
 def _epoch(iso: object) -> float | None:
@@ -103,9 +124,9 @@ def _ran_this_time(key: str, deps: tuple, stage: str | None, timings: dict, sinc
     return key in INTRA_STAGE_STEPS and stage in deps
 
 
-def _owner_of_seconds() -> dict[str, str]:
+def _owner_of_seconds(steps: tuple) -> dict[str, str]:
     """阶段 → 显示它耗时的步骤：同一个阶段被多个步骤依赖时（转写 = 抽音轨 + 云端转写）只记在最后一个上。"""
-    return {dep: key for key, _, deps, _ in ANALYSIS_STEPS for dep in deps}
+    return {dep: key for key, _, deps, _ in steps for dep in deps}
 
 
 def _step_status(key: str, deps: tuple, artifact: str, f: dict, run: dict | None) -> str:
@@ -125,11 +146,12 @@ def _step_status(key: str, deps: tuple, artifact: str, f: dict, run: dict | None
 def progress(f: dict) -> dict:
     job = f.get("job") or {}
     running = job.get("task") == PREPARE_TASK and job.get("status") == "running"
-    owner = _owner_of_seconds()
+    table = steps_for(bool(f.get("vision_on")))
+    owner = _owner_of_seconds(table)
     since = float(job.get("started") or 0)
     run = {"since": since, "stage": _running_stage(f["timings"], since)} if running else None
     steps = []
-    for key, label, deps, artifact in ANALYSIS_STEPS:
+    for key, label, deps, artifact in table:
         sec = [s for d in deps if owner[d] == key and (s := _seconds(_entry(f["timings"], d))) is not None]
         steps.append({"key": key, "label": label,
                       "status": _step_status(key, deps, artifact, f, run),
@@ -137,7 +159,7 @@ def progress(f: dict) -> dict:
     current = None
     if running:
         stage = run["stage"]
-        pending = [(s, d) for s, (_, _, d, _) in zip(steps, ANALYSIS_STEPS) if s["status"] == "waiting"]
+        pending = [(s, d) for s, (_, _, d, _) in zip(steps, table) if s["status"] == "waiting"]
         current = next((s["key"] for s, d in pending if stage in d),
                        pending[0][0]["key"] if pending else None)
         steps = [{**s, "status": "running"} if s["key"] == current else s for s in steps]

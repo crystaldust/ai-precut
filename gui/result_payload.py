@@ -1,16 +1,20 @@
 # -*- coding: utf-8 -*-
-"""⑤ 看结果的数据组装（M14 E13 / E14 / E17）：顶栏、每镜说明与替代句、未采用清单、两版对比。
+"""⑤ 看结果的数据组装（M14 E13 / E14 / E17）：顶栏、每镜说明与替代句、未采用清单、两版对比、查看 AI 提示词。
 
 纯数据：不写盘、不起任务。主数据读不懂抛 schema.CorruptJSON / review.OverridesCorrupt（路由回 409），
 不当作「没有」；只用于显示的附属文件（selection.json、segments.json 的分句）坏了按没有处理。
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from urllib.parse import quote
 
 from gui import payloads, wizard
-from pipeline import fingerprints, media_io, outputs, schema, select, shot_diff, shot_sub, shots_store, topic_names
+from pipeline import (
+    custom_rules, fingerprints, media_io, outputs, schema, select, shot_diff, shot_sub, shots_store, topic_names,
+    visual_clips,
+)
 
 CAUSE_MUST, CAUSE_REMOVED, CAUSE_OTHER = "must", "removed", "other"
 CAUSE_LABELS = {
@@ -33,6 +37,7 @@ NO_AI_SELECTION_MSG = "还没有 AI 选段，没法恢复：请先在「④ 定�
 RESTORE_NO_SNAPSHOT = "这一版没有留存分镜表，不能回到这一版"
 RESTORE_EMPTY_MSG = "这一版的镜头都含已标为不可用的片段，回到这一版后分镜表会是空的，没有执行"
 RESTORE_BAD_SNAPSHOT = "这一版留存的分镜表已损坏，不能回到这一版"
+NO_SELECTION_MSG = "还没有选段：请先在「④ 定标准」确认并生成选段"
 SHOTS_FILE = shots_store.SHOTS_FILE
 
 
@@ -60,7 +65,10 @@ def _cause(seg: dict, source: str | None, ai_ids: set, recorded: dict) -> str:
 
 def _unused(segments: list[dict], shots: list[dict], source: str | None, selection: dict,
             missing: list[dict], names: dict, with_lines: dict) -> list[dict]:
-    """E13：可用（含人工裁决）且不在当前分镜表里的段；不在表里的剪辑列表段排最前。"""
+    """E13：可用（含人工裁决）且不在当前分镜表里的段；不在表里的剪辑列表段排最前。
+
+    画面片段不进 AI 选段，只在「放进了剪辑列表却不在表里」时列出（正文用画面标题）。
+    """
     must_ids = {s.get("id") for s in missing}
     ai_ids = {x.get("segment_id") for x in selection.get("shots") or [] if isinstance(x, dict)}
     recorded = {x.get("segment_id"): x for x in selection.get("unused") or [] if isinstance(x, dict)}
@@ -69,14 +77,14 @@ def _unused(segments: list[dict], shots: list[dict], source: str | None, selecti
         if seg.get("unusable"):
             continue
         is_must = seg.get("id") in must_ids
-        if not is_must and (seg.get("level") != 3 or payloads.in_cut(seg, shots)):
+        if not is_must and (seg.get("level") != 3 or visual_clips.is_visual(seg) or payloads.in_cut(seg, shots)):
             continue
         cause = CAUSE_MUST if is_must else _cause(seg, source, ai_ids, recorded)
         start, end = float(seg["start"]), float(seg["end"])
         rows.append({
             "id": seg.get("id"), "start": start, "end": end,
             "topic": topic_names.display(seg.get("topic"), names), "topic_raw": seg.get("topic"),
-            "text": payloads._clip(seg.get("text")),
+            "text": payloads._clip(visual_clips.title(seg) if visual_clips.is_visual(seg) else seg.get("text")),
             "cause": cause, "cause_label": CAUSE_LABELS[cause],
             "shot": {"in": round(start, 2), "out": round(end, 2),
                      "sub": shot_sub.sub_for(with_lines.get(seg["id"], seg), start, end)},
@@ -142,7 +150,8 @@ def result(pdir: Path, name: str) -> dict:
     work = pdir / "work"
     shots, source = shots_store.current(pdir)  # 损坏 → CorruptJSON，不当作没有
     # applied_segments 已校验每段都有 id / 起止 / 档位（不完整 → AnalysisIncomplete → 409），下面的读取才能直接索引
-    segments = payloads.applied_segments(work, schema.read_json(work / "segments_scored.json", default=None))
+    segments = payloads.applied_segments(work, schema.read_json(work / "segments_scored.json", default=None),
+                                         visual=True)
     selection = _lenient_dict(work / "selection.json")
     names = topic_names.load(work)
     missing = select.uncovered_must_keep(segments, shots)
@@ -198,3 +207,34 @@ def compare(pdir: Path, a: object, b: object) -> dict:
     d = shot_diff.diff(sa, sb)
     lines, more = shot_diff.describe(d, sb)
     return {**base, "diff": d, "count": shot_diff.count(d), "lines": lines, "more": more, "note": None}
+
+
+def _prompt_record(raw: object) -> dict | None:
+    """selection.json 的 custom_prompt（custom_rules.prompt_record 的结果）；结构不对当作没记录。"""
+    if not isinstance(raw, dict) or not all(isinstance(raw.get(k), str) for k in ("system", "user")):
+        return None
+    return raw
+
+
+def ai_prompt(pdir: Path) -> dict:
+    """GET /api/result/prompt：生成当前选段时发给 AI 的提示词（只有「自定义」换算会调用 AI）+ 最终规则。
+
+    called：这次选段用到了 AI 换算（含之前换算好的缓存）；recorded：有当时实际发出的提示词记录
+    （本功能之前换算的旧结果没有）。没有选段 → FileNotFoundError（404），选段文件坏了 → CorruptJSON（409）。
+    """
+    selection = schema.read_json(Path(pdir) / "work" / "selection.json", default=None)  # 顶层不是对象 → CorruptJSON
+    if selection is None:
+        raise FileNotFoundError(NO_SELECTION_MSG)
+    raw_items = selection.get("custom_rules")
+    items = [x for x in raw_items if isinstance(x, dict)] if isinstance(raw_items, list) else []
+    record = _prompt_record(selection.get("custom_prompt"))
+    return {
+        "called": bool(items), "recorded": record is not None,
+        "system": record["system"] if record else None, "user": record["user"] if record else None,
+        "reply": json.dumps(record["reply"], ensure_ascii=False, indent=2)
+        if record and record.get("reply") is not None else None,
+        "at": record.get("at") if record and isinstance(record.get("at"), str) else None,
+        "items": [{"text": str(x.get("text") or ""), "rules": custom_rules.describe(x.get("rules")),
+                   "note": str(x.get("note") or "")} for x in items],
+        "rules": custom_rules.describe_selection_rules(selection.get("rules")),
+    }

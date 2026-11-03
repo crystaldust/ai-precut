@@ -14,11 +14,12 @@ import json
 import re
 from pathlib import Path
 
-from pipeline import classify, fingerprints, review, schema, select_rules, shot_sub
+from pipeline import classify, custom_rules, fingerprints, review, schema, select_rules, shot_sub, visual_clips
 
 HARD_TYPES = {"金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑"}
 MIN_SHOT = 1.5      # 最短镜头
 MAX_SHOT = 25.0     # 最长镜头，超过就截断（访谈镜头可以长一点）
+VISUAL_NOTE = "画面：{title}"
 MUST_KEEP_REASON = "剪辑列表里的片段"
 TOTAL_TOLERANCE = 1.10       # PRD FR-7：总时长 ±10%
 TARGET_ROUND_STEP = 5        # 建议目标时长向上取整到 5 秒
@@ -143,10 +144,13 @@ def _has_length(seg: dict) -> bool:
 def _must_keep_shot(seg: dict, weights: dict | None) -> dict:
     start, end = round(float(seg["start"]), 2), round(float(seg["end"]), 2)
     why = seg.get("level_reason") or ""
-    return {"segment_id": seg["id"], "topic": seg.get("topic") or "未归类",
+    shot = {"segment_id": seg["id"], "topic": seg.get("topic") or "未归类",
             "start": start, "end": end, "dur": round(end - start, 2),
             "reason": MUST_KEEP_REASON + (f"；{why}" if why else ""),
             "score": _score(seg, weights), "forced": True, "must_keep": True}
+    if visual_clips.is_visual(seg):  # 画面片段：没有对白，分镜表备注写画面标题
+        shot["note"] = VISUAL_NOTE.format(title=visual_clips.title(seg))
+    return shot
 
 
 def _ensure_must_keep(segments: list[dict], shots: list[dict],
@@ -189,7 +193,7 @@ def missing_must_keep(workdir: Path, shots: list[dict]) -> list[dict]:
     scored = schema.read_json(scored_path, default=None)  # 损坏 → CorruptJSON（带文件名），不当「没分析过」
     if scored is None:
         return []
-    segments = review.apply(schema.require_key(scored, "segments", scored_path), review.load(workdir))
+    segments = review.apply(visual_clips.markable(scored, scored_path), review.load(workdir))
     return uncovered_must_keep(segments, shots)
 
 
@@ -333,6 +337,8 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
     exclude = set(_match_topics(rules.get("exclude_topics") or [], names))
     by_topic: dict[str, list[dict]] = {}
     for s in segments:
+        if visual_clips.is_visual(s):  # 画面片段只靠剪辑列表整段进片（_ensure_must_keep），不进话题池
+            continue
         if s.get("level") != 3 and not s.get("must_keep"):
             continue
         t = s.get("topic") or "未归类"
@@ -390,7 +396,8 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
     topic_used: dict[str, float] = {}
     for x in shots:
         topic_used[x["topic"]] = topic_used.get(x["topic"], 0.0) + x["dur"]
-    pool = [x for x in segments if x.get("level") == 3 and x["id"] not in used_ids]
+    pool = [x for x in segments if x.get("level") == 3 and x["id"] not in used_ids
+            and not visual_clips.is_visual(x)]
     for seg in sorted(pool, key=lambda x: -_score(x, weights)):
         if total >= target * 0.97:
             break
@@ -489,7 +496,8 @@ def _build_hook(shots: list[dict], segments: list[dict]) -> list[dict]:
     if len(shots) < 3:
         return shots
     key_ids = {seg["id"] for seg in segments if seg.get("key_info")}
-    cands = [s for s in shots if s["dur"] >= 4
+    visual_ids = {seg["id"] for seg in segments if visual_clips.is_visual(seg)}  # 冷开场要有人说话
+    cands = [s for s in shots if s["dur"] >= 4 and s["segment_id"] not in visual_ids
              and (s["segment_id"] in key_ids or "关键信息" in (s.get("reason") or ""))]
     if not cands:
         return shots
@@ -536,7 +544,7 @@ def to_shot_list(selection: dict, title: str, material: str) -> dict:
     shots = []
     for s in selection["shots"]:
         shots.append({"id": s["id"], "in": s["start"], "out": s["end"],
-                      "sub": s["sub"], "note": s["topic"]})
+                      "sub": s["sub"], "note": s.get("note") or s["topic"]})
     return {"project": title, "source": material, "target_duration": selection["target"],
             "shots": shots}
 
@@ -595,7 +603,10 @@ def with_lines(segments: list[dict], segments_path: Path) -> list[dict]:
 def run(scored_path: Path, answers_path: Path, out_dir: Path,
         *, questions_path: Path | None = None, title: str = "",
         material: str = "", weights: dict | None = None,
-        calibration: dict | None = None, target: float | None = None) -> dict:
+        calibration: dict | None = None, target: float | None = None,
+        custom: dict | None = None) -> dict:
+    """custom：custom_rules.ensure 的结果（剪辑师自定义想法换算出的规则），合并在选项规则之后；
+    其中实际发出的提示词记为 custom_prompt（⑤「查看 AI 提示词」）。"""
     # M13 D3：输入指纹在选段开始前取（选段过程中被改的输入，选完后要显示为「需要更新」）；
     # target 用传进来的值，而不是重读 project.json（cmd_select 选段成功后才保存新目标）
     inputs = fingerprints.selection_inputs(
@@ -614,7 +625,10 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
 
     out_dir = Path(out_dir)
     overrides = review.load(out_dir)
-    segments = with_lines(review.apply(scored_segments, overrides), out_dir / "segments.json")
+    # 画面片段只有放进剪辑列表（必留）的才参与选段：整段成镜，不进话题池、未采用清单和冷开场
+    picked = [{**v, "signals": {}} for v in review.apply(visual_clips.from_scored(scored), overrides)
+              if v["must_keep"]]
+    segments = with_lines(review.apply(scored_segments, overrides) + picked, out_dir / "segments.json")
     if not all("signals" in x for x in segments):  # KI-06：旧项目的 scored 段没并入音频信号 → 回填
         audio = classify.load_audio_signals(out_dir / "segments_audio.json")
         segments = [x if "signals" in x else {**x, "signals": dict(audio.get(x["id"]) or {})}
@@ -622,7 +636,9 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
     target = float(target or scored.get("target") or 175)
     topics = scored.get("topics", [])
     extra_warnings = []
-    stale = review.stale_ids(scored_segments, overrides)
+    stale = review.stale_ids(visual_clips.with_visual(scored), overrides)
+    if not picked and not visual_clips.from_scored(scored):  # 关了画面理解：画面片段上的旧裁决不再提醒
+        stale = [k for k in stale if not review.is_visual_override(overrides.get(k))]
     if stale:  # KI-12：重新分析后对不上的裁决不套用，但要让剪辑师知道
         extra_warnings.append(OVERRIDES_STALE_WARNING.format(
             n=len(stale), ids="、".join(stale[:MUST_KEEP_MISSING_SHOWN]) + ("…" if len(stale) > MUST_KEEP_MISSING_SHOWN else "")))
@@ -633,11 +649,15 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
         else:
             extra_warnings.append(BUDGET_LEGACY_WARNING)
     rules = _current_rules(answers, questions, stored_rules, payload.get("rules_version"))
+    custom_items = [x for x in (custom or {}).get("items") or [] if isinstance(x, dict)]
+    rules = select_rules.with_custom(rules, custom_items)
+    extra_warnings += select_rules.custom_warnings(custom_items)
     # KI-03：确认页兜底题的原话 + 剪辑偏好里的原话（按换行 /「；」分，句内逗号保留）
     lines = select_rules.parse_must_lines((calibration or {}).get("must_lines"))
     rules = {**rules, "must_lines": list(dict.fromkeys(
         [*select_rules.parse_must_lines(rules.get("must_lines")), *lines]))}
-    result = {**select(segments, topics, rules, target, weights), "inputs": inputs}
+    result = {**select(segments, topics, rules, target, weights), "inputs": inputs, "custom_rules": custom_items,
+              "custom_prompt": custom_rules.prompt_record(custom)}
     if extra_warnings:
         result = {**result, "warnings": [*result["warnings"], *extra_warnings]}
 

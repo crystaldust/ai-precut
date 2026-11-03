@@ -32,7 +32,7 @@ hidden = [
     "gui.static_files", "gui.support", "gui.views", "gui.wizard",
     "pipeline.applog", "pipeline.asr_state", "pipeline.brief", "pipeline.build_documentary",
     "pipeline.cache", "pipeline.classify", "pipeline.cli_args", "pipeline.clips",
-    "pipeline.cloud", "pipeline.config_cli", "pipeline.consent", "pipeline.diagnostics",
+    "pipeline.cloud", "pipeline.config_cli", "pipeline.consent", "pipeline.custom_rules", "pipeline.diagnostics",
     "pipeline.diskspace", "pipeline.encode", "pipeline.exclusions", "pipeline.export_draft", "pipeline.export_flow", "pipeline.filelock",
     "pipeline.fingerprints", "pipeline.format_transcript",
     "pipeline.junk_detect", "pipeline.jy_env", "pipeline.jy_version", "pipeline.llm",
@@ -42,7 +42,9 @@ hidden = [
     "pipeline.schema", "pipeline.secrets", "pipeline.select", "pipeline.select_rules",
     "pipeline.shot_diff", "pipeline.shot_sub", "pipeline.shots_store", "pipeline.style", "pipeline.summarize", "pipeline.timeline", "pipeline.topic_names",
     "pipeline.to_jianying", "pipeline.transcript_stamp", "pipeline.understand_audio", "pipeline.understand_text",
-    "pipeline.understand_visual", "pipeline.usage",
+    "pipeline.understand_visual", "pipeline.usage", "pipeline.vision", "pipeline.vision_proxy",
+    "pipeline.vision_align", "pipeline.vision_run", "pipeline.vision_timeline",
+    "pipeline.visual_clips",
     "research.validate_draft",
 ]
 if IS_WIN:

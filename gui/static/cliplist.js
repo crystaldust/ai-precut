@@ -219,7 +219,7 @@ function clipItemHtml(it, b){
   if(!seg) return '';
   const i = num(seg._i);
   return `<li><span class="clip-item" data-act="jumpClip" data-i="${num(i)}"><b>${fmt(num(it.start))}</b> `
-    + `${esc(String(it.text ?? '').slice(0, 24))}</span>`
+    + `${esc((seg.kind === 'visual' ? segText(seg) : String(it.text ?? '')).slice(0, 24))}</span>`
     + `<button class="ghost" data-act="removeClip" data-i="${num(i)}" title="${esc(COPY_LIST_REMOVE)}" aria-label="${esc(COPY_LIST_REMOVE)}">✕</button></li>`;
 }
 // KI-104：目标时长在面板里就地改（分 + 秒）；保存走 /api/project/settings，逻辑在 clip-target.js

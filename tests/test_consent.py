@@ -1,6 +1,8 @@
 """M4 · GL-02：首次使用的数据外发告知确认记录。"""
 import json
 
+import pytest
+
 from pipeline import consent, secrets
 
 
@@ -35,3 +37,24 @@ def test_corrupt_record_is_not_accepted():
     assert consent.accepted() is False
     path.write_text("[1]", encoding="utf-8")
     assert consent.accepted() is False
+
+
+@pytest.mark.parametrize("old", [1, 2])
+def test_records_from_before_vision_flows_need_reconfirm(old):
+    """v2 加了画面理解上传（第 2 阶段），v3 加了画面文字描述 → DeepSeek（第 4 阶段）：旧确认都要重新确认一次。"""
+    assert consent.CONSENT_VERSION == 3
+    path = secrets.config_dir() / consent.FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"version": old, "at": "2026-01-01T00:00:00+00:00"}), encoding="utf-8")
+    assert consent.accepted() is False
+
+
+def test_cli_and_gui_notice_list_the_same_four_flows():
+    from pathlib import Path
+    js = (Path(__file__).resolve().parents[1] / "gui/static/settings.js").read_text(encoding="utf-8")
+    flows = [line.strip().lstrip("·").strip() for line in consent.NOTICE_LINES if line.strip().startswith("·")]
+    assert len(flows) == 4 and "画面理解" in flows[2] and "不是原始视频" in flows[2]
+    assert "画面理解" in flows[3] and "DeepSeek" in flows[3]
+    assert all(f"'{flow}'" in js for flow in flows)
+    assert consent.NOTICE_LINES[0].startswith("原始视频不会离开这台电脑") and consent.NOTICE_LINES[0] in js
+    assert "画面理解" in consent.CLI_REQUIRED_MSG and "画面文字描述 → DeepSeek" in consent.CLI_REQUIRED_MSG

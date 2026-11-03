@@ -14,6 +14,7 @@ from typing import Callable
 from gui import analysis, confirm, jobs, payloads, wizard
 from pipeline import (
     applog, exclusions, fingerprints, project_lock, review, schema, select_rules, shots_store, style, topic_names,
+    vision, visual_clips,
 )
 
 LOG = applog.get("gui")
@@ -35,6 +36,7 @@ BAD_CALIBRATION_FIELD_MSG = "剪辑偏好里的 {field} 必须是文字，且不
 UNKNOWN_PRESET_MSG = "未知预设：{preset}"
 NOTHING_TO_CHANGE_MSG = "没有要修改的内容"
 TARGET_BUSY_MSG = "正在处理这个项目，完成后再改时长"  # 选段任务会在结束时写 project.json，并发改会被覆盖
+VISION_BUSY_MSG = "正在处理这个项目，停止或完成后再改画面理解"  # 分析开始时取的设置要和它写的戳一致；选段等其它任务也拦（保守）
 TOPIC_ARGS_MSG = "name 和 display 都必须是文字"
 TOPIC_NOT_FOUND_MSG = "找不到话题「{name}」：先完成分析"
 TOPIC_DISPLAY_TOO_LONG_MSG = "话题名最多 {max} 个字"
@@ -101,7 +103,7 @@ def _get_analysis(q: dict, lookup: Lookup, existing: Lookup) -> tuple[int, dict]
     except ValueError as exc:
         return 400, {"error": str(exc)}
     job = jobs.project_job_detail(name, analysis.PREPARE_TASK)
-    return 200, analysis.progress(analysis.facts(pdir, cfg, job))
+    return 200, {**analysis.progress(analysis.facts(pdir, cfg, job)), "vision": vision.normalize(cfg.get("vision"))}
 
 
 GET_ROUTES = {
@@ -234,6 +236,30 @@ def _write_settings(body: dict, existing: Lookup, changes: dict, platform: str |
     return 200, {"ok": True, "project": cfg, "wizard": wizard.derive(wizard.collect(pdir, cfg, name))}
 
 
+def _post_project_vision(_path: str, body: dict, existing: Lookup) -> tuple[int, dict]:
+    """② 画面理解开关 / 档位。和「有没有任务在跑」原子完成，锁顺序同 _write_settings。"""
+    try:
+        setting = vision.check(body)
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    name = body.get("project", "")
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(jobs.JOBS_LOCK)
+        got = _project_for_write(body, existing)
+        if isinstance(got[0], int):
+            return got
+        pdir, _ = got
+        if jobs.project_running_locked(name):
+            return 409, {"error": VISION_BUSY_MSG}
+        try:
+            stack.enter_context(project_lock.exclusive(pdir))  # 终端里的 aicut run 也算在跑
+        except project_lock.Busy:
+            return 409, {"error": VISION_BUSY_MSG}
+        cfg = schema.update_project(pdir / "project.json", lambda cur: {**cur, "vision": setting})
+    # 锁外再派生向导（collect 里会取 JOBS_LOCK）
+    return 200, {"ok": True, "vision": setting, "wizard": wizard.derive(wizard.collect(pdir, cfg, name))}
+
+
 def _post_topic_rename(body: dict, existing: Lookup) -> tuple[int, dict]:
     """P3：只改话题的显示名；选段 / 答案 / 规则仍按原名匹配。display 为空 = 恢复原名。"""
     try:
@@ -334,8 +360,7 @@ def _mark_response(pdir: Path, name: str, sid: str, cleared: str | None) -> dict
     scored = schema.read_json(work / "segments_scored.json", default=None)
     segment = clip = None
     if scored:
-        segments = review.apply(schema.require_key(scored, "segments", work / "segments_scored.json"),
-                                review.load(work))
+        segments = review.apply(visual_clips.markable(scored, work / "segments_scored.json"), review.load(work))
         segment = next((s for s in segments if s["id"] == sid), None)
         clip = payloads.clip_list(segments, float(cfg.get("target_duration") or DEFAULT_TARGET_S))
     return {"ok": True, "cleared": cleared, "segment": segment, "clip_list": clip,
@@ -453,7 +478,7 @@ def _post_browse_unusable(path: str, body: dict, existing: Lookup) -> tuple[int,
     pdir, sid, work, flag = target, body["id"], target / "work", body["unusable"]
     try:
         scored = schema.read_json(work / "segments_scored.json", default=None)
-        known = {s.get("id") for s in (scored or {}).get("segments", []) if isinstance(s, dict)}
+        known = {s.get("id") for s in visual_clips.with_visual(scored or {}) if isinstance(s, dict)}
         if sid not in known:
             return 400, {"error": UNKNOWN_SEGMENT_MSG.format(id=sid)}
         schema.require_key(scored, "segments", work / "segments_scored.json")
@@ -479,6 +504,7 @@ POST_ROUTES = {
     "/api/browse/level": _post_browse_mark,
     "/api/browse/must": _post_browse_mark,
     "/api/browse/unusable": _post_browse_unusable,
+    "/api/project/vision": _post_project_vision,
 }
 
 

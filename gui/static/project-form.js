@@ -1,6 +1,6 @@
 // 剪辑台主页 · ① 新建项目弹窗与「更多 → 项目设置」（M13）。
 // 时长输入沿用 KI-92：分 + 秒自由填写（10 秒–60 分钟），放在预设上面，换预设不覆盖手填值。
-// 剪辑偏好（FR-14）：信息 / 情绪、片子给谁看、必须保留的原话（最多 3 句）；创建后直接开始分析。
+// 剪辑偏好（FR-14）：信息 / 情绪、片子给谁看、必须保留的原话（最多 3 句）；创建后停在 ②，选好画面理解再开始分析。
 
 /* 界面文案：产品可直接改这里 */
 const COPY_NEW_TITLE = '新建项目';
@@ -17,7 +17,8 @@ const COPY_AUDIENCE_PLACEHOLDER = '例如：准备报名的家长';
 const COPY_MUST_LINES = '必须保留的原话（每行一句，最多 3 句）';
 const COPY_MUST_LINES_HINT = '这些句子无论档位如何都会进片。';
 const COPY_MUST_LINES_TOO_MANY = '必须保留的原话最多 3 句';
-const COPY_CREATE = '创建并开始分析';
+const COPY_CREATE = '创建项目';
+const COPY_CREATE_HINT = '创建后停在「② 分析」：可选画面理解，再点开始分析';
 const COPY_CANCEL = '取消';
 const COPY_SETTINGS_TITLE_PROJECT = '项目设置';
 const COPY_SETTINGS_PREFS_TITLE = '剪辑偏好';
@@ -102,7 +103,8 @@ async function openNew(){
       ${presetWarningsHtml(warnings)}
     </div>
     <details class="prefs" id="npPrefs"><summary>${esc(COPY_NEW_SECTION_PREFS)}</summary>${prefsFieldsHtml('np', {tone: DEFAULT_TONE})}</details>
-    <button class="primary" data-act="createAndAnalyze">${esc(COPY_CREATE)}</button>
+    <p class="hint">${esc(COPY_CREATE_HINT)}</p>
+    <button class="primary" data-act="createProject">${esc(COPY_CREATE)}</button>
     <button class="ghost" data-act="closeModal">${esc(COPY_CANCEL)}</button>`);
   syncTarget();
 }
@@ -121,7 +123,7 @@ async function pickFile(){
     $('#npTitle').value = $('#npName').value; } }
 }
 let creating = false;  // 创建中：重复点击不再发第二个 /api/new
-async function createAndAnalyze(){
+async function createProject(){
   if(creating) return;
   const material=$('#npPath').value, name=$('#npName').value.trim(), title=$('#npTitle').value.trim();
   const preset=$('#npPreset').value, target=readDuration('np');
@@ -131,7 +133,7 @@ async function createAndAnalyze(){
   const calibration = readCalibration('np');
   if(!calibration) return;
   creating = true;
-  const button = $('[data-act="createAndAnalyze"]');
+  const button = $('[data-act="createProject"]');
   if(button) button.disabled = true;
   try{
     try{
@@ -140,8 +142,7 @@ async function createAndAnalyze(){
     closeModal();
     try{ await loadProjects(); }  // KI-57：只切到刚建的项目，不再按地址栏 hash 抢着切别的
     catch(e){ toast(e.message, TOAST_ERROR_MS); }  // 项目栏没刷出来也要继续进新项目
-    await selectProject(name);
-    await startAnalysis();  // 创建即开始分析；缺 Key / 告知在 ② 页内联处理
+    await selectProject(name);  // 新项目的当前步骤是 ②：停在「准备开始」，不自动分析（先选要不要画面理解）
     toast(COPY_CREATED);
   }finally{
     creating = false;
@@ -194,6 +195,6 @@ async function saveProjectSettings(){
 
 Object.assign(ACTIONS, {
   markTargetTouched: ()=>markTargetTouched(), syncTarget: ()=>syncTarget(),
-  openNew: ()=>openNew(), pickFile: ()=>pickFile(), createAndAnalyze: ()=>createAndAnalyze(),
+  openNew: ()=>openNew(), pickFile: ()=>pickFile(), createProject: ()=>createProject(),
   openProjectSettings: ()=>openProjectSettings(), saveProjectSettings: ()=>saveProjectSettings(),
 });

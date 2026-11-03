@@ -17,6 +17,8 @@
   brief <项目名>               生成"给 AI/给人看"的策划分派单
   select <项目名> [--target 秒]  改目标时长后只重跑选段（不转写、不调 LLM）
   build <项目名> [--version v2] [--no-draft]   分镜表 → 切片 → 预览 → 剪映草稿
+  vision <项目名>              画面理解（可选，project.json 的 vision 开启时才上传）
+  align <项目名>               画面与对白整合（画面理解开启时；纯本地，不上传）
   status <项目名>              看每个环节的状态
   list                         列出所有项目
 """
@@ -34,8 +36,8 @@ from pipeline.pyver import require_supported_python; require_supported_python() 
 from pipeline import (applog, build_documentary, classify, cloud, consent, diskspace, encode, exclusions, export_draft,  # noqa: E402
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
                       select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
-                      usage)
-from pipeline import brief, cli_args, clips, config_cli, export_flow, fingerprints, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
+                      usage, vision, vision_align, vision_run)
+from pipeline import brief, cli_args, clips, config_cli, custom_rules, export_flow, fingerprints, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
 from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
 from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
 from pipeline.prompts import ask_calibration, ask_target  # noqa: E402,F401 - 测试按 aicut.<名> 打桩
@@ -79,6 +81,8 @@ DIR_NOT_EMPTY = "{pdir} 已存在且不是空目录（也不是项目），换�
 MUST_KEEP_OVER_HINT = ("剪辑列表共 {must}，超过目标 {target}。想剪成多长？"
                        "运行：aicut.py select {name} --target <秒>（建议 --target {suggest}）")
 INGEST_FAILED = "素材读不出来：{reason}"
+VISION_OFF = "画面理解没开，跳过（在「② 分析」或 `aicut new --vision` 里开启）"
+VISION_FAILED = "画面理解失败：{exc}（可以重试，或在「② 分析」关掉画面理解后继续）"
 PRESET_MISSING = "找不到预设 {preset}（presets/{preset}.json），可用：{names}"
 TEXT_CACHED = "输入没变，沿用上次的标注结果（不重新计费）"
 SUMMARY_CACHED = "输入没变，沿用上次的内容摘要（不重新计费）"
@@ -163,12 +167,14 @@ def metered(work: Path, stage: str, model: str = DEFAULT_MODEL) -> usage.Metered
 
 
 def prepare_need(pdir: Path) -> int:
-    """处理素材要写的字节：只算还没完成的音轨 / 代理；素材时长读不到按 0 估（只查余量）。"""
-    material = cfg(pdir)["material"]
+    """处理素材要写的字节：只算还没完成的音轨 / 代理 / 画面代理；素材时长读不到按 0 估（只查余量）。"""
+    c = cfg(pdir)
+    material = c["material"]
     wav = not media_io.complete_or_adopt(pdir / "work/audio/asr.wav", source=material)
     proxy = not media_io.complete_or_adopt(pdir / "work/proxy.mp4", source=material)
-    media_s = media_io.duration_or_zero(Path(material)) if wav or proxy else 0.0
-    return diskspace.need_for_prepare(media_s, wav=wav, proxy=proxy)
+    shots = vision.is_on(c) and not vision_run.reusable(pdir / "work", c)
+    media_s = media_io.duration_or_zero(Path(material)) if wav or proxy or shots else 0.0
+    return diskspace.need_for_prepare(media_s, wav=wav, proxy=proxy, vision=shots)
 
 
 def build_need(pdir: Path, c: dict, shots: list[dict], version: str | None) -> int:
@@ -215,6 +221,7 @@ def cmd_new(args) -> None:
         target_duration=target,
         created=time.strftime("%Y-%m-%d %H:%M:%S"),
         calibration=calibration,
+        vision=_vision_setting(getattr(args, "vision", "off")),
     )
     created = not pdir.exists()
     pdir.mkdir(parents=True, exist_ok=True)
@@ -228,6 +235,13 @@ def cmd_new(args) -> None:
         raise
     ok(f"项目已创建：{pdir}")
     info(f"下一步：python3 aicut.py run {args.name}")
+
+
+def _vision_setting(choice: str | None) -> dict:
+    """--vision off|economy|balanced|quality → project.json 的 vision 字段。"""
+    if choice in vision.TIERS:
+        return {"enabled": True, "tier": choice}
+    return dict(vision.DEFAULT)
 
 
 def cmd_ingest(args) -> None:
@@ -296,14 +310,19 @@ def cmd_text(args) -> None:
         die("未配置 DEEPSEEK_API_KEY：运行 `uv run python aicut.py config set deepseek`")
     batch = getattr(args, "batch", 40)
     model = getattr(args, "model", None) or DEFAULT_MODEL
+    c = cfg(pdir)
+    try:
+        visual = vision_align.for_text(work, c)  # 关着为 None；开着但整合不是最新 → 停
+    except vision_align.AlignError as exc:
+        die(str(exc))
     info(f"调用 {model} 做话题分段与逐句标注（{batch} 句/批）…")
-    pref = style.directive(cfg(pdir).get("calibration"))
+    pref = style.directive(c.get("calibration"))
     if pref:
         info("已应用剪辑偏好：" + pref)
     client = metered(work, "text", model)
     try:
         res = understand_text.run(segs, work / "segments_text.json", client=client,
-                                  batch=batch, model=model, style=pref)
+                                  batch=batch, model=model, style=pref, visual=visual)
     except LLMError as exc:  # GL-09：含 AnnotationIncomplete；不能当成功往下走
         budget = usage.over_budget_message(work)  # 中途超预算：原因要说出来
         die(str(exc) + (f"；{budget}" if budget and budget not in str(exc) else ""))
@@ -311,6 +330,7 @@ def cmd_text(args) -> None:
         info(TEXT_CACHED)
     key = sum(1 for x in res["segments"] if x["key_info"])
     ok(f"话题 {len(res['topics'])} 个 · 关键信息 {key} 句"
+       + (f" · 画面片段 {len(res['visual_segments'])} 段" if "visual_segments" in res else "")
        + (" · 已补齐上次失败的句子" if res.get("resumed") else ""))
 
 
@@ -327,7 +347,7 @@ def cmd_score(args) -> None:
     try:
         res = classify.run(text, work / "segments_audio.json", work / "segments_scored.json",
                            total_target=float(c.get("target_duration") or 175), visual_path=work / "visual_quality.json",
-                           must_topic=load_json(PRESETS / f"{c.get('preset')}.json", {}).get("must_topic"))  # KI-07：必留话题口径在预设里
+                           must_topic=load_json(PRESETS / f"{c.get('preset')}.json", {}).get("must_topic"), vision=vision_align.score_key(work, c))  # KI-07
     except classify.TextIncomplete as exc:
         die(str(exc))
     s = res["summary"]
@@ -335,7 +355,7 @@ def cmd_score(args) -> None:
     demoted = (res.get("pending") or {}).get("demoted", 0)
     ok(f"废片 {s['waste']} · 待定 {s['pending']} · 可用 {s['usable']}"
        + (f" · 画面异常 {flagged}" if flagged else "")
-       + (f" · 自动降级 {demoted}" if demoted else ""))
+       + (f" · 自动降级 {demoted}" if demoted else "") + classify.picture_note(res))
     for w in res.get("warnings") or []:
         warn(w)
 
@@ -356,6 +376,45 @@ def cmd_junk(args) -> None:
             die(f"生成分析代理失败：{exc}")
     _run_pipeline("pipeline.junk_detect", [str(proxy), "-o", str(work), "--scene"])
     ok("废片检测完成 → work/junk_report.csv")
+
+
+def cmd_vision(args) -> None:
+    """画面理解（可选）：没开立即返回；开了就分段上传低清无声画面，产出 work/visual_timeline.json。"""
+    pdir = project_dir(args.name)
+    c = cfg(pdir)
+    if not vision.is_on(c):
+        info(VISION_OFF)
+        return
+    work = pdir / "work"
+    proxy = work / "proxy.mp4"
+    if not media_io.complete_or_adopt(proxy, source=c["material"]):
+        die("先跑 junk（需要 work/proxy.mp4）")
+    if not vision_run.current_or_adopt(work, c):  # 改版前付过费的结果先认回，不再要 Key、不上传
+        require_consent()
+        if not secrets.get("mediakit"):
+            die("未配置 MEDIAKIT_API_KEY：运行 `uv run python aicut.py config set mediakit`")
+        info("云端画面理解（按 5 分钟一段上传低清无声画面，中断后重跑会接着做）…")
+    try:
+        timeline = vision_run.run(work, c, proxy)
+    except (vision_run.VisionError, cloud.CloudError) as exc:
+        die(VISION_FAILED.format(exc=exc))
+    ok(f"画面理解完成：{len(timeline.get('events') or [])} 个画面事件 → work/{vision_run.TIMELINE_FILE}")
+
+
+def cmd_align(args) -> None:
+    """画面与对白整合：没开立即返回；开了就把画面事件挂到对白片段、生成画面片段（纯本地）。"""
+    pdir = project_dir(args.name)
+    c = cfg(pdir)
+    if not vision.is_on(c):
+        info(VISION_OFF)
+        return
+    try:
+        res = vision_align.run(pdir / "work", c)
+    except vision_align.AlignError as exc:
+        die(str(exc))
+    for w in res["warnings"]:
+        warn(w)
+    ok(f"画面整合：挂到 {len(res['by_segment'])} 句 · 画面片段 {len(res['visual_segments'])} 段 → work/{vision_align.ALIGNED_FILE}")
 
 
 def cmd_scenes(args) -> None:
@@ -442,6 +501,42 @@ def cmd_questions(args) -> None:
         info(f"  {q['text']} → " + " / ".join(o["label"] for o in q["options"]))
 
 
+CUSTOM_UNDERSTOOD = "自定义「{text}」→ AI 理解为：{rules}"
+CUSTOM_STALE_NOTE = "决策问题重新生成过，这条是针对旧题目写的；回 ④ 重新填写"
+
+
+def _split_stale_custom(work: Path, stored: dict, custom: dict) -> tuple[dict, list[dict]]:
+    """题目重新生成过：绑在旧题上的自定义不外发、不换算，转成「未生效」条目（选段写警告）。"""
+    kept, dropped = questions.split_stale_custom(
+        custom, stored.get("questions_digest"), fingerprints.file_digest(work / "questions.json"))
+    return kept, [{"key": k, "text": v, "rules": [], "note": CUSTOM_STALE_NOTE} for k, v in dropped.items()]
+
+
+def _interpret_custom(work: Path) -> dict:
+    """④ 自定义想法 → 选段规则：没填不外发、不要 Key；没改过命中缓存不调用；调用失败停下（答案已保存）。"""
+    stored = schema.read_json(work / questions.ANSWERS_FILE, default={})
+    stored = stored if isinstance(stored, dict) else {}
+    qs = schema.read_json(work / "questions.json", default=None)
+    custom, stale = _split_stale_custom(work, stored, questions.normalize_custom(qs, stored.get("custom")))
+    if not custom:
+        return {"items": stale}
+    scored = schema.read_json(work / "segments_scored.json", default={})
+    topics = (scored.get("topics") if isinstance(scored, dict) else None) or []
+
+    def client():
+        require_consent()
+        return metered(work, custom_rules.STAGE)
+
+    try:
+        res, _cached = custom_rules.ensure(work, custom, qs, topics, client_factory=client)
+    except LLMError as exc:
+        die(str(exc))
+    for it in res["items"]:
+        if it.get("rules"):
+            info(CUSTOM_UNDERSTOOD.format(text=it.get("text", ""), rules=custom_rules.describe(it["rules"])))
+    return {**res, "items": [*res["items"], *stale]}
+
+
 def cmd_select(args) -> None:
     """M3 覆盖式选段：按话题预算挑镜头，输出选段表与时间线。"""
     pdir = project_dir(args.name)
@@ -454,13 +549,14 @@ def cmd_select(args) -> None:
         check_or_die(schema.check_target_duration, args.target)
         new_target = schema.check_target_duration(args.target)
         c = {**c, "target_duration": new_target}
+    custom = _interpret_custom(work)
     try:
         res = select.run(work / "segments_scored.json", work / "brief_answers.json", work,
                          questions_path=work / "questions.json",
                          title=c.get("title", args.name), material=c["material"],
                          weights=style.weights(c.get("calibration")),
                          calibration=c.get("calibration"),
-                         target=float(c.get("target_duration") or 175))
+                         target=float(c.get("target_duration") or 175), custom=custom)
     except select.SelectionError as exc:
         die(str(exc))
     if new_target is not None:  # 选段成功后才保存新目标；加锁读改写，不覆盖别人刚改的字段（KI-51）
@@ -613,7 +709,7 @@ def cmd_prepare(args) -> None:
     """GUI 用：只做前期（不 build），完成后再由人挑镜头。缺告知 / 缺 Key 一开始就停（GL-02）。"""
     pdir = project_dir(args.name)
     require_consent()
-    if missing := readiness.missing_keys(pdir / "work"):
+    if missing := readiness.missing_keys(pdir / "work", cfg(pdir)):
         die(PREPARE_KEYS_MISSING.format(names=readiness.describe(missing)))
     if problem := encode.preflight():  # 付费步骤之前确认能出片
         die(problem)

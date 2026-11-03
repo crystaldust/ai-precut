@@ -93,11 +93,11 @@ def test_selection_inputs_target_is_rounded_to_int(tmp_path):
     assert fingerprints.selection_inputs(tmp_path, {"target_duration": 90.7})["target"] == "90"
 
 
-def test_analysis_inputs_uses_directive_and_preset():
+def test_analysis_inputs_uses_directive_preset_and_vision():
     cal = {"tone": "info", "audience": "家长"}
     assert fingerprints.analysis_inputs({"calibration": cal, "preset": "纪实3min"}) == {
-        "directive": style.directive(cal), "preset": "纪实3min"}
-    assert fingerprints.analysis_inputs({}) == {"directive": "", "preset": ""}
+        "directive": style.directive(cal), "preset": "纪实3min", "vision": "off"}
+    assert fingerprints.analysis_inputs({}) == {"directive": "", "preset": "", "vision": "off"}
 
 
 def test_changed_lists_differing_parts_in_order_and_tolerates_bad_saved():

@@ -26,7 +26,9 @@ PIX_FMT = "yuv420p"
 PROXY_BITRATE = "1500k"   # 540p 分析代理（原 x264 ultrafast crf30）
 CLIP_BITRATE = "12M"      # 1080×1920 镜头切片，进剪映（原 veryfast crf18）
 PREVIEW_BITRATE = "8M"    # 审片预览（原 veryfast crf20）
-BITRATES = {"proxy": PROXY_BITRATE, "clip": CLIP_BITRATE, "preview": PREVIEW_BITRATE}
+VISION_BITRATE = "300k"   # 画面理解代理（5 fps、无音轨，只给云端模型看）
+BITRATES = {"proxy": PROXY_BITRATE, "clip": CLIP_BITRATE, "preview": PREVIEW_BITRATE,
+            "vision": VISION_BITRATE}
 
 
 def candidates() -> list[str]:

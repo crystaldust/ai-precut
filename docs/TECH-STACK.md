@@ -17,7 +17,7 @@
 | 媒体处理 | **ffmpeg / ffprobe 静态二进制** | 8.1.3（LGPL 自建，`packaging/build_ffmpeg.sh`） | 静态包不依赖用户机器；通过 subprocess 调用；H.264 一律 `h264_videotoolbox`（`pipeline/encode.py`） |
 | 剪映草稿 | `pyJianYingDraft`（锁定版本） | 0.3.x | 生成 5.9 格式时间线，再适配各平台 |
 | 语音转写 | 火山引擎 MediaKit HTTPS API（`pipeline/cloud.py`，标准库 urllib 直连） | 协议同 mediakit-cli 0.2.1 | 云端 ASR，带时间戳与说话人；**唯一允许上传素材的地方（仅音轨）**；不依赖 Node |
-| 视频理解 / OCR | 未接入 | — | PRD FR-2 列为 P2；画面帧不出本机（PRD §7），如做须本地实现 |
+| 视频理解 / OCR | ✅ 已接入（多模态 PRD 第 3 阶段，可选） | 火山引擎 MediaKit `video-understand-router` | 可选「画面理解」：剪辑师在 ② 开启时才上传低清无声画面代理（5 分钟一段、5 fps、300 kbps，不是原片），手动 2 / 2.5 / 3 fps 三档；产出 `work/visual_timeline.json`，用量记 `work/vision_usage.json`（不计入 LLM 上限）（PRD §7）；OCR 不单独用 |
 | LLM | DeepSeek API（OpenAI 兼容） | — | 话题分段、信息类型、提问生成 |
 | 存储 | JSON 文件 | — | 单机、单用户、可 diff、可手改 |
 | 打包 | PyInstaller `onedir` | — | 目录式，启动快、不易被杀软误报 |
@@ -161,7 +161,7 @@ default-workspace/          ← 代码根目录（git 仓库）
 
 | 能力 | 由谁提供 | 本方案是否用 |
 |---|---|---|
-| 语音转字幕 / 视频理解 / OCR / 抽帧 | `byted-mediakit-video` | ✅ ASR 协议参照（运行时 HTTPS 直连）；视频理解 / OCR 不用（画面帧不出本机） |
+| 语音转字幕 / 视频理解 / OCR / 抽帧 | `byted-mediakit-video` | ✅ ASR 协议参照（运行时 HTTPS 直连）；视频理解：可选的画面理解（开启时才上传低清无声画面代理，`pipeline/vision_run.py`）；OCR 不单独用 |
 | 音频转码 / 人声分离 / 语音端点 | `byted-mediakit-audio` | ⏳ 远场收音差时再启用 |
 | 裁剪 / 拼接 / 字幕压制 | `byted-mediakit-editing` | ❌ 直接用 ffmpeg，少一层依赖 |
 | 图片处理 / OCR | `byted-mediakit-image` | ❌ 不需要 |

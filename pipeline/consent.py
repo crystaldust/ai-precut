@@ -13,18 +13,21 @@ from pathlib import Path
 
 from pipeline import schema, secrets
 
-CONSENT_VERSION = 1
+CONSENT_VERSION = 3  # v2：加了第三条数据流（开启画面理解时上传低清代理视频）；v3：画面文字描述 → DeepSeek
 FILENAME = "consent.json"
 
 # 命令行版告知文案（剪辑台的同款文案在 gui/static/settings.js 顶部，改一处要同步另一处）
 NOTICE_TITLE = "使用前请知悉：哪些数据会发到云端"
 NOTICE_LINES = (
-    "原片和画面不会离开这台电脑。为了完成粗剪，会有两类数据发到云端：",
+    "原始视频不会离开这台电脑。为了完成粗剪，会有以下数据发到云端：",
     "  · 素材的音轨（16kHz 单声道）→ 火山引擎语音识别，用于转写成文字",
     "  · 转写出的文字 → DeepSeek，用于理解内容、找出重要片段",
+    "  · 只在「② 分析」开启画面理解时：降质的低清代理视频（不是原始视频）→ 火山引擎，用于理解画面内容",
+    "  · 只在「② 分析」开启画面理解时：火山引擎返回的画面文字描述 → DeepSeek，与对白一起判断片段",
     "两个服务的 API Key 只保存在本机钥匙串，不会写进日志或项目文件。",
 )
-CLI_REQUIRED_MSG = ("这一步会把数据发到云端（音轨 → 火山引擎，文字 → DeepSeek），"
+CLI_REQUIRED_MSG = ("这一步会把数据发到云端（音轨 → 火山引擎，文字 → DeepSeek；"
+                    "开启画面理解时还有低清代理视频 → 火山引擎、画面文字描述 → DeepSeek），"
                     "请先阅读外发说明：运行 `uv run python aicut.py config consent`，"
                     "或在剪辑台里点「我知道了，继续」")
 

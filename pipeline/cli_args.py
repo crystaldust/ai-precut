@@ -8,12 +8,13 @@ from __future__ import annotations
 import argparse
 from typing import Callable
 
-from pipeline import secrets, style
+from pipeline import secrets, style, vision
 from pipeline.llm import DEFAULT_MODEL  # 唯一定义在 llm（L13）
 
 DEFAULT_PRESET = "纪实3min"
 NAME_ONLY = ("prepare", "ingest", "analyze", "transcribe", "junk", "brief", "status", "quality",
-             "score", "preview")
+             "score", "preview", "vision", "align")
+VISION_CHOICES = ("off", *vision.TIERS)
 
 
 def _new(sub, handlers: dict[str, Callable]) -> None:
@@ -24,6 +25,8 @@ def _new(sub, handlers: dict[str, Callable]) -> None:
     p.add_argument("--audience", default=None)
     p.add_argument("--must-lines", dest="must_lines", default=None)
     p.add_argument("--target", default=None, help="成片目标时长（秒），默认用预设")
+    p.add_argument("--vision", choices=VISION_CHOICES, default="off",
+                   help="画面理解（把低清无声画面发到云端）：off 关闭（默认）/ economy 省钱 / balanced 均衡 / quality 精细")
     p.add_argument("--no-input", dest="no_input", action="store_true",
                    help="不在终端提问（GUI 调用时使用）")
     p.set_defaults(fn=handlers["new"])

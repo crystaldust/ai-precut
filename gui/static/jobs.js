@@ -18,6 +18,7 @@ const COPY_JOB_PREPARING = '准备中…';
 const COPY_JOB_CANCEL = '取消任务';
 const COPY_JOB_RETRY = '重试';
 const COPY_JOB_CLOSE = '关闭';
+const COPY_JOB_HIDE = '关闭窗口（任务继续）';  // 只关弹窗，任务在后台接着跑，右上角胶囊可再打开
 const COPY_JOB_VIEW_RUNNING = '查看进行中的任务';
 const COPY_JOB_ACK = '知道了';
 const COPY_JOB_DIAG = '导出诊断包';  // 失败 / 中断后给开发者交现场（GL-19，见 support.js）
@@ -47,6 +48,7 @@ const JOB_POLL_MAX_MISSES = 5;   // 连续这么多次连不上就判定中断�
 const JOB_DONE_CLOSE_MS = 700;
 const SECONDS_PER_MIN = 60;
 const NEED_TOAST_MS = 3500;
+const LOG_STICK_PX = 24;  // 离底部不到这么多像素算「停在底部」，新日志跟着滚到底
 
 // view：最近一次轮询到的任务快照（胶囊用）；与 state.modalKind === 'job' 一起决定要不要往日志窗口写
 const jobUi = {last: null, id: null, polling: null, view: null};
@@ -54,7 +56,7 @@ const jobUi = {last: null, id: null, polling: null, view: null};
 // canRetry=false：弹窗里是「查看」来的任务（可能是别的项目 / 别的参数），不能让「重试」去重跑它
 function jobActionsHtml(kind, canRetry = true){
   const btn = (cls, act, text) => `<button class="${esc(cls)}" data-act="${esc(act)}">${esc(text)}</button>`;
-  if(kind === 'running') return btn('danger', 'cancelJob', COPY_JOB_CANCEL);
+  if(kind === 'running') return btn('danger', 'cancelJob', COPY_JOB_CANCEL) + btn('ghost', 'closeModal', COPY_JOB_HIDE);
   if(kind === 'conflict') return btn('primary', 'attachJob', COPY_JOB_VIEW_RUNNING)
                                 + btn('ghost', 'closeModal', COPY_JOB_CLOSE);
   if(kind === 'ack') return btn('primary', 'closeModal', COPY_JOB_ACK);
@@ -62,8 +64,15 @@ function jobActionsHtml(kind, canRetry = true){
     + btn('ghost', 'exportDiag', COPY_JOB_DIAG) + btn('ghost', 'closeModal', COPY_JOB_CLOSE);
 }
 function setJobActions(kind){ const a = $('#jobActions'); if(a) a.innerHTML = jobActionsHtml(kind, !!jobUi.last); }
+// 轮询每次都重写日志并滚到底，会打断拖动滚动条：内容没变不写；用户往上翻了就保持位置
+function showLog(el, text){
+  if(el.textContent === text) return;
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= LOG_STICK_PX;
+  el.textContent = text;
+  if(atBottom) el.scrollTop = el.scrollHeight;
+}
 function jobModalOpen(){ return state.modalKind === 'job'; }
-// 任务还在跑、正在看进度时，Esc / 点遮罩不关弹窗（取消要明确点「取消任务」）；别的弹窗不受后台任务影响
+// 任务还在跑、正在看进度时，Esc / 点遮罩不关弹窗（防误触；关窗口、取消都要明确点按钮）；别的弹窗不受后台任务影响
 function modalDismissable(){ return jobUi.polling === null || !jobModalOpen(); }
 function jobModal(task){
   showModal(JOB_TITLES[task] || COPY_JOB_TITLE_FALLBACK,
@@ -172,7 +181,7 @@ function pollJob(id, task){
     renderChip(); applyBusyGuard();
     if(jobModalOpen() && JOB_TITLES[task]) $('#modalTitle').textContent = JOB_TITLES[task];
     const el = $('#log');
-    if(el){ el.textContent = (j.log||[]).join('\n') || '…'; el.scrollTop = el.scrollHeight; }
+    if(el) showLog(el, (j.log||[]).join('\n') || '…');
     if(j.status==='running'){ setTimeout(tick, JOB_POLL_MS); return; }
     jobUi.polling = null;
     if(j.status==='done') return onJobDone(j, task);
@@ -256,7 +265,7 @@ function openJobDetail(){  // 点胶囊：看日志 / 取消 / 重试 / 导出�
   if(!v){ return; }
   jobModal(v.task);
   const el = $('#log');
-  if(el) el.textContent = (v.log || []).join('\n') || COPY_JOB_PREPARING;
+  if(el){ el.textContent = (v.log || []).join('\n') || COPY_JOB_PREPARING; el.scrollTop = el.scrollHeight; }  // 打开时先到底，之后由 showLog 决定跟不跟
   const running = v.status === 'running';
   setJobActions(running ? 'running' : 'ended');
   if(!running) jobUi.view = {...v, seen: true};
