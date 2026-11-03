@@ -51,7 +51,8 @@ def _segments():
 
 
 def _sha(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Windows 文本模式写出 \r\n：按 \n 算，同一份金标准在各平台都成立
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def test_vision_off_text_and_score_are_byte_identical(tmp_path):

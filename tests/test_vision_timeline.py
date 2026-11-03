@@ -87,7 +87,8 @@ def test_build_merges_chunks_and_usage():
 
 
 @pytest.mark.parametrize("text", ['{"events":' + "[" * 5000 + "]" * 5000 + "}",
-                                  doc(EV) + " " * (vt.TEXT_MAX + 1)])
+                                  doc(EV) + " " * (vt.TEXT_MAX + 1)],
+                         ids=["deep-nesting", "oversized"])  # 默认拿参数当测试名：Windows 上超出环境变量长度上限
 def test_parse_rejects_pathological_output(text):
     with pytest.raises(vt.TimelineParseError):
         vt.parse_contents(text)
