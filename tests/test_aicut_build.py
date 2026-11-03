@@ -31,6 +31,14 @@ def test_compose_timeline_has_no_nonpositive_text(tmp_path):
     assert "片头" in [t["text"] for t in tl["text"]]
 
 
+def test_visual_shot_without_subtitle_is_broll_with_no_text(tmp_path):
+    """画面片段（第 5 阶段）：没有对白 → 空镜头（原声由切片保留），不出字幕卡、备注照带。"""
+    shots = [{"id": "sel01", "in": 10.0, "out": 30.0, "sub": "", "note": "画面：扫码付款"}]
+    tl = aicut.compose_timeline({"title": "t"}, {}, shots, tmp_path, {"sel01": 20.0})
+    assert tl["video"][0]["role"] == "broll" and tl["video"][0]["caption"] == "画面：扫码付款"
+    assert tl["text"] == []
+
+
 # ---------------------------------------------------------------- GL-15
 @pytest.fixture
 def project(tmp_path, monkeypatch):

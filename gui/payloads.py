@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import custom_rules, fingerprints, notices, questions, review, schema, select, topic_names
+from pipeline import custom_rules, fingerprints, notices, questions, review, schema, select, topic_names, visual_clips
 
 NO_SCORED_MSG = "还没有三档判定，先跑 analyze/text/score"
 NO_QUESTIONS_MSG = "还没有决策问题，先跑 questions"
@@ -51,7 +51,8 @@ def browse(pdir: Path, name: str) -> dict:
         raise FileNotFoundError(NO_SCORED_MSG)
 
     overrides = review.load(work)
-    segments = review.apply(schema.require_key(scored, "segments", work / "segments_scored.json"), overrides)
+    segments = review.apply(visual_clips.markable(scored, work / "segments_scored.json"), overrides)
+    speech = [s for s in segments if not visual_clips.is_visual(s)]  # 画面片段不进计数 / 话题 / 说话人
 
     # KI-99：已用 / 未用以「当前分镜表」为准：手动的优先，没有就用 AI 选段的结果（同 views.project_state）
     shots = (_jload(pdir / "shots.json", {}).get("shots") or
@@ -60,7 +61,7 @@ def browse(pdir: Path, name: str) -> dict:
     # 统计按当前（含人工裁决后的）分档重算：先清零，scored 里存的值不能再叠加一次（审查修复 M9）
     topics = {t["name"]: {**t, "count": 0, "duration": 0.0, "usable_dur": 0.0}
               for t in scored.get("topics", []) if isinstance(t, dict) and "name" in t}
-    for s in segments:
+    for s in speech:
         t = topics.setdefault(s.get("topic") or "未归类",
                              {"name": s.get("topic") or "未归类", "must": False,
                               "count": 0, "duration": 0.0, "usable_dur": 0.0,
@@ -90,13 +91,14 @@ def browse(pdir: Path, name: str) -> dict:
                     "target_duration": cfg.get("target_duration")},
         "material_duration": material_duration,
         "summary": summary,
-        "counts": {k: sum(1 for s in segments if s["level"] == v)
-                   for k, v in (("waste", 1), ("pending", 2), ("usable", 3))},
+        "counts": {**{k: sum(1 for s in speech if s["level"] == v)
+                      for k, v in (("waste", 1), ("pending", 2), ("usable", 3))},
+                   **({"visual": len(segments) - len(speech)} if len(segments) > len(speech) else {})},
         "topics": sorted(({**t, "topic_raw": t["name"], "name": topic_names.display(t["name"], names)}
                           for t in topics.values()), key=lambda t: -t["duration"]),
         "segments": segments,
         "has_overrides": bool(overrides),
-        "speakers": speakers(segments),
+        "speakers": speakers(speech),
         "clip_list": clip_list(segments, goal),
         "warnings": notices.project_warnings(work),  # 损坏文件 / 兜底等，页面顶部警告条显示
     }
@@ -122,8 +124,11 @@ def _check_segment(index: int, seg) -> None:
         raise AnalysisIncomplete(INCOMPLETE_MSG.format(detail=f"第 {index + 1} 段缺少或写错了 id / 起止时间 / 档位"))
 
 
-def _applied_segments(work: Path, scored) -> list[dict]:
-    """④ 用的分段：与 ③ 同一份裁决（review.apply）。没有分析结果 → 空；有但不完整 → AnalysisIncomplete（409）。"""
+def _applied_segments(work: Path, scored, *, visual: bool = False) -> list[dict]:
+    """④ 用的分段：与 ③ 同一份裁决（review.apply）。没有分析结果 → 空；有但不完整 → AnalysisIncomplete（409）。
+
+    visual=True（⑤）：连同画面片段（剪辑列表合计、镜头理由要算上）；④ 的待定队列与话题不含画面片段。
+    """
     if not isinstance(scored, dict) or "segments" not in scored:
         return []
     listed = scored["segments"]
@@ -131,7 +136,8 @@ def _applied_segments(work: Path, scored) -> list[dict]:
         raise AnalysisIncomplete(INCOMPLETE_MSG.format(detail="分段列表的格式不对"))
     for i, seg in enumerate(listed):
         _check_segment(i, seg)
-    return review.apply(listed, review.load(work))  # overrides 损坏 → OverridesCorrupt → 409
+    return review.apply(visual_clips.with_visual(scored) if visual else listed,
+                        review.load(work))  # overrides 损坏 → OverridesCorrupt → 409
 
 
 applied_segments = _applied_segments  # 公开别名：⑤ 看结果与 ④ 用同一份裁决后的分段
@@ -205,7 +211,9 @@ def clip_list(segments: list[dict], target: float) -> dict:
     marked = sorted((s for s in segments if s.get("must_keep") and not s.get("unusable")),
                     key=lambda s: str(s.get("must_at") or ""))
     items = [{"id": s["id"], "start": s["start"], "end": s["end"], "dur": round(s["end"] - s["start"], 2),
-              "topic": s.get("topic"), "text": s.get("text", "")} for s in marked]
+              "topic": s.get("topic"), "text": s.get("text", ""),
+              **({"kind": visual_clips.KIND, "title": visual_clips.title(s)} if visual_clips.is_visual(s) else {})}
+             for s in marked]
     total = round(sum(i["dur"] for i in items), 2)
     over = total > target
     step = select.TARGET_ROUND_STEP

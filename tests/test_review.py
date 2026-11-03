@@ -253,3 +253,58 @@ def test_rewrite_does_not_inherit_far_same_text_stale_item(tmp_path):
     _scored(tmp_path, ("S001", 0, "对。"))
     data = review.set_must(tmp_path, "S001", True)
     assert "level" not in data["S001"] and data["S001"]["must_keep"] is True
+
+
+# ================================================================ 画面片段（第 5 阶段）：没有对白，按起点锚定
+def _vis(i, start, end=None, level=2):
+    return {"id": i, "kind": "visual", "start": start, "end": end or start + 10, "text": "", "level": level}
+
+
+def test_visual_segment_anchor_is_by_time_not_empty_text(tmp_path):
+    (tmp_path / "segments_scored.json").write_text(json.dumps({
+        "segments": [{"id": "S001", "start": 0, "end": 5, "text": "甲", "level": 2}],
+        "visual_segments": [_vis("V001", 40.0)]}, ensure_ascii=False), encoding="utf-8")
+    data = review.set_must(tmp_path, "V001", True)
+    assert data["V001"]["anchor"] == {"text": review.VISUAL_ANCHOR, "start": 40.0, "end": 50.0}
+
+
+def test_visual_override_follows_renumbered_segment():
+    ov = {"V003": {"level": 3, "must_keep": True, "anchor": {"text": review.VISUAL_ANCHOR, "start": 40.0}}}
+    merged = review.apply([_vis("V003", 10.0), _vis("V004", 41.5)], ov)
+    assert [(m["id"], m["level"], m["must_keep"]) for m in merged] == [("V003", 2, False), ("V004", 3, True)]
+
+
+def test_visual_override_does_not_jump_beyond_visual_cap():
+    ov = {"V001": {"level": 1, "anchor": {"text": review.VISUAL_ANCHOR, "start": 40.0}}}
+    segs = [_vis("V001", 40.0 + review.VISUAL_RELOCATE_MAX_SECONDS + 1)]
+    assert review.apply(segs, ov)[0]["level"] == 2
+    assert review.stale_ids(segs, ov) == ["V001"]
+
+
+def test_visual_and_speech_anchors_never_cross():
+    ov = {"S001": {"level": 1, "anchor": _anchor("", 40.0)},
+          "V001": {"level": 3, "anchor": {"text": review.VISUAL_ANCHOR, "start": 40.0}}}
+    merged = review.apply([{"id": "S009", "start": 40.0, "end": 41, "text": "", "level": 2}, _vis("V002", 40.0)], ov)
+    assert [m["level"] for m in merged] == [1, 3]
+
+
+def test_rekey_on_write_moves_visual_override(tmp_path):
+    (tmp_path / "segments_scored.json").write_text(json.dumps({
+        "segments": [], "visual_segments": [_vis("V002", 41.0)]}), encoding="utf-8")
+    (tmp_path / "overrides.json").write_text(json.dumps({
+        "V001": {"level": 3, "anchor": {"text": review.VISUAL_ANCHOR, "start": 40.0}}}), encoding="utf-8")
+    data = review.set_must(tmp_path, "V002", True)
+    assert set(data) == {"V002"} and data["V002"]["level"] == 3 and data["V002"]["must_keep"] is True
+
+
+def test_visual_override_needs_both_ends_close_not_just_start():
+    """同起点附近、但长短完全不同的画面片段是另一段画面：裁决不能跟过去（审查 LOW）。"""
+    ov = {"V001": {"must_keep": True, "anchor": {"text": review.VISUAL_ANCHOR, "start": 10.0, "end": 20.0}}}
+    merged = review.apply([_vis("V001", 12.5, 40.0), _vis("V002", 11.0, 21.0)], ov)
+    assert [(m["id"], m["must_keep"]) for m in merged] == [("V001", False), ("V002", True)]
+
+
+def test_is_visual_override():
+    assert review.is_visual_override({"anchor": {"text": review.VISUAL_ANCHOR, "start": 1}})
+    assert not review.is_visual_override({"anchor": _anchor("甲", 1)})
+    assert not review.is_visual_override("坏的") and not review.is_visual_override({"anchor": 3})

@@ -14,7 +14,7 @@ from typing import Callable
 from gui import analysis, confirm, jobs, payloads, wizard
 from pipeline import (
     applog, exclusions, fingerprints, project_lock, review, schema, select_rules, shots_store, style, topic_names,
-    vision,
+    vision, visual_clips,
 )
 
 LOG = applog.get("gui")
@@ -360,8 +360,7 @@ def _mark_response(pdir: Path, name: str, sid: str, cleared: str | None) -> dict
     scored = schema.read_json(work / "segments_scored.json", default=None)
     segment = clip = None
     if scored:
-        segments = review.apply(schema.require_key(scored, "segments", work / "segments_scored.json"),
-                                review.load(work))
+        segments = review.apply(visual_clips.markable(scored, work / "segments_scored.json"), review.load(work))
         segment = next((s for s in segments if s["id"] == sid), None)
         clip = payloads.clip_list(segments, float(cfg.get("target_duration") or DEFAULT_TARGET_S))
     return {"ok": True, "cleared": cleared, "segment": segment, "clip_list": clip,
@@ -479,7 +478,7 @@ def _post_browse_unusable(path: str, body: dict, existing: Lookup) -> tuple[int,
     pdir, sid, work, flag = target, body["id"], target / "work", body["unusable"]
     try:
         scored = schema.read_json(work / "segments_scored.json", default=None)
-        known = {s.get("id") for s in (scored or {}).get("segments", []) if isinstance(s, dict)}
+        known = {s.get("id") for s in visual_clips.with_visual(scored or {}) if isinstance(s, dict)}
         if sid not in known:
             return 400, {"error": UNKNOWN_SEGMENT_MSG.format(id=sid)}
         schema.require_key(scored, "segments", work / "segments_scored.json")

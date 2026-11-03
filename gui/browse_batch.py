@@ -10,7 +10,7 @@ from pathlib import Path
 
 from gui import payloads, project_routes, wizard
 from gui.project_routes import Lookup
-from pipeline import applog, exclusions, review, schema, shots_store
+from pipeline import applog, exclusions, review, schema, shots_store, visual_clips
 
 LOG = applog.get("gui")
 BATCH_ITEMS_MAX = 2000  # 一次最多标记几段（请求体上限；一部素材的句子数远小于它）
@@ -33,7 +33,7 @@ def _batch_response(pdir: Path, name: str, ids: list[str], cleared: dict, **extr
         work = pdir / "work"
         cfg = schema.read_json(pdir / "project.json", default={})
         scored = schema.read_json(work / "segments_scored.json")
-        segments = review.apply(schema.require_key(scored, "segments", work / "segments_scored.json"),
+        segments = review.apply(visual_clips.markable(scored, work / "segments_scored.json"),
                                 review.load(work))
         by_id = {s["id"]: s for s in segments}
         clip = payloads.clip_list(segments, float(cfg.get("target_duration") or project_routes.DEFAULT_TARGET_S))
@@ -83,7 +83,7 @@ def _post_browse_batch(path: str, body: dict, existing: Lookup) -> tuple[int, di
         scored = schema.read_json(work / "segments_scored.json", default=None)
         if scored is None:
             return 400, {"error": NO_ANALYSIS_MSG}
-        known = {s.get("id") for s in schema.require_key(scored, "segments", work / "segments_scored.json")
+        known = {s.get("id") for s in visual_clips.markable(scored, work / "segments_scored.json")
                  if isinstance(s, dict)}
         for item in items:
             if item["id"] not in known:

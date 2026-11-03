@@ -7,6 +7,7 @@
 读取时把 overrides 合并到分析结果上；写入用原子替换。
 KI-12：重新分段后句子 id 会变、原文不会。写入时记锚点（原文哈希 + 起点）；读取时锚点对不上
 就按原文重定位（同文取起点最近的一句），找不到就不套用、由选段报警告。没有锚点的旧裁决照旧按 id 套用。
+画面片段（V001…，没有对白）的锚点不看原文，只按起点在 VISUAL_RELOCATE_MAX_SECONDS 内找画面片段。
 """
 from __future__ import annotations
 
@@ -17,12 +18,14 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pipeline import schema
+from pipeline import schema, visual_clips
 
 LEVELS = {1: "废片", 2: "待定", 3: "可用"}
 EXCLUSIVE = {"must_keep": "unusable", "unusable": "must_keep"}  # ⚑P9：剪辑列表与不可用互斥，后按的生效
 BOOKKEEPING_FIELDS = {"at", "anchor"}  # 不算「人工裁决内容」的记账字段
 RELOCATE_MAX_SECONDS = 30.0  # 重定位只在锚点起点前后这么多秒内找同文句子；更远的当失效（「对。」这类短句到处都有）
+VISUAL_ANCHOR = "visual"  # 画面片段锚点的 text：不会与 12 位十六进制原文哈希撞
+VISUAL_RELOCATE_MAX_SECONDS = 3.0  # 画面片段相邻可能只差几秒，只在很近处找回（边界随镜头切点微调）
 
 _LOCK = threading.Lock()  # GUI 是多线程服务，读-改-写必须串行
 
@@ -61,8 +64,21 @@ def text_key(text: str) -> str:
     return hashlib.sha1(re.sub(r"\s+", "", text or "").encode("utf-8")).hexdigest()[:12]
 
 
+def _key_of(seg: dict) -> str:
+    return VISUAL_ANCHOR if visual_clips.is_visual(seg) else text_key(seg.get("text") or "")
+
+
 def _anchor_of(seg: dict) -> dict:
-    return {"text": text_key(seg.get("text") or ""), "start": round(float(seg.get("start") or 0), 2)}
+    anchor = {"text": _key_of(seg), "start": round(float(seg.get("start") or 0), 2)}
+    if visual_clips.is_visual(seg):  # 画面片段没有原文可比：起止都要对得上，才认是同一段画面
+        anchor["end"] = round(float(seg.get("end") or 0), 2)
+    return anchor
+
+
+def is_visual_override(item: object) -> bool:
+    """这条裁决是不是记在画面片段上的（锚点 text 为 VISUAL_ANCHOR）。"""
+    anchor = item.get("anchor") if isinstance(item, dict) else None
+    return isinstance(anchor, dict) and anchor.get("text") == VISUAL_ANCHOR
 
 
 def _scored_segments(workdir: Path) -> list[dict] | None:
@@ -71,7 +87,7 @@ def _scored_segments(workdir: Path) -> list[dict] | None:
     segs = scored.get("segments") if isinstance(scored, dict) else None
     if not isinstance(segs, list):
         return None
-    return [s for s in segs if isinstance(s, dict) and isinstance(s.get("id"), str)]
+    return [s for s in visual_clips.with_visual(scored) if isinstance(s, dict) and isinstance(s.get("id"), str)]
 
 
 def _rekey(data: dict, segments: list[dict]) -> tuple[dict, set[str]]:
@@ -273,7 +289,7 @@ def _resolve_keys(segments: list[dict], overrides: dict) -> tuple[dict[str, str]
     全局按距离从近到远分配（同距离优先同 id），一句只给一条裁决；分不到 → 失效。
     """
     by_id = {s["id"]: s for s in segments}
-    keys = {s["id"]: text_key(s.get("text") or "") for s in segments}
+    keys = {s["id"]: _key_of(s) for s in segments}
     mapping: dict[str, str] = {}
     anchored: list[str] = []
     stale: list[str] = []
@@ -290,9 +306,14 @@ def _resolve_keys(segments: list[dict], overrides: dict) -> tuple[dict[str, str]
     for order, key in enumerate(anchored):
         anchor = overrides[key]["anchor"]
         target = float(anchor.get("start") or 0)
+        visual = anchor.get("text") == VISUAL_ANCHOR
+        cap = VISUAL_RELOCATE_MAX_SECONDS if visual else RELOCATE_MAX_SECONDS
+        end = anchor.get("end") if visual and isinstance(anchor.get("end"), (int, float)) else None
         for seg in segments:
             dist = abs(float(seg.get("start") or 0) - target)
-            if keys[seg["id"]] == anchor.get("text") and dist <= RELOCATE_MAX_SECONDS and seg["id"] not in mapping:
+            if end is not None:
+                dist = max(dist, abs(float(seg.get("end") or 0) - end))
+            if keys[seg["id"]] == anchor.get("text") and dist <= cap and seg["id"] not in mapping:
                 pairs.append((dist, seg["id"] != key, order, key, seg["id"]))
     placed: set[str] = set()
     for _, _, _, key, sid in sorted(pairs):

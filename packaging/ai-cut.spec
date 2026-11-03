@@ -44,6 +44,7 @@ hidden = [
     "pipeline.to_jianying", "pipeline.transcript_stamp", "pipeline.understand_audio", "pipeline.understand_text",
     "pipeline.understand_visual", "pipeline.usage", "pipeline.vision", "pipeline.vision_proxy",
     "pipeline.vision_align", "pipeline.vision_run", "pipeline.vision_timeline",
+    "pipeline.visual_clips",
     "research.validate_draft",
 ]
 if IS_WIN:

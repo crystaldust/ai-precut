@@ -4,7 +4,7 @@
 产物 work/vision_aligned.json：
   * by_segment：对白片段 id → {desc, text_on_screen, objects, issues}（没有重叠画面事件的片段不出现）；
   * visual_segments：没人说话、但画面有内容的时段（id 为 V001…，与对白片段的 S### 区分），
-    第 4 阶段只给逐句标注和档位判定用，不进 ③ 和自动选段（第 5 阶段再接入）。
+    判档后在 ③ 里按时间显示、可手动放进剪辑列表，不进自动选段（见 pipeline/visual_clips.py）。
 时间都由程序按重叠计算，不让模型改时间。画面文字来自另一个模型，只当数据：截断后原样传给下游。
 关闭画面理解时什么都不做、也不删旧文件——所有读取方都要以 vision.is_on 为闸。
 """

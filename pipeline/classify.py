@@ -192,7 +192,7 @@ def _apply_vision(s: dict) -> dict:
 
 
 def classify_visual(visual_segments: list[dict]) -> list[dict]:
-    """无对白的画面片段单独判档：不计入汇总、话题、预算和待定上限（第 5 阶段再接入 ③）。"""
+    """无对白的画面片段单独判档：不计入汇总、话题、预算和待定上限（③ 里另行显示，见 visual_clips）。"""
     out = []
     for v in visual_segments:
         issues = (v.get("visual") or {}).get("issues") or []

@@ -11,7 +11,10 @@ from pathlib import Path
 from urllib.parse import quote
 
 from gui import payloads, wizard
-from pipeline import custom_rules, fingerprints, media_io, outputs, schema, select, shot_diff, shot_sub, shots_store, topic_names
+from pipeline import (
+    custom_rules, fingerprints, media_io, outputs, schema, select, shot_diff, shot_sub, shots_store, topic_names,
+    visual_clips,
+)
 
 CAUSE_MUST, CAUSE_REMOVED, CAUSE_OTHER = "must", "removed", "other"
 CAUSE_LABELS = {
@@ -62,7 +65,10 @@ def _cause(seg: dict, source: str | None, ai_ids: set, recorded: dict) -> str:
 
 def _unused(segments: list[dict], shots: list[dict], source: str | None, selection: dict,
             missing: list[dict], names: dict, with_lines: dict) -> list[dict]:
-    """E13：可用（含人工裁决）且不在当前分镜表里的段；不在表里的剪辑列表段排最前。"""
+    """E13：可用（含人工裁决）且不在当前分镜表里的段；不在表里的剪辑列表段排最前。
+
+    画面片段不进 AI 选段，只在「放进了剪辑列表却不在表里」时列出（正文用画面标题）。
+    """
     must_ids = {s.get("id") for s in missing}
     ai_ids = {x.get("segment_id") for x in selection.get("shots") or [] if isinstance(x, dict)}
     recorded = {x.get("segment_id"): x for x in selection.get("unused") or [] if isinstance(x, dict)}
@@ -71,14 +77,14 @@ def _unused(segments: list[dict], shots: list[dict], source: str | None, selecti
         if seg.get("unusable"):
             continue
         is_must = seg.get("id") in must_ids
-        if not is_must and (seg.get("level") != 3 or payloads.in_cut(seg, shots)):
+        if not is_must and (seg.get("level") != 3 or visual_clips.is_visual(seg) or payloads.in_cut(seg, shots)):
             continue
         cause = CAUSE_MUST if is_must else _cause(seg, source, ai_ids, recorded)
         start, end = float(seg["start"]), float(seg["end"])
         rows.append({
             "id": seg.get("id"), "start": start, "end": end,
             "topic": topic_names.display(seg.get("topic"), names), "topic_raw": seg.get("topic"),
-            "text": payloads._clip(seg.get("text")),
+            "text": payloads._clip(visual_clips.title(seg) if visual_clips.is_visual(seg) else seg.get("text")),
             "cause": cause, "cause_label": CAUSE_LABELS[cause],
             "shot": {"in": round(start, 2), "out": round(end, 2),
                      "sub": shot_sub.sub_for(with_lines.get(seg["id"], seg), start, end)},
@@ -144,7 +150,8 @@ def result(pdir: Path, name: str) -> dict:
     work = pdir / "work"
     shots, source = shots_store.current(pdir)  # 损坏 → CorruptJSON，不当作没有
     # applied_segments 已校验每段都有 id / 起止 / 档位（不完整 → AnalysisIncomplete → 409），下面的读取才能直接索引
-    segments = payloads.applied_segments(work, schema.read_json(work / "segments_scored.json", default=None))
+    segments = payloads.applied_segments(work, schema.read_json(work / "segments_scored.json", default=None),
+                                         visual=True)
     selection = _lenient_dict(work / "selection.json")
     names = topic_names.load(work)
     missing = select.uncovered_must_keep(segments, shots)

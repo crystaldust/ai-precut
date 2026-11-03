@@ -246,6 +246,8 @@ pre.notices{white-space:pre-wrap;font-size:12px;line-height:1.5;max-height:60vh;
 .row .sum{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .sum small{color:var(--muted);font-size:11px;display:block;overflow:hidden;text-overflow:ellipsis}
 .row .vt{margin-left:6px;padding:0 5px;border-radius:4px;background:#2a2f3a;color:#c8d2e0}
+.row .vis{display:block;opacity:.85}
+.b-now .vis{color:#9fb0c4}
 .row .tag-list,.row .tag-un{display:none;margin-left:6px;font-size:10px;padding:0 6px;border-radius:4px}
 .row .tag-list{background:#17304f;color:var(--accent)}
 .row .tag-un{background:#4a2b2b;color:var(--danger)}
