@@ -70,3 +70,58 @@ def test_truncated_english_lines_keep_spaces():  # KI-87：截短镜头的分句
                      {"start": 1.0, "end": 2.0, "text": "Three four."},
                      {"start": 2.0, "end": 3.0, "text": "Five"}]}
     assert shot_sub.sub_for(seg, 0.0, 2.0) == "One two. Three four."
+
+
+# ---------------------------------------------------------------- 手改起止：字幕按整份转写的分句重取
+ALL = [{"start": 0, "end": 3, "text": "上一句。"}, {"start": 3, "end": 6, "text": "第一句。"},
+       {"start": 6, "end": 9, "text": "第二句。"}, {"start": 9, "end": 12, "text": "下一句。"}]
+
+
+def _edited(start, end, base=(3, 9), text="第一句。第二句。"):
+    return {**_seg(start, end, text), "base_start": base[0], "base_end": base[1], "bounds_edited": True}
+
+
+def test_edited_trim_drops_words():
+    assert shot_sub.sub_for(_edited(3, 6), 3, 6, ALL) == "第一句。"
+
+
+def test_edited_extend_into_neighbour_picks_up_its_words():
+    assert shot_sub.sub_for(_edited(0, 12), 0, 12, ALL) == "上一句。第一句。第二句。下一句。"
+    assert shot_sub.sub_for(_edited(3, 12), 3, 12, ALL) == "第一句。第二句。下一句。"
+
+
+def test_edited_lines_unordered_and_duplicated_are_sorted_and_deduped():
+    shuffled = [ALL[2], ALL[1], ALL[1], ALL[0]]
+    assert shot_sub.sub_for(_edited(0, 9), 0, 9, shuffled) == "上一句。第一句。第二句。"
+
+
+def test_edited_shot_on_base_bounds_returns_whole_text():
+    assert shot_sub.sub_for(_edited(2, 10), 3, 9, ALL) == "第一句。第二句。"
+
+
+def test_whole_shortcut_ignores_edited_bounds():
+    seg = _edited(3, 6)   # 编辑后范围是 3~6；镜头 3~6 覆盖编辑范围但没盖住原句 3~9
+    assert shot_sub.sub_for(seg, 3, 6, ALL) != seg["text"]
+
+
+def test_edited_without_any_lines_falls_back_to_base_behaviour():
+    seg = _edited(3, 6)
+    assert shot_sub.sub_for(seg, 3, 6) == "第一句。"   # 按原句 3~9 比例截（8 字取前 4）
+    assert shot_sub.sub_for(seg, 3, 6, []) == "第一句。"
+
+
+def test_edited_visual_has_no_subtitle():
+    seg = {"id": "V001", "kind": "visual", "start": 1, "end": 9, "text": "", "base_start": 2, "base_end": 8,
+           "bounds_edited": True}
+    assert shot_sub.sub_for(seg, 1, 9, ALL) == ""
+
+
+def test_unedited_segment_ignores_all_lines_argument():
+    assert shot_sub.sub_for(_seg(0, 9, "x", LINES), 0, 4.4, ALL) == "第一句"
+
+
+def test_flatten_lines_reads_every_sentence_and_skips_junk():
+    raw = [{"id": "S1", "lines": [ALL[0], "bad", {"start": "x"}]}, {"id": "S2", "lines": None}, "x",
+           {"id": "S3", "lines": [ALL[1]]}]
+    assert shot_sub.flatten_lines(raw) == [ALL[0], ALL[1]]
+    assert shot_sub.flatten_lines(None) == []

@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import custom_rules, fingerprints, notices, questions, review, schema, select, topic_names, visual_clips
+from pipeline import applog, custom_rules, fingerprints, notices, questions, review, schema, select, topic_names, visual_clips
 
+LOG = applog.get("gui")
 NO_SCORED_MSG = "还没有三档判定，先跑 analyze/text/score"
 NO_QUESTIONS_MSG = "还没有决策问题，先跑 questions"
 STALE_QUESTIONS_HINT = ("这组决策问题是旧版程序生成的：「主角」一题的选项是人名，现在的选段认不出来，"
@@ -37,6 +38,24 @@ def in_cut(seg: dict, shots: list[dict]) -> bool:
         if lo - COVER_EPS_S <= start and end <= hi + COVER_EPS_S:
             return True
     return False
+
+
+def material_duration_of(work: Path) -> float:
+    """work/materials.json 里第一条素材的时长（秒）；没有文件 → 0.0；读不懂 / 不是正的有限数字 → 记日志、0.0。
+
+    只用于显示和校验上限，缺了不报错（0 = 时长未知）。
+    """
+    path = work / "materials.json"
+    if not path.exists():
+        return 0.0
+    try:
+        duration = review.finite_number(_jload(path)["items"][0]["duration"])
+    except (KeyError, IndexError, TypeError):
+        duration = None
+    if duration is None or duration <= 0:
+        LOG.warning("素材时长读不出来，按未知处理：%s", path)
+        return 0.0
+    return duration
 
 
 def browse(pdir: Path, name: str) -> dict:
@@ -72,10 +91,7 @@ def browse(pdir: Path, name: str) -> dict:
             t["usable_dur"] += s["end"] - s["start"]
 
     summary = _jload(work / "content_summary.json") or {}
-    try:
-        material_duration = _jload(work / "materials.json")["items"][0]["duration"]
-    except Exception:  # noqa: BLE001
-        material_duration = 0.0
+    material_duration = material_duration_of(work)
 
     names = topic_names.load(work)  # P3：只改显示，topic_raw 仍是匹配键
     for s in segments:

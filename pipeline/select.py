@@ -265,7 +265,7 @@ def _forced_bounds(seg: dict, a: float, b: float, max_shot: float) -> tuple[floa
     starts = {float(seg["start"]), a}
     for line in seg.get("lines") or []:
         try:
-            starts.add(float(line["start"]))
+            starts.add(max(float(line["start"]), float(seg["start"])))  # 手改过起止：不往编辑范围之前扩
         except (KeyError, TypeError, ValueError):
             continue
     start = min(t for t in starts if b - max_shot - COVER_TOLERANCE <= t <= a + COVER_TOLERANCE)
@@ -318,7 +318,8 @@ def _uncovered_lines(hits: list[dict], shots: list[dict], segments: list[dict]) 
 
 
 def select(segments: list[dict], topics: list[dict], rules: dict,
-           target: float, weights: dict | None = None) -> dict:
+           target: float, weights: dict | None = None, all_lines: list[dict] | None = None) -> dict:
+    """all_lines：全部句子的分句（手改过起止的片段跨句取字幕用，见 shot_sub.sub_for）。"""
     # KI-93 / D13：「不可用」段一开始就拿掉——不进话题池、不补时长、不被指定原话强拉、不进未采用清单
     segments = [s for s in segments if not s.get("unusable")]
     # 旧版存下的规则可能是中文描述（ending「微信缴费完成」、pacing「紧凑快剪」）：先归一
@@ -456,7 +457,7 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
     shots, ending_notes = _fix_ending(shots, segments, rules.get("ending"))
     seg_of = {x["id"]: x for x in segments}
     shots = [{**s, "id": f"sel{i:02d}",  # KI-01：字幕按最终出入点生成（整句 / 只留镜头内分句）
-              "sub": shot_sub.sub_for(seg_of[s["segment_id"]], s["start"], s["end"])}
+              "sub": shot_sub.sub_for(seg_of[s["segment_id"]], s["start"], s["end"], all_lines)}
              for i, s in enumerate(shots, 1)]
 
     used_ids = {s["segment_id"] for s in shots}
@@ -600,6 +601,11 @@ def with_lines(segments: list[dict], segments_path: Path) -> list[dict]:
             for x in segments]
 
 
+def read_all_lines(segments_path: Path) -> list[dict]:
+    """work/segments.json 里全部句子的分句（读不出来 → 空，同 with_lines）。"""
+    return shot_sub.flatten_lines(schema.read_json_lenient(segments_path, {}).get("segments"))
+
+
 def run(scored_path: Path, answers_path: Path, out_dir: Path,
         *, questions_path: Path | None = None, title: str = "",
         material: str = "", weights: dict | None = None,
@@ -656,7 +662,9 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
     lines = select_rules.parse_must_lines((calibration or {}).get("must_lines"))
     rules = {**rules, "must_lines": list(dict.fromkeys(
         [*select_rules.parse_must_lines(rules.get("must_lines")), *lines]))}
-    result = {**select(segments, topics, rules, target, weights), "inputs": inputs, "custom_rules": custom_items,
+    transcript_lines = read_all_lines(out_dir / "segments.json")
+    extra = {"all_lines": transcript_lines} if transcript_lines else {}  # 没有分句就不传（与旧调用一致）
+    result = {**select(segments, topics, rules, target, weights, **extra), "inputs": inputs, "custom_rules": custom_items,
               "custom_prompt": custom_rules.prompt_record(custom)}
     if extra_warnings:
         result = {**result, "warnings": [*result["warnings"], *extra_warnings]}

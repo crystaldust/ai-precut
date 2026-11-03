@@ -64,7 +64,8 @@ def _cause(seg: dict, source: str | None, ai_ids: set, recorded: dict) -> str:
 
 
 def _unused(segments: list[dict], shots: list[dict], source: str | None, selection: dict,
-            missing: list[dict], names: dict, with_lines: dict) -> list[dict]:
+            missing: list[dict], names: dict, with_lines: dict,
+            all_lines: list[dict] | None = None) -> list[dict]:
     """E13：可用（含人工裁决）且不在当前分镜表里的段；不在表里的剪辑列表段排最前。
 
     画面片段不进 AI 选段，只在「放进了剪辑列表却不在表里」时列出（正文用画面标题）。
@@ -87,7 +88,7 @@ def _unused(segments: list[dict], shots: list[dict], source: str | None, selecti
             "text": payloads._clip(visual_clips.title(seg) if visual_clips.is_visual(seg) else seg.get("text")),
             "cause": cause, "cause_label": CAUSE_LABELS[cause],
             "shot": {"in": round(start, 2), "out": round(end, 2),
-                     "sub": shot_sub.sub_for(with_lines.get(seg["id"], seg), start, end)},
+                     "sub": shot_sub.sub_for(with_lines.get(seg["id"], seg), start, end, all_lines)},
         })
     return sorted(rows, key=lambda r: r["cause"] != CAUSE_MUST)  # 稳定排序：剪辑列表段在前，各自仍按时间
 
@@ -156,7 +157,8 @@ def result(pdir: Path, name: str) -> dict:
     names = topic_names.load(work)
     missing = select.uncovered_must_keep(segments, shots)
     with_lines = {s["id"]: s for s in select.with_lines(segments, work / "segments.json")}
-    unused = _unused(segments, shots, source, selection, missing, names, with_lines)
+    unused = _unused(segments, shots, source, selection, missing, names, with_lines,
+                     select.read_all_lines(work / "segments.json"))  # 手改过起止的段跨句取字幕
     ai_by_id = _ai_shots_by_id(selection)
     inputs = fingerprints.preview_inputs(pdir, cfg)
     return {
