@@ -146,7 +146,7 @@ Must 全部：开关和新的创建 / 开始流程、代理素材与 MediaKit �
 | 2 | 流程与开关 | 「创建项目」不自动分析；② 准备开始状态 + 开关 + 档位 + 运行中锁定；"需要更新"；外发告知；设计图、界面流程、PRD 红线同步 | complete | with 1 | - | `.claude/PRPs/plans/completed/multimodal-phase2-flow-and-toggle.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase2-flow-and-toggle-report.md`） |
 | 3 | 代理素材与云端理解 | 代理转码 + 切段；扩展 MediaKit 客户端（上传、提交、轮询、重试、续跑）；`visual_timeline.json`；档位；单独记账 | complete | - | 1, 2 | `.claude/PRPs/plans/completed/multimodal-phase3-proxy-and-cloud.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase3-proxy-and-cloud-report.md`） |
 | 4 | 整合与判定 | 时间对齐、画面片段、DeepSeek 画面判断、档位判定 | complete | - | 3 | `.claude/PRPs/plans/completed/multimodal-phase4-integrate-and-judge.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase4-integrate-and-judge-report.md`） |
-| 5 | ③ 呈现与收尾 | ③ 显示画面描述和画面片段（可放入剪辑列表）；GUI 文档、PROGRESS、放行检查；开 / 关对比验收 | in-progress | - | 4 | `.claude/PRPs/plans/completed/multimodal-phase5-present-and-wrapup.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase5-present-and-wrapup-report.md`） |
+| 5 | ③ 呈现与收尾 | ③ 显示画面描述和画面片段（可放入剪辑列表）；GUI 文档、PROGRESS、放行检查；开 / 关对比验收 | complete | - | 4 | `.claude/PRPs/plans/completed/multimodal-phase5-present-and-wrapup.plan.md`（报告 `.claude/PRPs/reports/multimodal-phase5-present-and-wrapup-report.md`） |
 
 ### Phase Details
 
@@ -177,6 +177,7 @@ Must 全部：开关和新的创建 / 开始流程、代理素材与 MediaKit �
 - **Scope**: ③ 列表和详情、画面片段放入剪辑列表、文档、放行检查
 - **Success signal**: 成功指标里的开 / 关对比达标
 - **状态说明（2026-11-01）**：代码完成、测试通过，审查无 CRITICAL / HIGH；③ 显示画面信息与画面片段、可放入剪辑列表并导出；旧项目画面结果可认回。等放行检查 #34 与开 / 关对比验收后标 complete
+- **状态说明（2026-11-03）**：放行检查 #34 由用户手工验收基本通过，标 complete；随 Windows 预发布 `v0.1.0-build152` 发布。开 / 关对比（成功指标：⑤ 因画面删镜减少 ≥50%、关键画面召回 ≥80%）本阶段未做，转为上线后按真实素材跟踪
 
 ### Parallelism Notes
 
