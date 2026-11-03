@@ -30,11 +30,14 @@ const UNDO_MAX = 50;   // P8：最多撤销 50 步，切项目 / 刷新后清空
 const LEVEL_NAMES = {1: '废片', 2: '待定', 3: '可用'};
 const PERCENT_MAX = 100;
 const TOAST_MS_PER_CHAR = 120;
-const MARK_FIELDS = ['level', 'level_reason', 'override', 'must_keep', 'unusable'];  // 服务端回的 segment 里只取这几项（topic 是显示名，不能被原名盖掉）
+const BOUNDS_FIELDS = ['start', 'end', 'dur', 'base_start', 'base_end', 'bounds_edited'];   // 编辑起止（segment-edit.js）会改的字段
+const MARK_FIELDS = ['level', 'level_reason', 'override', 'must_keep', 'unusable', ...BOUNDS_FIELDS];  // 服务端回的 segment 里只取这几项（topic 是显示名，不能被原名盖掉）
+const COPY_BOUNDS_MANUAL_TABLE = '⑤ 的分镜表是手动改过的，去 ④ 重新选段后新起止才会生效';
 
 function bs(){ return state.browse; }
 function curSeg(){ const b = bs(); return b && b.cur !== null ? b.segs[b.cur] : null; }
-function snap(s){ return {must_keep: s.must_keep, unusable: s.unusable, level: s.level, override: s.override, level_reason: s.level_reason}; }
+function markSnap(s){ return {must_keep: s.must_keep, unusable: s.unusable, level: s.level, override: s.override, level_reason: s.level_reason}; }
+function snap(s){ return {...markSnap(s), ...Object.fromEntries(BOUNDS_FIELDS.map(k => [k, s[k]]))}; }   // 单段撤销 / 回滚用：标记 + 起止
 
 // 向导步骤状态直接用响应里的：⑤ 可能变「需要更新」。只重画步骤条 / 横幅 / 导航，不重画当前页
 function applyWizard(w){
@@ -57,7 +60,8 @@ function settleMarks(){ return Promise.all([...markQueues.values()].map(q => q.c
 
 function announce(kind, r){
   const notes = [];
-  if(kind === 'must' && r.cleared === 'unusable') notes.push(COPY_CLEARED_UNUSABLE);
+  if((kind === 'must' || kind === 'bounds') && r.cleared === 'unusable') notes.push(COPY_CLEARED_UNUSABLE);
+  if(kind === 'bounds' && r.manual_table) notes.push(COPY_BOUNDS_MANUAL_TABLE);
   if(kind === 'unusable' && r.cleared === 'must_keep') notes.push(COPY_CLEARED_LIST);
   const gone = kind === 'unusable' && Array.isArray(r.removed_shots) ? r.removed_shots.length : 0;
   if(gone) notes.push(COPY_REMOVED_SHOTS.replace('{n}', gone));
@@ -155,6 +159,7 @@ async function restoreSeg(seg, to, removed){
   const quiet = {record: false};
   if(to.must_keep !== seg.must_keep
      && !await applyMark(seg, {must_keep: to.must_keep}, 'must', '/api/browse/must', {must: to.must_keep}, quiet)) return false;
+  if(!await restoreBounds(seg, to, quiet)) return false;
   if(!to.override && seg.override)
     return applyMark(seg, {level: to.level, override: false, level_reason: to.level_reason}, 'level', '/api/browse/level', {level: null}, quiet);
   if(to.override && seg.level !== to.level)
@@ -200,6 +205,7 @@ async function doUndo(){
 /* ---------------- 重画：只动受影响的行 / 计数 / 面板 ---------------- */
 function refreshSeg(seg){
   paintRow(seg); paintDensityCell(seg); paintGroups(); renderFilters(); renderNote();
+  if(curSeg() === seg) renderNow();   // 当前段的起止 / 依据跟着变
   renderClipPanel(pendingCount() ? localClip() : undefined);   // 还有在途的改动：面板把它们合并进去，不被别的响应盖掉
 }
 // 请求还在路上时面板先按本地标记显示（顺序：服务端已有的在前，新放入的在后）；回来后换成服务端的数

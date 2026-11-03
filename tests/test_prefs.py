@@ -186,3 +186,20 @@ def test_save_oserror_is_clear_chinese_500(gui_server, monkeypatch):
     assert status == 500 and data["error"] == prefs.SAVE_FAILED_MSG and "disk full" not in data["error"]
     status, data = post(gui_server, {"what": "shortcuts"}, "/api/prefs/reset")
     assert status == 500 and data["error"] == prefs.SAVE_FAILED_MSG
+
+
+def test_existing_binding_to_edit_default_key_wins_over_new_edit_action(gui_server):
+    """升级迁移：旧文件里用户把别的操作绑到了 E，新增的「编辑起止」让位（暂时没有键），不为用户自己的键报警。"""
+    prefs_file().parent.mkdir(parents=True, exist_ok=True)
+    prefs_file().write_text(json.dumps({"shortcuts": {"mark_usable": "KeyE"}}), encoding="utf-8")
+    data = get(gui_server)[1]
+    assert data["shortcuts"]["mark_usable"] == "KeyE" and data["shortcuts"]["edit"] == prefs.UNBOUND
+    assert "warning" not in data
+    # 保存别的设置后再读：仍然不报警，E 仍是用户的
+    status, saved = post(gui_server, {"sidebar_pinned": True})
+    assert status == 200 and "warning" not in saved
+    again = get(gui_server)[1]
+    assert "warning" not in again and again["shortcuts"]["mark_usable"] == "KeyE" and again["shortcuts"]["edit"] == prefs.UNBOUND
+    # 之后可以给编辑起止另选一个键
+    status, data = post(gui_server, {"shortcuts": {"edit": "KeyQ"}})
+    assert status == 200 and data["shortcuts"]["edit"] == "KeyQ" and data["shortcuts"]["mark_usable"] == "KeyE"

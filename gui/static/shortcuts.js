@@ -9,13 +9,14 @@ const COPY_RECORD = '按下新键';
 const COPY_RECORDING = '请按键…';
 const COPY_RESET_KEYS = '恢复默认';
 const COPY_DONE = '完成';
+const COPY_UNBOUND = '—';   // 没有键位
 const COPY_KEY_CONFLICT = '「{key}」已经用于「{other}」';
 const COPY_KEY_COMBO = '不支持组合键，请只按一个键';
 const COPY_KEY_BAD = '这个键不能用：只能是单个字母、数字、空格、方向键或常用符号键';
 const DEFAULT_SHORTCUTS = {play: 'Space', prev: 'ArrowUp', next: 'ArrowDown', toggle_list: 'KeyS',
-  mark_usable: 'KeyA', mark_waste: 'KeyD', mark_unusable: 'KeyX', undo: 'KeyZ'};
+  mark_usable: 'KeyA', mark_waste: 'KeyD', mark_unusable: 'KeyX', undo: 'KeyZ', edit: 'KeyE'};
 const ACTION_LABELS = {play: '播放 / 暂停', prev: '上一段', next: '下一段', toggle_list: '放入 / 移出剪辑列表',
-  mark_usable: '标为可用', mark_waste: '标为废片', mark_unusable: '标为不可用', undo: '撤销'};
+  mark_usable: '标为可用', mark_waste: '标为废片', mark_unusable: '标为不可用', undo: '撤销', edit: '编辑起止'};
 const KEY_LABELS = {Space: '空格', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Comma: ',',
   Period: '.', Slash: '/', Semicolon: ';', Quote: "'", BracketLeft: '[', BracketRight: ']', Minus: '-',
   Equal: '=', Backquote: '`', Backslash: '\\'};
@@ -24,7 +25,7 @@ const MODIFIER_CODES = new Set(['ShiftLeft', 'ShiftRight', 'ControlLeft', 'Contr
   'MetaLeft', 'MetaRight', 'CapsLock', 'Fn']);
 const TYPING_TAGS = ['INPUT', 'TEXTAREA', 'SELECT'];
 const NATIVE_SPACE_TAGS = ['VIDEO', 'BUTTON'];  // 焦点在播放器 / 按钮上时，空格交给浏览器原本的行为
-const REPEAT_BLOCKED = new Set(['toggle_list', 'mark_usable', 'mark_waste', 'mark_unusable', 'undo']);  // 长按不来回切
+const REPEAT_BLOCKED = new Set(['toggle_list', 'mark_usable', 'mark_waste', 'mark_unusable', 'undo', 'edit']);  // 长按不来回切
 const UNDO_ALIAS_CODE = 'KeyZ';
 const TOAST_NOTE_MS = 3200;
 
@@ -60,7 +61,7 @@ function runShortcut(action){
     play: () => togglePlay(), prev: () => moveCur(-1), next: () => moveCur(1),
     toggle_list: () => withCur(toggleList), mark_usable: () => withCur(s => markLevel(s, 3)),
     mark_waste: () => withCur(s => markLevel(s, 1)), mark_unusable: () => withCur(markUnusable),
-    undo: () => undoLast(),
+    undo: () => undoLast(), edit: () => withCur(openSegEdit),
   };
   return runners[action] && runners[action]();
 }
@@ -84,7 +85,7 @@ document.addEventListener('keydown', onKey, true);
 function editorHtml(){
   const rows = Object.keys(ACTION_LABELS).map(id => {
     const rec = state.recording === id;
-    return `<tr><td>${esc(ACTION_LABELS[id])}</td><td><kbd>${esc(keyLabel(state.shortcuts[id] || ''))}</kbd></td>`
+    return `<tr><td>${esc(ACTION_LABELS[id])}</td><td><kbd>${esc(keyLabel(state.shortcuts[id] || '') || COPY_UNBOUND)}</kbd></td>`
       + `<td><button class="ghost${rec ? ' on' : ''}" data-act="recordKey" data-action="${esc(id)}">`
       + `${esc(rec ? COPY_RECORDING : COPY_RECORD)}</button></td></tr>`;
   }).join('');

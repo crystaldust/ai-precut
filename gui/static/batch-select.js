@@ -190,7 +190,7 @@ async function applyBatch(kind){
     const picked = b.segs.filter(s => b.sel.has(s._i));
     const rows = picked.flatMap(seg => { const p = spec.plan(seg); return p ? [{seg, ...p}] : []; });
     if(!rows.length){ toast(COPY_BATCH_NOOP, TOAST_NOTE_MS); return false; }
-    const entry = {batch: rows.map(({seg}) => ({id: seg.id, before: snap(seg)})), removed: [], done: false, dropped: false};
+    const entry = {batch: rows.map(({seg}) => ({id: seg.id, before: markSnap(seg)})), removed: [], done: false, dropped: false};
     const r = await sendBatch(b, rows, {}, entry);
     if(!r || bs() !== b) return false;
     toast(batchSummary(kind, r, rows.length, picked.length - rows.length), TOAST_NOTE_MS);
@@ -210,7 +210,7 @@ async function undoBatch(b, entry){
   const byId = new Map(b.segs.map(s => [s.id, s]));
   const rows = entry.batch.flatMap(({id, before}) => {
     const seg = byId.get(id);
-    if(!seg || sameMarks(snap(seg), before)) return [];
+    if(!seg || sameMarks(markSnap(seg), before)) return [];
     const item = {id, must_keep: !!before.must_keep, unusable: !!before.unusable, level: before.override ? before.level : null};
     return [{seg, change: {...before}, item}];
   });

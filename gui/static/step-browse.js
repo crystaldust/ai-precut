@@ -20,6 +20,8 @@ const COPY_IN_LIST = '✓ 剪辑列表';
 const COPY_TAG_IN_LIST = '已在剪辑列表';
 const COPY_TAG_UNUSABLE = '不可用';
 const COPY_TAG_USED = '已用';
+const COPY_TAG_EDITED = '已调整';   // 起止被改过（编辑在 segment-edit.js）
+const COPY_EDIT_BOUNDS = '编辑起止';
 const COPY_MARK_UNUSABLE = '标为不可用';
 const COPY_NOW_HINT = '按 ↓ 选一段，空格播放，S 放入剪辑列表';
 const COPY_GROUP_STATS = '可用 {u} · 待定 {p} · 废片 {w} · 可用时长 {d}';
@@ -59,7 +61,7 @@ const BROWSE_SKELETON = `<div class="browse">
   </div></div>`;
 function viewBrowse(){ return BROWSE_SKELETON; }
 
-function resetBrowse(){ browseGen += 1; state.browse = null; resetMarks(); unloadPlayer(); }
+function resetBrowse(){ browseGen += 1; state.browse = null; closeStaleSegEdit(); resetMarks(); unloadPlayer(); }
 // 切项目 / 项目没有分析结果：停止并卸掉播放器，不让上一个项目的小样继续播
 function unloadPlayer(){
   stopStopPoll();
@@ -82,7 +84,7 @@ async function enterBrowse(){
   const project = state.project;
   if(!project) return;
   const gen = ++browseGen;
-  state.browse = null;
+  state.browse = null; closeStaleSegEdit();
   $('#bList').innerHTML = `<div class="empty">${esc(COPY_BROWSE_LOADING)}</div>`;
   const c = crit();   // ④ 里还在路上的档位改动先落地，再读
   if(c && c.levelChain) await c.levelChain;
@@ -119,13 +121,21 @@ function renderSummary(){
     + (cast ? `<h4>${esc(COPY_SPEAKERS)}</h4><div class="cast">${cast}</div>` : '');
 }
 function densityClass(s){ return `d lv${num(s.level)}${s.unusable ? ' unusable' : ''}`; }
-function paintDensityCell(s){ const d = document.getElementById('d' + num(s._i)); if(d) d.className = densityClass(s); }
+function densityTotal(b){ return num(b.data.material_duration) || (b.segs.length ? num(b.segs[b.segs.length - 1].end) : 0) || 1; }
+function densityWidth(s, b){ return (num(s.dur) / densityTotal(b) * 100).toFixed(3) + '%'; }
+function densityTitle(s){ return fmt(num(s.start)) + ' ' + (LEVEL_NAMES[s.level] || '') + ' · ' + (s.topic || ''); }
+function paintDensityCell(s){   // 标记改档位 / 起止改了都走这里
+  const d = document.getElementById('d' + num(s._i));
+  if(!d) return;
+  d.className = densityClass(s);
+  d.style.width = densityWidth(s, bs());
+  d.setAttribute('title', densityTitle(s));
+}
 function renderDensity(){
-  const b = bs(), last = b.segs.length ? num(b.segs[b.segs.length - 1].end) : 0;
-  const total = num(b.data.material_duration) || last || 1;
+  const b = bs();
   $('#bDensity').innerHTML = b.segs.map(s =>
-    `<div class="${densityClass(s)}" id="d${num(s._i)}" style="width:${(num(s.dur) / total * 100).toFixed(3)}%" `
-    + `data-act="jumpSeg" data-i="${num(s._i)}" title="${esc(fmt(num(s.start)) + ' ' + (LEVEL_NAMES[s.level] || '') + ' · ' + (s.topic || ''))}"></div>`).join('');
+    `<div class="${densityClass(s)}" id="d${num(s._i)}" style="width:${densityWidth(s, b)}" `
+    + `data-act="jumpSeg" data-i="${num(s._i)}" title="${esc(densityTitle(s))}"></div>`).join('');
 }
 
 /* ---------------- 筛选条与列表 ---------------- */
@@ -155,17 +165,18 @@ function pictureHtml(s){
 }
 function rowHtml(s){
   const i = num(s._i), b = bs(), lv = num(s.level);
-  const cls = ['row', b && b.cur === i ? 'current' : '', s.must_keep ? 'in-list' : '', s.unusable ? 'unusable' : '', b && b.sel.has(i) ? 'picked' : ''].filter(Boolean).join(' ');
+  const cls = ['row', b && b.cur === i ? 'current' : '', s.bounds_edited ? 'edited' : '', s.must_keep ? 'in-list' : '', s.unusable ? 'unusable' : '', b && b.sel.has(i) ? 'picked' : ''].filter(Boolean).join(' ');
   const flags = (s.visual_flags || []).filter(f => VISUAL_TAGS[f]).map(f => `<span class="vt">${esc(VISUAL_TAGS[f])}</span>`).join('');
   return `<div class="${cls}" id="r${i}" data-act="jumpSeg" data-i="${num(i)}">${pickHtml(s)}`
-    + `<div class="tc">${fmt(num(s.start))}</div>`
+    + `<div class="tc" id="tc${i}">${fmt(num(s.start))}</div>`
     + `<div class="lv lv${lv}" id="lv${i}">${esc(LEVEL_NAMES[lv] || '')}</div>`
     + `<div class="cat" title="${esc(s.topic || '')}">${esc(s.topic || '—')}</div>`
     + `<div class="sum">${esc(segText(s).slice(0, TEXT_PREVIEW_CHARS))}`
     + `<span class="tag-list">${esc(COPY_TAG_IN_LIST)}</span><span class="tag-un">${esc(COPY_TAG_UNUSABLE)}</span>`
+    + `<span class="tag-edit" id="ed${i}" title="${esc(boundsChipTitle(s))}">${esc(COPY_TAG_EDITED)}</span>`
     + (s.inCut ? `<span class="used">${esc(COPY_TAG_USED)}</span>` : '')
     + `<small><span id="rs${i}">${esc(s.level_reason || '')}</span>${flags}</small>${pictureHtml(s)}</div>`
-    + `<div class="dur">${num(s.dur).toFixed(1)}s</div>`
+    + `<div class="dur" id="du${i}">${num(s.dur).toFixed(1)}s</div>`
     + `<button class="add" id="t${i}" data-act="toggleListIdx" data-i="${num(i)}">${esc(s.must_keep ? COPY_IN_LIST : COPY_ADD_LIST)}</button>`
     + `<button class="ban" data-act="markUnusableIdx" data-i="${num(i)}" title="${esc(COPY_MARK_UNUSABLE)}" aria-label="${esc(COPY_MARK_UNUSABLE)}">⊘</button></div>`;
 }
@@ -246,6 +257,7 @@ function paintRow(s){
   if(!row) return;
   row.classList.toggle('in-list', !!s.must_keep);
   row.classList.toggle('unusable', !!s.unusable);
+  paintBoundsCells(s);
   const add = document.getElementById('t' + i);
   if(add) add.textContent = s.must_keep ? COPY_IN_LIST : COPY_ADD_LIST;
   const lv = document.getElementById('lv' + i);
@@ -255,10 +267,12 @@ function paintRow(s){
 }
 
 /* ---------------- 当前段与播放器 ---------------- */
+function editKeyHtml(){ const k = keyLabel(state.shortcuts.edit || ''); return k ? ` <kbd>${esc(k)}</kbd>` : ''; }   // 没有键位（被用户的绑定占了）就不显示
 function renderNow(){
   const s = curSeg(), now = $('#bNow');
   now.innerHTML = s
     ? `<b>${esc(fmt(num(s.start)))}–${esc(fmt(num(s.end)))}</b>　${esc(segText(s).slice(0, NOW_PREVIEW_CHARS))}`
+      + ` <button class="ghost se-open" data-act="editBounds">${esc(COPY_EDIT_BOUNDS)}${editKeyHtml()}</button>`
       + `<br><span class="why">${esc(s.level_reason || '')}</span>` + nowPictureHtml(s)
     : `<span class="why">${esc(COPY_NOW_HINT)}</span>`;
 }
@@ -325,5 +339,6 @@ function pollStop(){
 
 Object.assign(ACTIONS, {
   setView: el => setView(el.dataset.v), setFilter: el => setFilter(el.dataset.v),
+  editBounds: () => { const s = curSeg(); return s && openSegEdit(s); },
   jumpSeg: el => jumpSeg(num(el.dataset.i)), jumpAt: el => jumpAt(num(el.dataset.t)),
 });

@@ -7,7 +7,7 @@ from fe_harness import NODE, run_app
 pytestmark = pytest.mark.skipif(NODE is None, reason="需要 node")
 
 SHORTCUTS = {"play": "Space", "prev": "ArrowUp", "next": "ArrowDown", "toggle_list": "KeyS",
-             "mark_usable": "KeyA", "mark_waste": "KeyD", "mark_unusable": "KeyX", "undo": "KeyZ"}
+             "mark_usable": "KeyA", "mark_waste": "KeyD", "mark_unusable": "KeyX", "undo": "KeyZ", "edit": "KeyE"}
 
 
 def prefs_payload(**custom):
