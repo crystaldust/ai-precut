@@ -19,10 +19,13 @@ FILENAME = "ui_prefs.json"
 PREFS_VERSION = 1
 ACTIONS = {"play": "播放 / 暂停", "prev": "上一段", "next": "下一段",
            "toggle_list": "放入 / 移出剪辑列表", "mark_usable": "标为可用",
-           "mark_waste": "标为废片", "mark_unusable": "标为不可用", "undo": "撤销"}
+           "mark_waste": "标为废片", "mark_unusable": "标为不可用", "undo": "撤销",
+           "edit": "编辑起止"}
 DEFAULT_SHORTCUTS = {"play": "Space", "prev": "ArrowUp", "next": "ArrowDown", "toggle_list": "KeyS",
                      "mark_usable": "KeyA", "mark_waste": "KeyD", "mark_unusable": "KeyX",
-                     "undo": "KeyZ"}
+                     "undo": "KeyZ", "edit": "KeyE"}
+UNBOUND = ""   # 没有键位（比如升级后新增的操作，默认键已被用户自己绑给了别的操作）
+NEWER_ACTIONS = frozenset({"edit"})   # 后来新增的操作：旧偏好文件里没有它，撞键时让位给用户已有的绑定
 # 单键：字母、数字、空格、方向键、常用符号键；不含 Esc / Tab / Enter / Backspace 和任何组合键
 KEY_CODE_RE = re.compile(r"Key[A-Z]|Digit[0-9]|Space|Arrow(?:Up|Down|Left|Right)|"
                          r"Comma|Period|Slash|Semicolon|Quote|Bracket(?:Left|Right)|Minus|Equal|"
@@ -72,6 +75,8 @@ def validate_shortcuts(raw: object, *, base: dict | None = None) -> dict[str, st
     owner: dict[str, str] = {}
     for action in ACTIONS:  # 校验在「合并默认后」做：只改一个键也可能撞上别的默认键
         code = merged[action]
+        if code == UNBOUND:
+            continue
         if code in owner:
             first = owner[code]
             this, other = (first, action) if first in raw and action not in raw else (action, first)
@@ -88,7 +93,7 @@ def _sanitize(stored: dict) -> tuple[dict[str, str], list[str]]:
         if action not in stored:
             continue
         code = stored[action]
-        if isinstance(code, str) and KEY_CODE_RE.fullmatch(code):
+        if isinstance(code, str) and (KEY_CODE_RE.fullmatch(code) or (code == UNBOUND and action in NEWER_ACTIONS)):
             custom[action] = code
         else:
             dropped.append(action)
@@ -100,6 +105,11 @@ def _sanitize(stored: dict) -> tuple[dict[str, str], list[str]]:
         clash = next((acts for acts in owners.values() if len(acts) > 1), None)
         if clash is None:
             return merged, dropped
+        yielding = [a for a in clash if a in NEWER_ACTIONS and a not in custom]
+        if yielding and any(a in custom for a in clash):   # 用户自己的绑定优先：新操作暂时没有键，不报警
+            for action in yielding:
+                merged[action] = UNBOUND
+            continue
         for action in (a for a in clash if a in custom):
             custom.pop(action)
             dropped.append(action)

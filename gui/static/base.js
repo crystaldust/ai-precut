@@ -53,6 +53,7 @@ function stageIs(html){ return html === stageHtml; }
 /* ---------------- 弹窗 ---------------- */
 function logLine(t){ const el=$('#log'); if(el){ el.textContent += (el.textContent?'\n':'')+t; el.scrollTop=el.scrollHeight; } }
 function showModal(title, html){
+  if(state.modalKind === 'segedit') segEditClosed();  // 编辑起止被别的弹窗顶掉：停视频 / 计时器（segment-edit.js）
   if(state.modalKind === 'reselect') reselectDismissed();  // 被别的弹窗顶掉的询问等于取消（reselect.js）
   $('#modalTitle').textContent = title;
   $('#modalBody').innerHTML = html;
@@ -60,6 +61,7 @@ function showModal(title, html){
   state.modalKind = null;  // 任务日志窗口由 jobs.js 的 jobModal 在 showModal 之后标成 'job'
 }
 function closeModal(){
+  if(state.modalKind === 'segedit') segEditClosed();
   if(state.modalKind === 'reselect') reselectDismissed();  // 重新选段询问被关掉 = 取消（reselect.js）
   $('#mask').classList.remove('on'); state.modalKind = null; state.recording = null;
 }

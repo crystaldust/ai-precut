@@ -15,7 +15,7 @@ NODE = shutil.which("node")
 
 # index.html 里的加载顺序，不含最后的 main.js（它只负责启动，测试里手动调用 boot()）
 SCRIPTS = ["common.js", "platform.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
-           "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js", "step-criteria.js",
+           "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js", "segment-edit.js", "step-criteria.js",
            "criteria-analysis.js", "criteria-pending.js", "reselect.js", "result-table.js", "result-unused.js",
            "step-result.js", "step-export.js", "export-compare.js", "app.js"]
 

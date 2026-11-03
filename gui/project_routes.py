@@ -27,6 +27,16 @@ MISSING_ID_MSG = "缺少 id"
 BAD_PARAM_MSG = "参数不对：id 必须是文本，{flag} 必须是 true 或 false"
 SHOTS_BACKUP = "shots.before-unusable.json"  # work/ 下最近一次移除镜头前的分镜表备份（供以后撤销）
 UNKNOWN_SEGMENT_MSG = "找不到片段 {id}：先完成分析，或刷新后重试"
+BOUNDS_MIN_S = 0.5  # 手改后的片段至少这么长（再短剪出来是一闪而过）
+BOUNDS_MAX_END_S = 24 * 3600.0  # 素材时长未知时终点的硬上限
+BOUNDS_EPS_S = 1e-6  # 最短时长比较的容差：0.7 - 0.2 = 0.49999999999999994 也算 0.5
+BAD_BOUNDS_MSG = "起止必须同时给两个数字（设置），或同时为 null（恢复原始起止）"
+BAD_MUST_MSG = "must 必须是 true 或 false"
+CLEAR_WITH_MUST_MSG = "恢复原始起止时不能同时放入剪辑列表：请用「放入剪辑列表」的接口"
+BOUNDS_START_MSG = "起点不能小于 0"
+BOUNDS_SHORT_MSG = "片段至少要 {min} 秒：终点要比起点晚 {min} 秒以上"
+BOUNDS_OVER_MSG = "终点 {end} 秒超出了素材时长（{total} 秒）"
+BOUNDS_CAP_MSG = "终点 {end} 秒太大了（最多 {cap} 秒）"
 DEFAULT_TARGET_S = payloads.DEFAULT_TARGET_S
 MUST_LINES_MAX = 3  # 剪辑偏好里「必须保留的原话」最多几句
 MUST_LINES_TOO_MANY_MSG = "指定原话最多 3 句，现在有 {n} 句"
@@ -498,12 +508,74 @@ def _post_browse_unusable(path: str, body: dict, existing: Lookup) -> tuple[int,
     return 200, _saved_response(pdir, body["project"], sid, cleared, **extra)
 
 
+def _check_bounds(body: dict, total: float) -> tuple[float, float] | None:
+    """请求里的起止 → (起, 止)，先取整到两位小数再校验（与前端一致）；两个都是 null → None（恢复原始）。
+
+    不合法抛 ValueError（人话）。total=0 表示素材时长未知，此时用 BOUNDS_MAX_END_S 兜底。
+    """
+    must = body.get("must", False)
+    if not isinstance(must, bool):
+        raise ValueError(BAD_MUST_MSG)
+    start, end = body.get("start"), body.get("end")
+    if start is None and end is None and "start" in body and "end" in body:
+        if must:
+            raise ValueError(CLEAR_WITH_MUST_MSG)
+        return None
+    start, end = review.finite_number(start), review.finite_number(end)  # 大到 float 装不下的整数也在这里挡掉
+    if start is None or end is None:
+        raise ValueError(BAD_BOUNDS_MSG)
+    start, end = round(start, 2), round(end, 2)
+    if start < 0:
+        raise ValueError(BOUNDS_START_MSG)
+    if end - start < BOUNDS_MIN_S - BOUNDS_EPS_S:
+        raise ValueError(BOUNDS_SHORT_MSG.format(min=BOUNDS_MIN_S))
+    if total > 0 and end > total:
+        raise ValueError(BOUNDS_OVER_MSG.format(end=end, total=total))
+    if total <= 0 and end > BOUNDS_MAX_END_S:
+        raise ValueError(BOUNDS_CAP_MSG.format(end=end, cap=int(BOUNDS_MAX_END_S)))
+    return start, end
+
+
+def _post_browse_bounds(path: str, body: dict, existing: Lookup) -> tuple[int, dict]:
+    """编辑片段起止：设置 / 恢复；可选 must=true 同一次写里放进剪辑列表。
+
+    响应同标记接口，另带 manual_table：已有手动分镜表时 ⑤ 不会自动用新起止，要回 ④ 重新选段。
+    """
+    target = _mark_target(body, existing)
+    if isinstance(target, tuple):
+        return target
+    pdir, sid, work = target, body["id"], target / "work"
+    try:
+        scored = schema.read_json(work / "segments_scored.json", default=None)
+        known = {s.get("id") for s in visual_clips.with_visual(scored or {}) if isinstance(s, dict)}
+        if sid not in known:
+            return 400, {"error": UNKNOWN_SEGMENT_MSG.format(id=sid)}
+        schema.require_key(scored, "segments", work / "segments_scored.json")
+        bounds = _check_bounds(body, float(payloads.material_duration_of(work) or 0))
+        if bounds is None:
+            review.clear_bounds(work, sid)
+            cleared = None
+        else:
+            _, cleared = review.set_bounds(work, sid, *bounds, must=body.get("must") is True)
+    except (review.OverridesCorrupt, schema.CorruptJSON) as exc:  # 必须在 ValueError 之前
+        return 409, {"error": str(exc)}
+    except (ValueError, TypeError, OSError) as exc:
+        return 400, {"error": str(exc)}
+    manual = (pdir / shots_store.SHOTS_FILE).exists()
+    resp = _saved_response(pdir, body["project"], sid, cleared, manual_table=manual)
+    seg = resp.get("segment")
+    if seg:  # 与 ③ 的片段列表同形：带 dur
+        resp = {**resp, "segment": {**seg, "dur": round(seg["end"] - seg["start"], 2)}}
+    return 200, resp
+
+
 POST_ROUTES = {
     "/api/calibrate": _post_calibrate,
     "/api/confirm/answers": _post_confirm_answers,
     "/api/browse/level": _post_browse_mark,
     "/api/browse/must": _post_browse_mark,
     "/api/browse/unusable": _post_browse_unusable,
+    "/api/browse/bounds": _post_browse_bounds,
     "/api/project/vision": _post_project_vision,
 }
 

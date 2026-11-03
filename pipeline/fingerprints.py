@@ -41,7 +41,10 @@ def file_digest(path: Path) -> str:
 
 
 def overrides_digest(workdir: Path) -> str:
-    """每段只取 level / must_keep is True / unusable is True；False 与缺省等价，按 id 排序。"""
+    """每段只取 level / must_keep is True / unusable is True；False 与缺省等价，按 id 排序。
+
+    手改的起止（有效时）追加在行尾：没改起止的项目指纹与以前逐字节相同。
+    """
     try:
         data = review.load(workdir)
     except review.OverridesCorrupt:
@@ -50,7 +53,10 @@ def overrides_digest(workdir: Path) -> str:
     for sid in sorted(data):
         item = data[sid] if isinstance(data[sid], dict) else {}
         row = [sid, item.get("level"), item.get("must_keep") is True, item.get("unusable") is True]
-        if row[1] is not None or row[2] or row[3]:
+        edited = review.edited_bounds(item)
+        if edited:
+            row = [*row, *edited]
+        if row[1] is not None or row[2] or row[3] or edited:
             rows.append(row)
     return _sha(_canonical(rows))
 

@@ -59,6 +59,7 @@
    多一个「画面片段」筛选，按话题看时单独一组放最后。画面片段可以改档、标不可用、放进剪辑列表：放进去的整段进片，
    保留原声、没有字幕，分镜表备注「画面：<标题>」；不放进去就不会被 AI 选上，也不算进档位计数、话题时长和 ④ 的待定裁决。
    重新分析后画面片段编号可能变，改过的档按开始时间（前后 3 秒内）找回。
+   **编辑起止**：AI 切的边界不准时，选中片段后点右边「编辑起止」或按 E，弹窗里拖时间轴的起点 / 终点手柄（范围是原片段前后各 10 秒），或直接输入开始 / 结束（m:ss.s，可超出手柄范围、不超过素材长度，至少 0.5 秒）；「▶ 播放选段」试听，「恢复原始」回到 AI 的边界。「保存」或「保存并加到剪辑列表」后，列表行显示「已调整」（悬停看原始起止），时长、分布条、剪辑列表都按新起止算；允许和别的片段重叠，Z 可撤销。进片和字幕都按新起止：剪短少字，延长到邻句会带上邻句的字。对白片段和画面片段都能改；重新分析后跟档位一样按原句找回。改完 ⑤ 会变 ⚠；如果 ⑤ 分镜表是手动改过的，要回 ④ 重新选段新起止才生效（保存时会提示）。
 4. **④ 定标准**（闸门）：左边小目录显示三块的完成情况，三块都不强制：
    - **分析对不对**（可选）：摘要 + 话题 / 关键信息 / 说话人。话题可以改名（只改显示名）；展开话题可以改某段的档位。
    - **裁决待定**：一次一段，看原文、依据、听一下，**A 可用 / D 废片**，也可以「先跳过」。
@@ -168,6 +169,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | POST | `/api/browse/must` | S：放入 / 移出剪辑列表 `{project, id, must}`；与「不可用」互斥，响应带 `cleared`、`segment`、`clip_list`、`wizard` |
 | POST | `/api/browse/level` | A / D：人工档位 `{project, id, level}`；`level: null` = 撤销人工档位；响应同上 |
 | POST | `/api/browse/unusable` | X：标 / 取消不可用；标记时会把手动分镜表里对应镜头移除（`removed_shots`，撤销时可 `restore_shots` 放回） |
+| POST | `/api/browse/bounds` | E：改片段起止 `{project, id, start, end, must?}`；`start`/`end` 都为 null 恢复原始，`must: true` 同一次写入放进剪辑列表；0 ≤ 开始、至少 0.5 秒、不超过素材长度，否则 400；响应同 must，另带 `manual_table`（有手动分镜表，要回 ④ 重新选段） |
 | POST | `/api/browse/batch` | ③ 批量标记 `{project, items:[{id, must_keep?, unusable?, level?}], restore_shots?}`（≤ 2000 条；`level: null` = 撤销人工档位）：整批成功或整批不写；响应 `segments`（这批各段最新状态）、`cleared`（`{id: 被清掉的标记}`）、`clip_list`、`wizard`、`removed_shots`、`restored`、`not_restored` |
 | POST | `/api/topics/rename` | 话题改名 `{project, name, display}`：只改显示名，选段 / 答案仍按原名匹配；`display` 为空 = 恢复原名；重名 / 超长 → 400 |
 | POST | `/api/confirm/answers` | ④ 保存答案 `{project, answers, custom?, confirmed?, manual?}`（`custom` = `{题 id 或 "_extra": 文字}`，不带 = 清空）：不带 `confirmed` = 草稿（不动确认状态、不起任务）；`confirmed:true` 保存并起「重新选段」任务（`manual:'replace'|'keep'` 决定手动分镜表怎么处理；`job_id`，没能起来时 `job_error`）；响应带 `wizard` |
@@ -227,6 +229,7 @@ pipeline/*.py           切、渲染、草稿生成、转写整理、废片检�
 | `step-analyze.js` | ② 分析进度 |
 | `step-browse.js` | ③ 看素材页面（摘要、分布条、列表、筛选、播放器） |
 | `batch-select.js` | ③ 批量选择：勾选框、Shift 连选、全选（当前筛选）、操作栏、批量标记与整批撤销 |
+| `segment-edit.js` | ③ 编辑起止弹窗（E）：视频 + 双手柄时间轴 + m:ss.s 输入框、校验、保存 / 恢复原始 / 保存并加到剪辑列表 |
 | `step-criteria.js` | ④ 页面骨架与加载、目录、决策问题（含自定义；草稿自动保存）、闸门、档位修改 |
 | `criteria-analysis.js` | ④「分析对不对」：话题改名、关键信息、说话人、逐段改档位 |
 | `criteria-pending.js` | ④「裁决待定」：一次一段、A / D、先跳过、剩下的按 AI 建议、播放器 |

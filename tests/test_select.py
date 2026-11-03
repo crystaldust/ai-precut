@@ -523,6 +523,88 @@ def test_run_reads_lines_from_segments_json(tmp_path):
     assert "lines" not in json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))["shots"][0]
 
 
+# ---------------------------------------------------------------- 手改起止：必留镜头用手改起止，字幕跨句重取
+def _edit_project(tmp_path, bounds):
+    """S001 0~10「甲乙」、S002 10~20「丙丁」；S001 在剪辑列表里并手改了起止 bounds。"""
+    sp = _write(tmp_path / "segments_scored.json",
+                {"target": 60, "topics": [{"name": "讲合同", "budget": 60}],
+                 "segments": [seg(1, 0, 10, "讲合同", text="甲乙"), seg(2, 10, 10, "讲合同", text="丙丁")]})
+    _write(tmp_path / "segments.json", {"segments": [
+        {"id": "S001", "lines": [_line(0, 5, "甲"), _line(5, 10, "乙")]},
+        {"id": "S002", "lines": [_line(10, 15, "丙"), _line(15, 20, "丁")]}]})
+    _write(tmp_path / "overrides.json", {"S001": {"must_keep": True, "must_at": "t", "start": bounds[0], "end": bounds[1]}})
+    return sp
+
+
+def test_must_keep_shot_uses_edited_bounds_and_trimmed_sub(tmp_path):
+    sp = _edit_project(tmp_path, (0.0, 5.0))
+    res = select.run(sp, tmp_path / "none.json", tmp_path, title="片", material="/a.mp4")
+    shot = _shot(res, "S001")
+    assert (shot["start"], shot["end"]) == (0.0, 5.0) and shot["sub"] == "甲"
+
+
+def test_must_keep_shot_extended_into_neighbour_picks_up_its_words(tmp_path):
+    sp = _edit_project(tmp_path, (0.0, 15.0))
+    res = select.run(sp, tmp_path / "none.json", tmp_path, title="片", material="/a.mp4")
+    shot = _shot(res, "S001")
+    assert (shot["start"], shot["end"]) == (0.0, 15.0) and shot["sub"] == "甲乙丙"
+
+
+# ---------------------------------------------------------------- 手改起止 × 指定原话
+def _edited_seg(base=(10, 16), edited=(13, 16), lines=None, text="前半句话说完。后半句话说完。"):
+    return seg2(1, edited[0], edited[1] - edited[0], "讲合同", text=text, lines=lines,
+                base_start=float(base[0]), base_end=float(base[1]), bounds_edited=True)
+
+
+LINES2 = [_line(10, 13, "前半句话说完。"), _line(13, 16, "后半句话说完。")]
+
+
+def test_must_line_inside_edited_bounds_is_forced_with_original_timecodes():
+    s = _edited_seg(lines=LINES2)
+    hits, notes = select_rules.resolve_must_lines(["后半句话说完"], [s])
+    assert [(h["start"], h["end"]) for h in hits] == [(13.0, 16.0)] and notes == []
+
+
+def test_must_line_trimmed_away_by_edit_is_not_forced_and_warns():
+    s = _edited_seg(lines=LINES2)
+    hits, notes = select_rules.resolve_must_lines(["前半句话说完"], [s])
+    assert hits == [] and notes == [select_rules.MUST_LINE_OUTSIDE_EDIT.format(line="前半句话说完", id="S001")]
+
+
+def test_must_line_partly_outside_edit_is_clamped_to_edited_bounds():
+    s = _edited_seg(edited=(11.0, 16.0), lines=[_line(10, 14, "前半句话说完。"), _line(14, 16, "后半句话说完。")])
+    hits, _ = select_rules.resolve_must_lines(["前半句话说完"], [s])
+    assert [(h["start"], h["end"]) for h in hits] == [(11.0, 14.0)]
+
+
+def test_must_line_without_lines_spreads_over_original_bounds_not_edited():
+    s = _edited_seg(lines=[], text="前半句话说完后半句话说完", edited=(13, 16))
+    hits, notes = select_rules.resolve_must_lines(["后半句话说完"], [s])
+    assert [(h["start"], h["end"]) for h in hits] == [(13.0, 16.0)] and notes == []
+    hits, notes = select_rules.resolve_must_lines(["前半句话说完"], [s])
+    assert hits == [] and "S001" in notes[0]
+
+
+def test_forced_shot_for_quote_never_starts_before_edited_start():
+    s = _edited_seg(lines=LINES2)
+    res = select.select([s], [{"name": "讲合同", "budget": 1}], {"must_lines": ["后半句话说完"]}, 1)
+    forced = [x for x in res["shots"] if x.get("forced")]
+    assert forced and all(x["start"] >= 13.0 and x["end"] <= 16.0 for x in forced)
+
+
+def test_unedited_segment_must_line_unchanged():
+    s = seg2(1, 10, 6, "讲合同", text="前半句话说完。后半句话说完。", lines=LINES2)
+    hits, _ = select_rules.resolve_must_lines(["前半句话说完"], [s])
+    assert [(h["start"], h["end"]) for h in hits] == [(10.0, 13.0)]
+
+
+def test_select_does_not_force_trimmed_away_quote_and_reports_warning():
+    s = _edited_seg(lines=LINES2)
+    res = select.select([s], [{"name": "讲合同", "budget": 60}], {"must_lines": ["前半句话说完"]}, 60)
+    assert all(x["start"] >= 13.0 for x in res["shots"])
+    assert any("S001" in w and "改过起止" in w for w in res["warnings"])
+
+
 # ---------------------------------------------------------------- KI-02：hook 不动、结尾按偏好
 ONE_TOPIC = [{"name": "讲合同", "budget": 60}]
 

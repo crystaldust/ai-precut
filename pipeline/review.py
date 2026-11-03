@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import threading
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ from pipeline import schema, visual_clips
 
 LEVELS = {1: "废片", 2: "待定", 3: "可用"}
 EXCLUSIVE = {"must_keep": "unusable", "unusable": "must_keep"}  # ⚑P9：剪辑列表与不可用互斥，后按的生效
+BOUNDS_FIELDS = ("start", "end")  # 手改的片段起止；锚点仍记原始分析起止
 BOOKKEEPING_FIELDS = {"at", "anchor"}  # 不算「人工裁决内容」的记账字段
 RELOCATE_MAX_SECONDS = 30.0  # 重定位只在锚点起点前后这么多秒内找同文句子；更远的当失效（「对。」这类短句到处都有）
 VISUAL_ANCHOR = "visual"  # 画面片段锚点的 text：不会与 12 位十六进制原文哈希撞
@@ -195,15 +197,20 @@ def check_batch(changes: object) -> list[dict]:
     return changes
 
 
-def _unset_level_in(data: dict, segment_id: str) -> dict:
-    """把一条裁决里的人工档位去掉；条目只剩记账字段就整条删（同 unset_level）。"""
+def _drop_fields_in(data: dict, segment_id: str, names: tuple[str, ...]) -> dict:
+    """把一条裁决里的指定字段去掉；条目只剩记账字段就整条删。没有这些字段 → 原样返回。"""
     item = data.get(segment_id)
-    if not isinstance(item, dict) or "level" not in item:
+    if not isinstance(item, dict) or not any(n in item for n in names):
         return data
-    rest = {k: v for k, v in item.items() if k != "level"}
+    rest = {k: v for k, v in item.items() if k not in names}
     if set(rest) <= BOOKKEEPING_FIELDS:
         return {k: v for k, v in data.items() if k != segment_id}
     return {**data, segment_id: {**rest, "at": _now()}}
+
+
+def _unset_level_in(data: dict, segment_id: str) -> dict:
+    """把一条裁决里的人工档位去掉；条目只剩记账字段就整条删（同 unset_level）。"""
+    return _drop_fields_in(data, segment_id, ("level",))
 
 
 def set_batch(workdir: Path, changes: list[dict]) -> tuple[dict, dict[str, str]]:
@@ -235,6 +242,21 @@ def set_batch(workdir: Path, changes: list[dict]) -> tuple[dict, dict[str, str]]
         return data, cleared
 
 
+def set_bounds(workdir: Path, segment_id: str, start: float, end: float,
+               *, must: bool = False) -> tuple[dict, str | None]:
+    """记下手改的起止（两位小数）；锚点仍是原始分析起止。must=True：同一次写里也放进剪辑列表（同 set_must）。
+
+    → (新裁决表, 被顺带清掉的标记名或 None)。must=False 不碰剪辑列表 / 不可用状态。
+    """
+    fields = {"start": round(float(start), 2), "end": round(float(end), 2), **({"must_keep": True} if must else {})}
+    return _write(workdir, segment_id, fields, EXCLUSIVE["must_keep"] if must else None)
+
+
+def clear_bounds(workdir: Path, segment_id: str) -> dict:
+    """撤销手改的起止（恢复分析给的起止），保留其它裁决；条目只剩 at / anchor 就整条删。"""
+    return _unset_fields(workdir, segment_id, BOUNDS_FIELDS)
+
+
 def set_must(workdir: Path, segment_id: str, flag: bool) -> dict:
     return _set_flag(workdir, segment_id, "must_keep", flag)[0]
 
@@ -249,23 +271,22 @@ def set_unusable(workdir: Path, segment_id: str, flag: bool) -> tuple[dict, str 
     return _set_flag(workdir, segment_id, "unusable", flag)
 
 
-def unset_level(workdir: Path, segment_id: str) -> dict:
-    """只撤销档位的人工修改，保留 must_keep / unusable；条目只剩 at / anchor 就整条删。"""
+def _unset_fields(workdir: Path, segment_id: str, names: tuple[str, ...]) -> dict:
+    """锁内撤销一条裁决里的指定字段（unset_level / clear_bounds 共用）；没有这些字段不写文件。"""
     with _LOCK:
         data = load(workdir)
         segments = _scored_segments(workdir)
         mapping = _resolve_keys(segments, data)[0] if segments else {}
         key = mapping.get(segment_id, segment_id)  # KI-85：界面给的是当前 id
-        item = data.get(key)
-        if not isinstance(item, dict) or "level" not in item:
-            return data
-        rest = {k: v for k, v in item.items() if k != "level"}
-        if set(rest) <= BOOKKEEPING_FIELDS:
-            data = {k: v for k, v in data.items() if k != key}
-        else:
-            data = {**data, key: {**rest, "at": _now()}}
-        _save(workdir, data)
-        return data
+        new = _drop_fields_in(data, key, names)
+        if new is not data:
+            _save(workdir, new)
+        return new
+
+
+def unset_level(workdir: Path, segment_id: str) -> dict:
+    """只撤销档位的人工修改，保留 must_keep / unusable；条目只剩 at / anchor 就整条删。"""
+    return _unset_fields(workdir, segment_id, ("level",))
 
 
 def clear(workdir: Path, segment_id: str | None = None) -> dict:
@@ -333,6 +354,23 @@ def stale_ids(segments: list[dict], overrides: dict) -> list[str]:
     return resolve(segments, overrides)[1]
 
 
+def finite_number(value: object) -> float | None:
+    """有限的数字（非 bool）→ float；其它、无穷、NaN、大到 float 装不下的整数 → None。"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def edited_bounds(ov: dict) -> tuple[float, float] | None:
+    """裁决里手改的起止；缺一个 / 不是有限数字 / 止不晚于起（手改文件写坏了）→ None，当没改。"""
+    start, end = finite_number(ov.get("start")), finite_number(ov.get("end"))
+    return (start, end) if start is not None and end is not None and end > start else None
+
+
 def apply(segments: list[dict], overrides: dict) -> list[dict]:
     """把人工修改合并进分析结果，保留原始判定在 base_level 里。裁决按锚点对到当前句子（KI-12）。"""
     resolved, _ = resolve(segments, overrides)
@@ -347,6 +385,11 @@ def apply(segments: list[dict], overrides: dict) -> list[dict]:
             item["override"] = True
         else:
             item["override"] = False
+        if "start" in seg and "end" in seg:  # 残缺的分析结果（缺起止）交给下游报人话错误，这里不能先抛 KeyError
+            edited = edited_bounds(ov)  # 重叠不拦；分析给的起止留在 base_*，锚点也认它们
+            item["base_start"], item["base_end"] = seg.get("base_start", seg["start"]), seg.get("base_end", seg["end"])
+            item["start"], item["end"] = edited or (item["base_start"], item["base_end"])
+            item["bounds_edited"] = edited is not None
         item["must_keep"] = bool(ov.get("must_keep", False))
         item["unusable"] = bool(ov.get("unusable", False))  # KI-93
         if item["must_keep"]:  # 剪辑列表按加入顺序排（D14）；旧裁决没有 must_at 就退回 at

@@ -97,6 +97,7 @@ function welcomeHtml(){
     <button class="primary big" data-act="openNew">${esc(COPY_WELCOME_NEW)}</button></div>`;
 }
 function renderView(){
+  closeStaleSegEdit();   // 换步骤 / 换项目 / 浏览状态被替换：③ 的编辑起止弹窗不能留着（segment-edit.js）
   const render = state.data ? STEP_VIEWS[state.view] : null;
   const html = state.data ? (render ? render() : '') : welcomeHtml();
   if(!stageIs(html)) setStage(html);  // 内容没变就不重画：分析页的 Key 输入框、滚动位置都不会被轮询打断

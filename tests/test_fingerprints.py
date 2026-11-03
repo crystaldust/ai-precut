@@ -202,3 +202,25 @@ def test_preview_inputs_track_title_platform_and_preset_file_content(tmp_path, m
     changed = fingerprints.preview_inputs(pdir, cfg)
     assert changed["preset"] != base["preset"]
     assert fingerprints.changed(base, changed) == ["preset"]
+
+
+def test_overrides_digest_without_bounds_is_byte_identical_to_before_bounds_existed(tmp_path):
+    _write(tmp_path / "overrides.json", {"S1": {"level": 3, "must_keep": True, "at": "t", "anchor": {"text": "a"}},
+                                         "S2": {"unusable": True}})
+    assert fingerprints.overrides_digest(tmp_path) == "55cabde0ca5a"  # 加起止编辑之前算出的值
+
+
+def test_overrides_digest_changes_with_edited_bounds_only(tmp_path):
+    _write(tmp_path / "overrides.json", {"S1": {"level": 3}})
+    plain = fingerprints.overrides_digest(tmp_path)
+    _write(tmp_path / "overrides.json", {"S1": {"level": 3, "start": 1.0, "end": 5.0}})
+    edited = fingerprints.overrides_digest(tmp_path)
+    _write(tmp_path / "overrides.json", {"S1": {"level": 3, "start": 1.0, "end": 6.0}})
+    assert edited != plain and fingerprints.overrides_digest(tmp_path) != edited
+
+
+def test_overrides_digest_bounds_only_entry_counts_and_half_bounds_do_not(tmp_path):
+    _write(tmp_path / "overrides.json", {"S1": {"start": 1.0, "end": 5.0, "at": "t"}})
+    assert fingerprints.overrides_digest(tmp_path) != fingerprints.overrides_digest(tmp_path / "none")
+    _write(tmp_path / "overrides.json", {"S1": {"start": 1.0, "at": "t"}})
+    assert fingerprints.overrides_digest(tmp_path) == fingerprints.overrides_digest(tmp_path / "none")

@@ -615,3 +615,34 @@ def test_in_cut_rule_is_shared():
     assert payloads.in_cut({"start": 8.5, "end": 12.0}, shot) is True         # 重叠 1.0 秒以上
     assert payloads.in_cut({"start": 9.5, "end": 12.0}, shot) is False        # 只重叠 0.5 秒且没整段落在里面
     assert payloads.in_cut({"start": 2.0, "end": 2.5}, shot) is True          # 短句整段落在里面
+
+
+# ---------------------------------------------------------------- 手改起止：未采用清单的镜头区间与字幕
+def _edited_unused(gs, bounds):
+    """S3（40~50）手改起止后看未采用清单里它的 shot；转写里 S2、S3、S4 各有两句分句。"""
+    pdir = _project(gs.root, manual=[{"id": "m1", "in": 20.0, "out": 30.0, "sub": "手加", "note": ""}])
+    lines = {"S2": [{"start": 20, "end": 25, "text": "二甲"}, {"start": 25, "end": 30, "text": "二乙"}],
+             "S3": [{"start": 40, "end": 45, "text": "三甲"}, {"start": 45, "end": 50, "text": "三乙"}],
+             "S4": [{"start": 60, "end": 65, "text": "四甲"}, {"start": 65, "end": 70, "text": "四乙"}]}
+    (pdir / "work" / "segments.json").write_text(json.dumps({"segments": [
+        {"id": k, "lines": v} for k, v in lines.items()]}, ensure_ascii=False), encoding="utf-8")
+    if bounds:
+        review.set_bounds(pdir / "work", "S3", *bounds)
+    _, data = _get(gs)
+    return next(u for u in data["unused"] if u["id"] == "S3")
+
+
+def test_unused_unedited_segment_unchanged(gui_server):
+    row = _edited_unused(gui_server, None)
+    assert row["shot"] == {"in": 40.0, "out": 50.0, "sub": "原文3"}
+
+
+def test_unused_edited_trim_uses_edited_range_and_trimmed_sub(gui_server):
+    row = _edited_unused(gui_server, (40.0, 45.0))
+    assert (row["start"], row["end"]) == (40.0, 45.0)
+    assert row["shot"] == {"in": 40.0, "out": 45.0, "sub": "三甲"}
+
+
+def test_unused_edited_extend_picks_up_neighbour_words(gui_server):
+    row = _edited_unused(gui_server, (40.0, 70.0))
+    assert row["shot"]["sub"] == "三甲三乙四甲四乙"

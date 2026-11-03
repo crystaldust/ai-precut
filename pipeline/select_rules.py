@@ -23,6 +23,7 @@ MUST_LINE_MIN_CHARS = 4      # 逗号碎片少于这么多字就太容易误中�
 MUST_LINE_SHOWN_CHARS = 12   # 警告里引用原话最多几个字
 MUST_LINE_NOT_FOUND = "指定必须保留的原话「{line}」在转写里找不到，没能进片：检查是否和原话一字不差（可能被分成了两句）"
 MUST_LINE_FRAGMENT_SHORT = "指定原话片段「{line}」太短（少于 {n} 字），已忽略：请写成完整的一句"
+MUST_LINE_OUTSIDE_EDIT = "指定原话「{line}」在你改过起止的片段 {id} 之外，未强制放入"
 MUST_LINE_MIN_WHOLE = 2      # 整句原话至少几个字：单字（「对」）几乎每句都有，没法可靠定位
 MUST_LINE_WHOLE_SHORT = "指定原话「{line}」太短（少于 {n} 字），没法可靠定位，已忽略：请写成完整的一句"
 
@@ -160,7 +161,8 @@ def _bare(text: str) -> str:
 
 def _span(seg: dict, a: int, b: int) -> tuple[float, float]:
     """原话在去标点原文里的字符区间 [a, b) → 时间区间：有分句时间码取覆盖到的分句，否则按字数比例。"""
-    s0, s1 = float(seg["start"]), float(seg["end"])
+    s0 = float(seg.get("base_start", seg["start"]))  # 手改过起止：分句时间码和字数比例都对着分析给的原句
+    s1 = float(seg.get("base_end", seg["end"]))
     lines = [x for x in seg.get("lines") or [] if isinstance(x, dict)]
     try:
         bare = [(_bare(str(x.get("text") or "")), float(x["start"]), float(x["end"])) for x in lines]
@@ -179,10 +181,15 @@ def _span(seg: dict, a: int, b: int) -> tuple[float, float]:
 
 
 def _first_hit(needle: str, quote: str, segments: list[dict]) -> dict | None:
+    """原话在哪句、什么时间。句子手改过起止：命中范围夹在手改起止内；完全在外 → {"outside": True, ...}（不强制）。"""
     for seg in segments:
         a = _bare(seg.get("text") or "").find(needle)
         if a >= 0:
             start, end = _span(seg, a, a + len(needle))
+            if seg.get("bounds_edited"):
+                start, end = max(start, float(seg["start"])), min(end, float(seg["end"]))
+                if end <= start:
+                    return {"id": seg["id"], "line": quote, "outside": True}
             return {"id": seg["id"], "line": quote, "start": start, "end": end}
     return None
 
@@ -202,6 +209,9 @@ def resolve_must_lines(quotes: list[str], segments: list[dict]) -> tuple[list[di
             notes.append(MUST_LINE_WHOLE_SHORT.format(line=quote, n=MUST_LINE_MIN_WHOLE))
             continue
         hit = _first_hit(_bare(quote), quote, ordered)
+        if hit and hit.get("outside"):
+            notes.append(MUST_LINE_OUTSIDE_EDIT.format(line=quote[:MUST_LINE_SHOWN_CHARS], id=hit["id"]))
+            continue
         if hit:
             hits.append(hit)
             continue
@@ -213,7 +223,10 @@ def resolve_must_lines(quotes: list[str], segments: list[dict]) -> tuple[list[di
                 notes.append(MUST_LINE_FRAGMENT_SHORT.format(line=frag, n=MUST_LINE_MIN_CHARS))
                 continue
             frag_hit = _first_hit(_bare(frag), frag, ordered)
-            if frag_hit:
+            if frag_hit and frag_hit.get("outside"):
+                notes.append(MUST_LINE_OUTSIDE_EDIT.format(line=frag[:MUST_LINE_SHOWN_CHARS], id=frag_hit["id"]))
+                found = True
+            elif frag_hit:
                 hits.append(frag_hit)
                 found = True
             else:
