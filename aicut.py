@@ -172,7 +172,7 @@ def prepare_need(pdir: Path) -> int:
     material = c["material"]
     wav = not media_io.complete_or_adopt(pdir / "work/audio/asr.wav", source=material)
     proxy = not media_io.complete_or_adopt(pdir / "work/proxy.mp4", source=material)
-    shots = vision.is_on(c) and not vision_run.timeline_current(pdir / "work", c)
+    shots = vision.is_on(c) and not vision_run.reusable(pdir / "work", c)
     media_s = media_io.duration_or_zero(Path(material)) if wav or proxy or shots else 0.0
     return diskspace.need_for_prepare(media_s, wav=wav, proxy=proxy, vision=shots)
 
@@ -389,7 +389,7 @@ def cmd_vision(args) -> None:
     proxy = work / "proxy.mp4"
     if not media_io.complete_or_adopt(proxy, source=c["material"]):
         die("先跑 junk（需要 work/proxy.mp4）")
-    if not vision_run.timeline_current(work, c):
+    if not vision_run.current_or_adopt(work, c):  # 改版前付过费的结果先认回，不再要 Key、不上传
         require_consent()
         if not secrets.get("mediakit"):
             die("未配置 MEDIAKIT_API_KEY：运行 `uv run python aicut.py config set mediakit`")

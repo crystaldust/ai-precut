@@ -384,3 +384,110 @@ def test_timeline_not_current_without_proxy(work):
     go(work, FakeClient())
     (work / "proxy.mp4").unlink()
     assert not vision_run.timeline_current(work, ON)
+
+
+# ---------------------------------------------------------------- 认回旧版指纹（43bc555 之前：大小 + 修改时间）
+def old_key(proxy, tier="economy"):
+    """43bc555 之前的 run_key，原样复刻（不调被测代码）。"""
+    import hashlib
+    st = Path(proxy).stat()
+    raw = json.dumps({"size": st.st_size, "mtime_ns": st.st_mtime_ns, "tier": tier,
+                      "prompt": vision.PROMPT_VERSION, "chunk_s": vision.CHUNK_S}, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def rekey(path, key):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**data, "key": key}, ensure_ascii=False), encoding="utf-8")
+
+
+def as_old_project(work):
+    """把一次完整结果的所有指纹改回旧版公式，模拟改版前付过费的项目。"""
+    legacy = old_key(work / "proxy.mp4")
+    for p in [work / vision_run.TIMELINE_FILE, *(work / "vision").glob("*.json")]:
+        if p.exists():
+            rekey(p, legacy)
+    return legacy
+
+
+def test_old_timeline_is_adopted_without_upload(work, capsys):
+    go(work, FakeClient())
+    new = timeline(work)["key"]
+    as_old_project(work)
+    assert not vision_run.timeline_current(work, ON)   # 只读判断不改盘：② 先显示需要更新
+    capsys.readouterr()
+    c = FakeClient()
+    go(work, c)
+    assert c.uploads == [] and c.submits == [] and c.waits == []
+    assert vision_run.ADOPTED in capsys.readouterr().out
+    assert timeline(work)["key"] == new and vision_run.timeline_current(work, ON)
+    state = json.loads((work / "vision" / "state.json").read_text(encoding="utf-8"))
+    assert state["key"] == new
+
+
+def test_old_timeline_with_changed_mtime_is_not_adopted(work):
+    go(work, FakeClient())
+    as_old_project(work)
+    proxy = work / "proxy.mp4"
+    st = proxy.stat()
+    os.utime(proxy, ns=(st.st_atime_ns, st.st_mtime_ns - 10**9))
+    assert not vision_run.current_or_adopt(work, ON)
+    c = FakeClient()
+    go(work, c)
+    assert len(c.submits) == 2
+
+
+def test_half_done_old_run_resumes_only_missing_chunks(work):
+    c = FakeClient(wait_error={1: cloud.CloudError("超时", retryable=True)})
+    with pytest.raises(cloud.CloudError):
+        go(work, c)
+    task = json.loads((work / "vision" / "state.json").read_text(encoding="utf-8"))["chunks"]["1"]["task_id"]
+    as_old_project(work)
+    c2 = FakeClient()
+    go(work, c2)
+    assert c2.uploads == [] and c2.submits == [] and c2.waits == [task]
+
+
+def test_adoption_leaves_files_with_other_keys_alone(work):
+    go(work, FakeClient())
+    as_old_project(work)
+    (work / vision_run.TIMELINE_FILE).unlink()         # 没跑完：只剩段结果
+    rekey(work / "vision" / "chunk_001.json", "someotherkey0000")
+    c = FakeClient()
+    go(work, c)
+    assert len(c.submits) == 1                         # 段 1 不是旧版指纹：照常重做
+
+
+def test_current_or_adopt_adopts_before_cli_asks_for_key(work):
+    go(work, FakeClient())
+    as_old_project(work)
+    assert vision_run.current_or_adopt(work, ON) is True
+    assert vision_run.timeline_current(work, ON)
+
+
+def test_current_or_adopt_off_or_without_proxy_is_false(work):
+    assert vision_run.current_or_adopt(work, {}) is False
+    (work / "proxy.mp4").unlink()
+    assert vision_run.current_or_adopt(work, ON) is False
+
+
+def test_reusable_is_read_only_and_sees_old_timeline(work):
+    go(work, FakeClient())
+    as_old_project(work)
+    before = (work / vision_run.TIMELINE_FILE).read_text(encoding="utf-8")
+    assert vision_run.reusable(work, ON) is True and not vision_run.timeline_current(work, ON)
+    assert (work / vision_run.TIMELINE_FILE).read_text(encoding="utf-8") == before
+    assert vision_run.reusable(work, {}) is False
+    proxy = work / "proxy.mp4"
+    st = proxy.stat()
+    os.utime(proxy, ns=(st.st_atime_ns, st.st_mtime_ns - 10**9))
+    assert vision_run.reusable(work, ON) is False
+
+
+def test_readiness_does_not_ask_for_mediakit_key_for_adoptable_project(work):
+    from pipeline import readiness
+    go(work, FakeClient())
+    as_old_project(work)
+    (work / readiness.TRANSCRIPT_RAW).parent.mkdir(parents=True, exist_ok=True)
+    (work / readiness.TRANSCRIPT_RAW).write_text("{}", encoding="utf-8")
+    assert readiness.needed_keys(work, ON) == ["deepseek"]

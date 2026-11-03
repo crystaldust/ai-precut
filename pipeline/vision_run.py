@@ -48,6 +48,7 @@ CHUNK_DONE = "[·] 画面理解：第 {n}/{total} 段完成"
 CHUNK_RESUME = "[·] 画面理解：第 {n} 段续查上次的任务"
 USAGE_FAILED = "[!] 画面理解用量没记上（{exc}）"
 LOCAL_IO_FAILED = "第 {n} 段（{span}）的本地文件读写失败（{kind}）：检查磁盘空间和项目目录权限后重试"
+ADOPTED = "[·] 画面理解：沿用改版前已付费的结果（浏览小样没变，不重新上传）"
 UPLOAD_STALE = "[·] 云端已不认第 {n} 段上次上传的画面，重新上传"
 
 
@@ -104,6 +105,39 @@ def run_key(proxy: Path, setting: dict) -> str | None:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _legacy_key(proxy: Path, setting: dict) -> str | None:
+    """43bc555 之前的指纹（浏览小样大小 + 修改时间）：只用来认回改版前付过费的结果。"""
+    try:
+        st = Path(proxy).stat()
+    except OSError:
+        return None
+    raw = json.dumps({"size": st.st_size, "mtime_ns": st.st_mtime_ns, "tier": setting["tier"],
+                      "prompt": vision.PROMPT_VERSION, "chunk_s": vision.CHUNK_S}, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _adopt_legacy(work: Path, proxy: Path, setting: dict, key: str) -> bool:
+    """改版前的时间轴 / 状态 / 段结果，指纹是旧公式且浏览小样没变（修改时间也没变）→ 改记新指纹。
+
+    旧指纹已含档位、提示词版本与段长，对上就说明这些也没变。只改指纹等于旧公式的文件；
+    复制过、修改时间丢了的项目认不回（旧指纹本身依赖修改时间）。→ 有没有改动。
+    """
+    legacy = _legacy_key(proxy, setting)
+    if legacy is None or legacy == key:
+        return False
+    vdir = work / VISION_DIR
+    paths = [work / TIMELINE_FILE, vdir / STATE_FILE, *sorted(vdir.glob("chunk_*.json"))]
+    adopted = False
+    for path in paths:
+        data = _read(path)
+        if data is not None and data.get("key") == legacy:
+            schema.write_json(path, {**data, "key": key})
+            adopted = True
+    if adopted:
+        print(ADOPTED)
+    return adopted
+
+
 def _read(path: Path) -> dict | None:
     try:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -123,6 +157,28 @@ def timeline_current(work: Path, cfg: dict) -> bool:
     return key is not None and tl is not None and isinstance(tl.get("events"), list) \
         and (tl.get("setting") or {}).get("tier") == setting["tier"] \
         and tl.get("prompt_version") == vision.PROMPT_VERSION and tl.get("key") == key
+
+
+def reusable(work: Path, cfg: dict) -> bool:
+    """只读：时间轴是当前的，或是改版前的旧指纹且浏览小样没变（分析时会认回，不用上传、不要 Key）。"""
+    if timeline_current(work, cfg):
+        return True
+    setting = vision.normalize(cfg.get("vision"))
+    if not setting["enabled"]:
+        return False
+    tl = _read(Path(work) / TIMELINE_FILE)
+    legacy = _legacy_key(_proxy(work), setting)
+    return legacy is not None and tl is not None and isinstance(tl.get("events"), list) \
+        and tl.get("key") == legacy and legacy != run_key(_proxy(work), setting)
+
+
+def current_or_adopt(work: Path, cfg: dict) -> bool:
+    """同 timeline_current，但先认回改版前的旧指纹结果（会改盘：只在真要跑分析时调用，轮询用 timeline_current）。"""
+    setting = vision.normalize(cfg.get("vision"))
+    key = run_key(_proxy(work), setting) if setting["enabled"] else None
+    if key is not None:
+        _adopt_legacy(Path(work), _proxy(work), setting, key)
+    return timeline_current(work, cfg)
 
 
 def chunks_ready(work: Path, cfg: dict) -> bool:
@@ -359,10 +415,12 @@ def run(work: Path, cfg: dict, proxy: Path, *, client_factory: Callable = cloud.
     if not setting["enabled"]:
         return {"skipped": True}
     work = Path(work)
+    key = run_key(proxy, setting)
+    if key is not None:
+        _adopt_legacy(work, Path(proxy), setting, key)
     if timeline_current(work, cfg):
         return _read(work / TIMELINE_FILE) or {}
     duration = media_io.duration_or_zero(proxy)
-    key = run_key(proxy, setting)
     if duration <= 0 or key is None:
         raise VisionError(NO_DURATION)
     chunks = vision_proxy.plan_chunks(duration)

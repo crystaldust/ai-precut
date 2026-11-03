@@ -45,7 +45,7 @@ def needed_keys(work: Path, cfg: dict | None = None) -> list[str]:
     """cfg 是 project.json（看画面理解开关）；不给按没开。"""
     transcribed = (Path(work) / TRANSCRIPT_RAW).exists()
     vision_pending = cfg is not None and vision.is_on(cfg) \
-        and not vision_run.timeline_current(work, cfg)
+        and not vision_run.reusable(work, cfg)  # 改版前付过费、可认回的不算还要上传
     need = [] if transcribed and not vision_pending else ["mediakit"]
     return [*need, "deepseek"]
 
