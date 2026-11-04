@@ -158,6 +158,7 @@ function shotRowHtml(s, i, r, locked){
 }
 function tableHtml(r, locked){
   const dis = locked ? ' disabled' : '';
+  if(!state.shots.length && isSimple()) return simpleEmptyHtml();
   if(!state.shots.length) return `<div class="empty">${esc(COPY_SHOTS_EMPTY)}<br><span class="hint">${esc(COPY_SHOTS_EMPTY_HINT)}</span><br><br>
     <button class="primary" data-act="go" data-step="browse">${esc(COPY_GO_BROWSE)}</button>
     <button class="ghost" data-act="addBlank"${dis}>${esc(COPY_BLANK_EMPTY)}</button></div>`;

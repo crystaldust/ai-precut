@@ -56,7 +56,7 @@ function targetSavedNote(wiz, changed, plain = COPY_SETTINGS_SAVED){
   return changed && stale ? COPY_TARGET_SAVED_STALE : plain;
 }
 /* ---------------- 剪辑偏好字段（新建与项目设置共用，prefix 区分 id） ---------------- */
-function prefsFieldsHtml(prefix, cal){
+function prefsFieldsHtml(prefix, cal, mode){
   const tone = cal.tone || DEFAULT_TONE;
   const options = [['info', COPY_TONE_INFO], ['emotion', COPY_TONE_EMOTION],
                    ...(tone === 'balanced' ? [['balanced', COPY_TONE_BALANCED_LEGACY]] : [])];
@@ -65,7 +65,7 @@ function prefsFieldsHtml(prefix, cal){
   return `<div class="field"><label>${esc(COPY_TONE_LABEL)}</label><div class="radios">${radios}</div></div>
     <div class="field"><label>${esc(COPY_AUDIENCE)}</label>
       <input id="${prefix}Audience" placeholder="${esc(COPY_AUDIENCE_PLACEHOLDER)}" value="${esc(cal.audience || '')}"></div>
-    <div class="field"><label>${esc(COPY_MUST_LINES)}</label>
+    <div class="field" id="${prefix}MustField"${mode === 'simple' ? ' hidden' : ''}><label>${esc(COPY_MUST_LINES)}</label>
       <textarea id="${prefix}Must" rows="3">${esc(cal.must_lines || '')}</textarea>
       <div class="hint">${esc(COPY_MUST_LINES_HINT)}</div></div>`;
 }
@@ -102,7 +102,8 @@ async function openNew(){
       <select id="npPreset" data-change="syncTarget">${presets.map(p=>`<option value="${esc(p.key)}">${esc(p.name)} · ${esc(p.platform)}</option>`).join('')}</select>
       ${presetWarningsHtml(warnings)}
     </div>
-    <details class="prefs" id="npPrefs"><summary>${esc(COPY_NEW_SECTION_PREFS)}</summary>${prefsFieldsHtml('np', {tone: DEFAULT_TONE})}</details>
+    ${modeFieldHtml('np', NEW_PROJECT_MODE)}
+    <details class="prefs" id="npPrefs"><summary id="npPrefsTitle">${esc(prefsTitle('np', NEW_PROJECT_MODE))}</summary>${prefsFieldsHtml('np', {tone: DEFAULT_TONE}, NEW_PROJECT_MODE)}</details>
     <p class="hint">${esc(COPY_CREATE_HINT)}</p>
     <button class="primary" data-act="createProject">${esc(COPY_CREATE)}</button>
     <button class="ghost" data-act="closeModal">${esc(COPY_CANCEL)}</button>`);
@@ -137,7 +138,7 @@ async function createProject(){
   if(button) button.disabled = true;
   try{
     try{
-      await postJson('/api/new', {material, name, title, preset, target, calibration});
+      await postJson('/api/new', {material, name, title, preset, target, calibration, mode: readMode('np', NEW_PROJECT_MODE)});
     }catch(e){ toast(e.message, TOAST_ERROR_MS); return; }  // 创建失败：弹窗不关，不起任务
     closeModal();
     try{ await loadProjects(); }  // KI-57：只切到刚建的项目，不再按地址栏 hash 抢着切别的
@@ -165,8 +166,9 @@ async function openProjectSettings(){
     <div class="field"><label>${esc(COPY_NEW_TARGET_LABEL)}</label>${durationFields('ps', num(cfg.target_duration) || DEFAULT_TARGET_SEC)}</div>
     <div class="field"><label>片名（会显示在剪映草稿上）</label><input id="psTitle" value="${esc(cfg.title || '')}"></div>
     <div class="field"><label>风格预设</label><select id="psPreset">${options}</select>${presetWarningsHtml(warnings)}</div>
-    <h3>${esc(COPY_SETTINGS_PREFS_TITLE)}</h3>
-    ${prefsFieldsHtml('ps', cal)}
+    ${modeFieldHtml('ps', modeOf(), currentBusy())}
+    <h3 id="psPrefsTitle">${esc(prefsTitle('ps', modeOf()))}</h3>
+    ${prefsFieldsHtml('ps', cal, modeOf())}
     <p class="hint">${esc(COPY_SETTINGS_NOTE)}</p>
     <button class="primary" data-act="saveProjectSettings">${esc(COPY_SETTINGS_SAVE)}</button>
     <button class="ghost" data-act="closeModal">${esc(COPY_CANCEL)}</button>`);
@@ -179,18 +181,27 @@ async function saveProjectSettings(){
   if(!target){ toast(COPY_TARGET_RANGE); return; }
   const was = Math.round(num(state.data?.project?.target_duration)) || DEFAULT_TARGET_SEC;
   const changed = target !== was;  // 没改就不带 target：不打扰进行中的任务
+  const mode = readMode('ps', modeOf()), modeChanged = mode !== modeOf(), viewBefore = state.view;  // 同理：模式没改就不带
   let r;
   try{
     r = await postJson('/api/project/settings', {project, title: $('#psTitle').value.trim(),
                                                   preset: $('#psPreset').value, calibration,
-                                                  ...(changed ? {target} : {})});
+                                                  ...(changed ? {target} : {}), ...(modeChanged ? {mode} : {})});
   }catch(e){ toast(e.message, TOAST_ERROR_MS); return; }
   if(project !== state.project){ closeModal(); return; }  // 保存期间切走了项目：不把别人的状态画进当前页面
+  const nextView = resolveView(r.wizard, state.view);  // 当前页若因此不可用了，和刷新一样回到下一步
+  if(nextView !== state.view){   // 走和 go() 一样的离开流程：⑤ 的表先落盘、④ 的草稿先存
+    await leaveView(nextView, true);
+    if(project !== state.project){ closeModal(); return; }
+  }
   state.data = {...state.data, project: r.project, wizard: r.wizard};  // ② 可能因此变成「需要更新」
-  state.view = resolveView(r.wizard, state.view);  // 当前页若因此不可用了，和刷新一样回到下一步
-  closeModal(); renderChrome(); renderView(); toast(targetSavedNote(r.wizard, changed));
+  state.view = nextView;
+  const saved = targetSavedNote(r.wizard, changed);
+  closeModal(); renderChrome(); renderView(); toast(modeChanged ? settingsSavedNote(saved) : saved);
   if(changed && state.view === 'browse') resyncBrowse();  // ③ 的剪辑列表面板显示的目标要跟着变
   loadProjects().catch(e=>toast(e.message, TOAST_ERROR_MS));
+  if(modeChanged) await afterModeChanged(project, viewBefore);
+  else if(state.view !== viewBefore && ENTER_HOOKS[state.view]) ENTER_HOOKS[state.view]();   // 被带到别的步骤 = 进入它
 }
 
 Object.assign(ACTIONS, {

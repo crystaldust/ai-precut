@@ -16,7 +16,7 @@ const STEP_VIEWS = {
   analyze: ()=>viewAnalyze(), browse: ()=>viewBrowse(), criteria: ()=>viewCriteria(),
   result: ()=>viewResult(), export: ()=>viewExport(),
 };
-const ENTER_HOOKS = {analyze: ()=>enterAnalyze(), browse: ()=>enterBrowse(), criteria: ()=>enterCriteria(), result: ()=>enterResult(), export: ()=>enterExport()};
+const ENTER_HOOKS = {analyze: ()=>enterAnalyze(), browse: ()=>enterBrowse(), criteria: ()=>enterCriteria(), result: opts=>enterResult(opts), export: ()=>enterExport()};
 
 /* ---------------- 项目 ---------------- */
 async function selectProject(name){
@@ -51,7 +51,7 @@ let stateSeq = 0;
 // 当前页面看的步骤若在新的 wizard 里不可用（或还没有）→ 去 wizard.next；刷新与保存项目设置共用
 function resolveView(wizard, viewing){
   const step = wizard.steps.find(s => s.key === viewing);
-  return !step || step.status === 'locked' ? wizard.next : viewing;
+  return !step || step.status === 'locked' || step.status === 'skipped' ? wizard.next : viewing;
 }
 async function refresh(name=state.project){
   if(!name) return;
@@ -110,16 +110,29 @@ async function go(key){
   const step = stepOf(key);
   if(!step || !state.data) return;
   if(step.status === 'locked'){ toast(step.hint || ''); return; }
+  if(step.status === 'skipped'){ toast(step.hint || ''); return; }  // 简单模式的 ④
   if(key === 'export' && !exportDoorOpen()){ toast(COPY_EXPORT_NEED_PREVIEW); return; }  // 本地刚改过表时服务端的步骤状态还没更新
-  if(state.view === 'export' && key !== 'export') leaveExport();  // 对比里的视频先停
-  if(state.view === 'result' && key !== 'result'){ await flushPendingSave(); leaveResult(); }  // 离开 ⑤ 前分镜表改动先落盘，在途的 ⑤ 回包作废
-  if(state.view === 'criteria' && key !== 'criteria' && !await flushCriteriaDraft()){ criteriaDraftBlocked(); return; }  // 离开 ④ 前答案草稿先落盘；存不上就留在这里
-  if(state.view === 'analyze' && key !== 'analyze') stopAnalysisPoll();
+  const again = state.view === key;   // 点的就是当前这一步：重画 / 重读，但不算「进入」（不自动重新选段）
+  if(!await leaveView(key)) return;
   state.view = key;
   renderChrome();
   renderView();
   const enter = ENTER_HOOKS[key];
-  if(enter) enter();
+  if(enter) enter({again});
+}
+// 离开当前页前的收尾（go 和保存项目设置共用）。force：页面已经不可用，存不上草稿也要离开（提示丢了草稿）；否则返回 false = 留在原页
+async function leaveView(key, force = false){
+  if(state.view === 'export' && key !== 'export') leaveExport();  // 对比里的视频先停
+  if(state.view === 'result' && key !== 'result'){ await flushPendingSave(); leaveResult(); }  // 离开 ⑤ 前分镜表改动先落盘，在途的 ⑤ 回包作废
+  if(state.view === 'criteria' && key !== 'criteria'){  // 离开 ④ 前答案草稿先落盘；存不上就留在这里
+    const draft = crit();
+    if(!await flushCriteriaDraft()){
+      if(!force){ criteriaDraftBlocked(); return false; }
+      if(draft) criteriaDraftLost(draft);
+    }
+  }
+  if(state.view === 'analyze' && key !== 'analyze') stopAnalysisPoll();
+  return true;
 }
 
 /* ---------------- 分镜表保存队列 ---------------- */
