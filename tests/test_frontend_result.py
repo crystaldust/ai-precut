@@ -40,7 +40,7 @@ def test_top_bar_numbers_are_sanitised_through_num():
 
 def test_over_target_shows_warning_with_suggested_target_button():
     top = in_result("return el('#rTop').innerHTML;", result={"topbar": OVER})
-    assert "剪辑列表共 3 分 40 秒，超过目标 3 分 0 秒 · 建议改为 3 分 40 秒" in text_of(top)
+    assert "剪辑列表共 3 分 40 秒，超过目标 3 分 0 秒，AI 不再补镜头 · 建议改为 3 分 40 秒" in text_of(top)
     assert 'data-act="applySuggested"' in top and "改为 3 分 40 秒" in text_of(top)
 
 
