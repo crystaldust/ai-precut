@@ -109,6 +109,7 @@ def test_remedy_text_windows(gui_server, static_copy, win_platform):
     _, body, _ = call(gui_server, "GET", "/")
     t = body.decode()
     assert "全部提取" in t and "隔离区" in t and "截图发给开发" in t
+    assert "两层" not in t and "拖" in t and "里面还有" in t
     assert "AI粗剪.app" not in t
 
 
