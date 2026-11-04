@@ -96,6 +96,8 @@ Xcode Command Line Tools、`pkg-config` 与 `cmake`，用户机器不需要；�
 - `首次打开说明-Windows.txt`（SmartScreen「更多信息 → 仍要运行」、WebView2 安装方式）；
 - `licenses/`、`sources/`（LGPL 许可全文与对应源码）。
 
+**解压与安装自检**：GitHub Actions 的 artifact 是 zip 套 zip（外层里是 `ai-cut-windows-x64-*.zip`），里外两层都要「全部提取」；从压缩包预览里直接拖文件夹会漏文件（曾出现 `simple-mode.js` 缺失，前端报 `modeFieldHtml is not defined`）。启动时 `gui/server.py` 用 `gui/static_files.missing_static()` 核对白名单静态文件，缺了就在日志里记一行错误；已通过 cookie 的页面请求改发「安装不完整」说明页（`gui/install_page.py`，列出缺失文件名与按平台区分的补救步骤），静态资源仍是 404，未带 cookie 的请求仍是 403 门页、不泄露文件名。
+
 **Windows 差异**：Key 存 Windows 凭据管理器；日志 `%LOCALAPPDATA%\剪辑台\logs`；项目目录 `文档\AI粗剪`；任务进程树用 Job Object，关窗口 / 取消不留孤儿进程。
 
 **Windows 已知限制**：未签名（SmartScreen 拦一次）；仅 x64（无 ARM64）；只出 zip，暂无安装程序；需要 WebView2 运行时（Windows 11 自带）；不含自动更新；剪映版本号读取与兼容提示在 Windows 上不出。
