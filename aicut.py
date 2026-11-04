@@ -37,7 +37,7 @@ from pipeline import (applog, build_documentary, classify, cloud, consent, disks
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
                       select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
                       usage, vision, vision_align, vision_run)
-from pipeline import brief, cli_args, clips, config_cli, custom_rules, export_flow, fingerprints, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
+from pipeline import brief, cli_args, clips, config_cli, custom_rules, export_flow, fingerprints, mode, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
 from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
 from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
 from pipeline.prompts import ask_calibration, ask_target  # noqa: E402,F401 - 测试按 aicut.<名> 打桩
@@ -221,7 +221,8 @@ def cmd_new(args) -> None:
         target_duration=target,
         created=time.strftime("%Y-%m-%d %H:%M:%S"),
         calibration=calibration,
-        vision=_vision_setting(getattr(args, "vision", "off")),
+        vision=vision.from_choice(getattr(args, "vision", "off")),
+        mode=mode.check(getattr(args, "mode", None) or mode.DEFAULT),
     )
     created = not pdir.exists()
     pdir.mkdir(parents=True, exist_ok=True)
@@ -235,13 +236,6 @@ def cmd_new(args) -> None:
         raise
     ok(f"项目已创建：{pdir}")
     info(f"下一步：python3 aicut.py run {args.name}")
-
-
-def _vision_setting(choice: str | None) -> dict:
-    """--vision off|economy|balanced|quality → project.json 的 vision 字段。"""
-    if choice in vision.TIERS:
-        return {"enabled": True, "tier": choice}
-    return dict(vision.DEFAULT)
 
 
 def cmd_ingest(args) -> None:
@@ -545,18 +539,19 @@ def cmd_select(args) -> None:
         die("先跑 score")
     c = cfg(pdir)
     new_target = None
-    if getattr(args, "target", None) is not None:  # prepare 透传的 args 没有 target
+    if getattr(args, "target", None) is not None and not mode.is_simple(c):  # prepare 透传的 args 没有 target；简单模式没有目标时长
         check_or_die(schema.check_target_duration, args.target)
         new_target = schema.check_target_duration(args.target)
         c = {**c, "target_duration": new_target}
-    custom = _interpret_custom(work)
+    custom = None if mode.is_simple(c) else _interpret_custom(work)  # 简单模式不看自定义想法，也不调 AI
     try:
         res = select.run(work / "segments_scored.json", work / "brief_answers.json", work,
                          questions_path=work / "questions.json",
                          title=c.get("title", args.name), material=c["material"],
                          weights=style.weights(c.get("calibration")),
                          calibration=c.get("calibration"),
-                         target=float(c.get("target_duration") or 175), custom=custom)
+                         target=float(c.get("target_duration") or 175), custom=custom,
+                         mode=mode.normalize(c.get("mode")))
     except select.SelectionError as exc:
         die(str(exc))
     if new_target is not None:  # 选段成功后才保存新目标；加锁读改写，不覆盖别人刚改的字段（KI-51）
@@ -576,7 +571,7 @@ def cmd_select(args) -> None:
 
 def _report_selection(res: dict, name: str) -> None:
     missing, must_n = res["missing_must_topics"], res["stats"].get("must_keep", 0)
-    ok(f"选段 {res['stats']['shots']} 镜 · {res['total']:.0f}s / 目标 {res['target']:.0f}s"
+    ok(f"选段 {res['stats']['shots']} 镜 · {res['total']:.0f}s" + ("" if res.get("mode") else f" / 目标 {res['target']:.0f}s")
        + (f" · 剪辑列表 {must_n} 段" if must_n else "")
        + (f" · 未覆盖必留话题 {len(missing)}" if missing else ""))
     if res.get("over_target"):

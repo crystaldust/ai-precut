@@ -12,7 +12,7 @@ from pathlib import Path
 
 from gui import jianying, jobs, wizard
 from pipeline import (
-    exclusions, fingerprints, media_io, notices, outputs, plat, proc, review, schema, select, shots_store, usage,
+    exclusions, fingerprints, media_io, mode, notices, outputs, plat, proc, review, schema, select, shots_store, usage,
 )
 
 PRESET_CORRUPT_MSG = "已跳过预设「{name}」：{reason}"
@@ -80,7 +80,7 @@ def project_state(pdir: Path, name: str) -> dict:
     inputs = fingerprints.preview_inputs(pdir, cfg)  # 一次请求只算一遍：版本卡片、预览状态、步骤状态共用
     preview = outputs.preview_state(pdir, cfg, inputs)
     return {
-        "project": cfg,
+        "project": {**cfg, "mode": mode.normalize(cfg.get("mode"))},  # 旧项目没存 mode：按完整模式给界面
         "versions": _versions(pdir, cfg, name, inputs),
         "segments": jload(work / "segments.json", {}).get("segments", []),
         # 没有手存分镜表时用选段结果预填；有就不覆盖（M2）

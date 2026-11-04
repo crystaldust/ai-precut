@@ -13,7 +13,7 @@ from typing import Callable
 
 from gui import analysis, confirm, jobs, payloads, wizard
 from pipeline import (
-    applog, exclusions, fingerprints, project_lock, review, schema, select_rules, shots_store, style, topic_names,
+    applog, exclusions, fingerprints, mode, project_lock, review, schema, select_rules, shots_store, style, topic_names,
     vision, visual_clips,
 )
 
@@ -46,6 +46,7 @@ BAD_CALIBRATION_FIELD_MSG = "剪辑偏好里的 {field} 必须是文字，且不
 UNKNOWN_PRESET_MSG = "未知预设：{preset}"
 NOTHING_TO_CHANGE_MSG = "没有要修改的内容"
 TARGET_BUSY_MSG = "正在处理这个项目，完成后再改时长"  # 选段任务会在结束时写 project.json，并发改会被覆盖
+MODE_BUSY_MSG = "正在处理这个项目，停止或完成后再改出片模式"  # 选段任务按开始时的模式写结果，并发改会对不上
 VISION_BUSY_MSG = "正在处理这个项目，停止或完成后再改画面理解"  # 分析开始时取的设置要和它写的戳一致；选段等其它任务也拦（保守）
 TOPIC_ARGS_MSG = "name 和 display 都必须是文字"
 TOPIC_NOT_FOUND_MSG = "找不到话题「{name}」：先完成分析"
@@ -162,6 +163,11 @@ def new_project_args(raw: object) -> list[str]:
     return [f"{flags[k]}={v}" for k, v in given.items()]
 
 
+def new_mode_args(body: dict) -> list[str]:
+    """/api/new 的 mode → aicut new 的参数；没给这个键 = 完整模式（不传参数），给了就必须合法（null 也算不合法）。"""
+    return [f"--mode={mode.check(body['mode'])}"] if "mode" in body else []
+
+
 def _project_for_write(body: dict, existing: Lookup) -> tuple[int, dict] | tuple[Path, dict]:
     """写类接口公共前置：项目存在、读得懂、不是新版程序建的 → (pdir, cfg)；否则 (状态码, JSON)。"""
     try:
@@ -185,6 +191,8 @@ def _post_project_settings(body: dict, existing: Lookup, presets: Path) -> tuple
     try:
         if "target" in body:  # null / bool / 列表等一律走 check_target_duration 的 400，不当成「没给」
             changes["target_duration"] = schema.check_target_duration(body["target"])
+        if "mode" in body:  # 出片模式：null / 数字等一律 400
+            changes["mode"] = mode.check(body["mode"])
         if "title" in body:
             title = body["title"]
             changes["title"] = schema.check_title(title.strip() if isinstance(title, str) else title)
@@ -216,21 +224,11 @@ def _write_settings(body: dict, existing: Lookup, changes: dict, platform: str |
     锁顺序 JOBS_LOCK → 项目锁（非阻塞）→ project.json 文件锁；反方向没有人持文件锁再拿 JOBS_LOCK。"""
     name = body["project"]
     with contextlib.ExitStack() as stack:
-        if "target_duration" in changes:
-            stack.enter_context(jobs.JOBS_LOCK)
-            got = _project_for_write(body, existing)  # 在锁内重读，和当前值比
+        if "target_duration" in changes or "mode" in changes:
+            got = _lock_for_settings(stack, name, body, existing, changes)
             if isinstance(got[0], int):
                 return got
-            pdir, cur = got
-            if changes["target_duration"] == fingerprints.target_of(cur):  # 没改：当作没给，不拦
-                changes = {k: v for k, v in changes.items() if k != "target_duration"}
-            elif jobs.project_running_locked(name):
-                return 409, {"error": TARGET_BUSY_MSG}
-            else:
-                try:
-                    stack.enter_context(project_lock.exclusive(pdir))
-                except project_lock.Busy:
-                    return 409, {"error": TARGET_BUSY_MSG}
+            pdir, changes = got
         else:
             pdir = existing(name)
 
@@ -242,8 +240,31 @@ def _write_settings(body: dict, existing: Lookup, changes: dict, platform: str |
 
         cfg = schema.update_project(pdir / "project.json", mutate) if (changes or given is not None) \
             else schema.load(pdir / "project.json")
+    cfg = {**cfg, "mode": mode.normalize(cfg.get("mode"))}  # 旧项目没存 mode：按完整模式给界面
     # 锁外再派生向导（collect 里会取 JOBS_LOCK）
     return 200, {"ok": True, "project": cfg, "wizard": wizard.derive(wizard.collect(pdir, cfg, name))}
+
+
+def _lock_for_settings(stack: contextlib.ExitStack, name: str, body: dict, existing: Lookup,
+                       changes: dict) -> tuple[int, dict] | tuple[Path, dict]:
+    """改时长 / 模式前的加锁：JOBS_LOCK 内重读 project.json，和当前值一样的当作没给；真要改就确认没有任务在跑、
+    抢到项目锁。→ (pdir, 实际要改的 changes) 或 (状态码, JSON)；锁都挂在 stack 上，由调用方释放。"""
+    stack.enter_context(jobs.JOBS_LOCK)
+    got = _project_for_write(body, existing)  # 在锁内重读，和当前值比
+    if isinstance(got[0], int):
+        return got
+    pdir, cur = got
+    now = {"target_duration": fingerprints.target_of(cur), "mode": mode.normalize(cur.get("mode"))}
+    changes = {k: v for k, v in changes.items() if k not in now or v != now[k]}  # 没改：当作没给，不拦
+    if {"target_duration", "mode"} & set(changes):  # 真的要改：不能有任务在跑，也不能有终端里的 aicut 在跑
+        busy = MODE_BUSY_MSG if "mode" in changes else TARGET_BUSY_MSG
+        if jobs.project_running_locked(name):
+            return 409, {"error": busy}
+        try:
+            stack.enter_context(project_lock.exclusive(pdir))
+        except project_lock.Busy:
+            return 409, {"error": busy}
+    return pdir, changes
 
 
 def _post_project_vision(_path: str, body: dict, existing: Lookup) -> tuple[int, dict]:

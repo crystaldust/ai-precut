@@ -14,7 +14,7 @@ import json
 import re
 from pathlib import Path
 
-from pipeline import classify, custom_rules, fingerprints, review, schema, select_rules, shot_sub, visual_clips
+from pipeline import classify, custom_rules, fingerprints, mode as run_mode, review, schema, select_rules, shot_sub, visual_clips
 
 HARD_TYPES = {"金额价格", "条款期限", "承诺保证", "资格限制", "异议质疑"}
 MIN_SHOT = 1.5      # 最短镜头
@@ -49,6 +49,7 @@ EMOTION_MIN_REL_DB = 1.0   # 情绪结尾：音量至少高于中位 1dB 才算�
 ENDING_SILENCE_WARNING = "结尾选了「留白」：程序不会自动加空镜，请在剪映里手动补"
 ENDING_NOT_FOUND_WARNING = "结尾偏好「{label}」没找到合适的镜头，结尾保持时间顺序：可在分镜表里手动调整"
 ENDING_LABELS = {"sign": "签约 / 缴费", "leave": "离开", "emotion": "最有力的句子", "info": "最后一个关键信息"}
+EMPTY_CLIP_LIST_WARNING = "剪辑列表是空的：先在「③ 看素材」把要用的片段放进剪辑列表"
 OVERRIDES_STALE_WARNING = "{n} 条人工裁决对应的句子在重新分析后变了，已不套用：{ids}；请在「③ 看素材」重新标"
 
 
@@ -317,11 +318,42 @@ def _uncovered_lines(hits: list[dict], shots: list[dict], segments: list[dict]) 
             and not any(_covers(x, a, b) for x in shots if x["segment_id"] == sid)]
 
 
+def _number_shots(shots: list[dict], segments: list[dict], all_lines: list[dict] | None) -> list[dict]:
+    """KI-01：编号 selNN；字幕按最终出入点生成（整句 / 只留镜头内分句）。返回新列表。"""
+    seg_of = {x["id"]: x for x in segments}
+    return [{**s, "id": f"sel{i:02d}",
+             "sub": shot_sub.sub_for(seg_of[s["segment_id"]], s["start"], s["end"], all_lines)}
+            for i, s in enumerate(shots, 1)]
+
+
+def _select_simple(segments: list[dict], target: float, weights: dict | None,
+                   all_lines: list[dict] | None) -> dict:
+    """简单模式：成片 = 剪辑列表里的片段（整段、按时间顺序），不做话题预算 / 补时长 / 裁剪 / 指定原话 / 冷开场 / 结尾。
+
+    target 只原样记录：简单模式没有目标时长，所以不报「超出目标」（报告里的目标按无穷大算）。
+    """
+    shots = _number_shots(_ensure_must_keep(segments, [], weights), segments, all_lines)
+    report = _must_keep_report(segments, shots, [], float("inf"), 0.0)
+    warnings = [*report["warnings"], *([] if any(s.get("must_keep") for s in segments)
+                                      else [EMPTY_CLIP_LIST_WARNING])]
+    return {
+        **report, "warnings": warnings, "mode": run_mode.SIMPLE,
+        "target": target, "total": round(sum(x["dur"] for x in shots), 2),
+        "rules": {}, "covered_topics": [], "missing_must_topics": [],
+        "shots": shots, "unused": [],
+        "stats": {"shots": len(shots), "usable_total": sum(1 for s in segments if s.get("level") == 3),
+                  "used": len(shots), "must_keep": len(report["must_keep_ids"])},
+    }
+
+
 def select(segments: list[dict], topics: list[dict], rules: dict,
-           target: float, weights: dict | None = None, all_lines: list[dict] | None = None) -> dict:
-    """all_lines：全部句子的分句（手改过起止的片段跨句取字幕用，见 shot_sub.sub_for）。"""
+           target: float, weights: dict | None = None, all_lines: list[dict] | None = None,
+           mode: str = run_mode.FULL) -> dict:
+    """all_lines：全部句子的分句（手改过起止的片段跨句取字幕用，见 shot_sub.sub_for）。mode=simple 见 _select_simple。"""
     # KI-93 / D13：「不可用」段一开始就拿掉——不进话题池、不补时长、不被指定原话强拉、不进未采用清单
     segments = [s for s in segments if not s.get("unusable")]
+    if mode == run_mode.SIMPLE:
+        return _select_simple(segments, target, weights, all_lines)
     # 旧版存下的规则可能是中文描述（ending「微信缴费完成」、pacing「紧凑快剪」）：先归一
     rules = {**rules, "ending": select_rules.norm_ending(rules.get("ending")),
              "pacing": select_rules.norm_pacing(rules.get("pacing"))}
@@ -455,10 +487,7 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
     total = sum(x["dur"] for x in shots)
     shots = _build_hook(shots, segments)
     shots, ending_notes = _fix_ending(shots, segments, rules.get("ending"))
-    seg_of = {x["id"]: x for x in segments}
-    shots = [{**s, "id": f"sel{i:02d}",  # KI-01：字幕按最终出入点生成（整句 / 只留镜头内分句）
-              "sub": shot_sub.sub_for(seg_of[s["segment_id"]], s["start"], s["end"], all_lines)}
-             for i, s in enumerate(shots, 1)]
+    shots = _number_shots(shots, segments, all_lines)
 
     used_ids = {s["segment_id"] for s in shots}
     used_topics = {s.get("topic") for s in shots}
@@ -553,7 +582,9 @@ def to_shot_list(selection: dict, title: str, material: str) -> dict:
 def markdown(selection: dict) -> str:
     def tc(x: float) -> str:
         return f"{int(x // 60):02d}:{x % 60:05.2f}"
-    lines = [f"# 选段表（目标 {selection['target']}s，实际 {selection['total']}s）", "",
+    head = (f"# 选段表（简单模式：剪辑列表，共 {selection['total']}s）" if selection.get("mode") == run_mode.SIMPLE
+            else f"# 选段表（目标 {selection['target']}s，实际 {selection['total']}s）")
+    lines = [head, "",
              "| # | 时间码 | 时长 | 话题 | 台词 | 为什么选 |", "|---|---|---|---|---|---|"]
     for s in selection["shots"]:
         lines.append(f'| {s["id"]} | {tc(s["start"])}–{tc(s["end"])} | {s["dur"]:.1f}s | '
@@ -610,13 +641,15 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
         *, questions_path: Path | None = None, title: str = "",
         material: str = "", weights: dict | None = None,
         calibration: dict | None = None, target: float | None = None,
-        custom: dict | None = None) -> dict:
-    """custom：custom_rules.ensure 的结果（剪辑师自定义想法换算出的规则），合并在选项规则之后；
+        custom: dict | None = None, mode: str = run_mode.FULL) -> dict:
+    """mode=simple：只取剪辑列表里的片段（不看答案 / 目标 / 自定义想法，见 _select_simple）；其余同完整模式。
+    custom：custom_rules.ensure 的结果（剪辑师自定义想法换算出的规则），合并在选项规则之后；
     其中实际发出的提示词记为 custom_prompt（⑤「查看 AI 提示词」）。"""
     # M13 D3：输入指纹在选段开始前取（选段过程中被改的输入，选完后要显示为「需要更新」）；
     # target 用传进来的值，而不是重读 project.json（cmd_select 选段成功后才保存新目标）
+    simple = mode == run_mode.SIMPLE
     inputs = fingerprints.selection_inputs(
-        out_dir, {"target_duration": target, "calibration": calibration})
+        out_dir, {"target_duration": target, "calibration": calibration, "mode": mode})
     scored = schema.read_json(scored_path)
     scored_segments = schema.require_key(scored, "segments", scored_path)  # 结构不对 → CorruptJSON
     # 答案 / 题目坏了不能当「没答」：CorruptJSON（带文件名）由调用方给人话（M8 审查）
@@ -648,7 +681,7 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
     if stale:  # KI-12：重新分析后对不上的裁决不套用，但要让剪辑师知道
         extra_warnings.append(OVERRIDES_STALE_WARNING.format(
             n=len(stale), ids="、".join(stale[:MUST_KEEP_MISSING_SHOWN]) + ("…" if len(stale) > MUST_KEEP_MISSING_SHOWN else "")))
-    if target != float(scored.get("target") or 0):
+    if target != float(scored.get("target") or 0) and not simple:
         if all("must" in t and "usable_dur" in t for t in topics):
             # 剪辑师改了目标时长：按新目标重分话题预算（副本，不改 scored 文件），不必重跑 score
             topics = classify.allocate_budget([dict(t) for t in topics], target)
@@ -664,6 +697,7 @@ def run(scored_path: Path, answers_path: Path, out_dir: Path,
         [*select_rules.parse_must_lines(rules.get("must_lines")), *lines]))}
     transcript_lines = read_all_lines(out_dir / "segments.json")
     extra = {"all_lines": transcript_lines} if transcript_lines else {}  # 没有分句就不传（与旧调用一致）
+    extra = {**extra, "mode": mode} if simple else extra  # 完整模式不传 mode（与旧调用一致）
     result = {**select(segments, topics, rules, target, weights, **extra), "inputs": inputs, "custom_rules": custom_items,
               "custom_prompt": custom_rules.prompt_record(custom)}
     if extra_warnings:

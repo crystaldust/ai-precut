@@ -53,6 +53,7 @@ DEFAULTS: dict[str, Any] = {
     "brief": {},
     "calibration": {},
     "vision": {"enabled": False, "tier": "economy"},  # 画面理解（pipeline/vision.DEFAULT；不 import，避免依赖环）
+    "mode": "full",  # 出片模式（pipeline/mode.DEFAULT）：full 完整流程 / simple 简单模式
 }
 
 REQUIRED = ("name", "material")
