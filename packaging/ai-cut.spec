@@ -15,6 +15,7 @@ IS_WIN = sys.platform == "win32"
 EXE_SUFFIX = ".exe" if IS_WIN else ""
 ROOT = Path(SPECPATH).resolve().parent
 BIN = ROOT / "vendor" / "bin"
+ICON_DIR = ROOT / "packaging" / "icon"  # 源稿：designs/aicut.pen「App Icon 方案 → 导出（方案 C）」
 
 # KI-37：版本号按文件路径加载（packaging/ 与 PyPI 的 packaging 包同名，不能 import packaging.version）
 _spec = importlib.util.spec_from_file_location("aicut_version", ROOT / "packaging" / "version.py")
@@ -109,6 +110,7 @@ exe = EXE(
     pyz, a.scripts, RUNTIME_OPTIONS,
     exclude_binaries=True,
     name="ai-cut",
+    icon=str(ICON_DIR / "ai-cut.ico") if IS_WIN else None,  # macOS 的图标在 BUNDLE 上
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -127,7 +129,7 @@ if not IS_WIN:
     app = BUNDLE(
         coll,
         name="AI粗剪.app",
-        icon=None,
+        icon=str(ICON_DIR / "ai-cut.icns"),
         bundle_identifier="com.aicut.desktop",
         info_plist={
             "CFBundleName": "AI粗剪",
