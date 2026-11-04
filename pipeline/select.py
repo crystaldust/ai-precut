@@ -25,8 +25,9 @@ TOTAL_TOLERANCE = 1.10       # PRD FR-7：总时长 ±10%
 TARGET_ROUND_STEP = 5        # 建议目标时长向上取整到 5 秒
 MUST_KEEP_EDGE_TOLERANCE = 0.2  # 秒：必留段没被分镜表覆盖的总时长只容许帧/取整误差
 _EPS = 1e-6
-MUST_KEEP_OVER_WARNING = "剪辑列表共 {must}，超过目标 {target}：已全部保留，请重新设定成片时长"
+MUST_KEEP_OVER_WARNING = "剪辑列表共 {must}，超过目标 {target}：已全部保留，AI 不再补镜头，成片会比目标长；请重新设定成片时长"
 TOTAL_OVER_WARNING = "成片 {total} 超出目标 {target} 的 +10%"
+EXCLUDED_CLIP_WARNING = "剪辑列表里有 {n} 段属于已排除的话题「{topics}」：照样进片"
 MUST_KEEP_EMPTY_WARNING = "剪辑列表里的片段 {ids} 时长为 0，无法进片：请检查转写时间码，或在「③ 看素材」把它移出剪辑列表"
 BUDGET_LEGACY_WARNING = "话题数据是旧版本，没能按新目标重新分配话题时长；重新运行 score（或在「② 分析」点「重新分析」）后再选段"
 MUST_KEEP_MISSING = "分镜表缺少 {n} 段剪辑列表里的片段：{items}；{remedy}"
@@ -222,6 +223,17 @@ def describe_missing(missing: list[dict], *, from_selection: bool = False) -> st
         items += "…"
     remedy = MUST_KEEP_REMEDY_SELECTED if from_selection else MUST_KEEP_REMEDY_MANUAL
     return MUST_KEEP_MISSING.format(n=len(missing), items=items, remedy=remedy)
+
+
+def _excluded_clip_notice(segments: list[dict], exclude: set) -> list[str]:
+    """剪辑列表里属于已排除话题的段（有时长、非画面片段）：只提示，照样进片。"""
+    hit = [(float(s["start"]), s.get("topic") or "未归类") for s in segments   # 与候选池同口径：无话题 = 未归类
+           if s.get("must_keep") and _has_length(s) and not visual_clips.is_visual(s)
+           and (s.get("topic") or "未归类") in exclude]
+    if not hit:
+        return []
+    topics = "、".join(dict.fromkeys(topic for _, topic in sorted(hit)))
+    return [EXCLUDED_CLIP_WARNING.format(n=len(hit), topics=topics)]
 
 
 def _must_keep_report(segments: list[dict], shots: list[dict], covered: list[str],
@@ -502,6 +514,7 @@ def select(segments: list[dict], topics: list[dict], rules: dict,
     warnings = [*report["warnings"],
                 *[MUST_TOPIC_UNMATCHED.format(topic=t) for t in unmatched_topics],
                 *[EXCLUDE_TOPIC_UNMATCHED.format(topic=t) for t in unmatched_excludes],
+                *_excluded_clip_notice(segments, exclude),
                 *line_notes, *line_problems, *notes, *ending_notes,
                 *[ANSWER_UNMATCHED.format(label=x) for x in rules.get("ignored_answers") or []]]
 

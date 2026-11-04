@@ -254,7 +254,7 @@ def test_panel_over_target_warning_with_suggested_target():
     html = in_browse("return el('#bPanel').innerHTML;",
                      {"GET /api/browse": {**BROWSE, "clip_list": {**over, "total": 100, "target": 60,
                                                                   "over_by": 40, "suggested_target": 220}}})
-    assert "已超出目标 0:40，进片时全部保留，建议把目标改为 3:40" in html
+    assert "已超出目标 0:40，进片时全部保留，AI 不再补镜头，建议把目标改为 3:40" in html
 
 
 def test_panel_empty_state_hint():
