@@ -1,5 +1,7 @@
 """pipeline/render_preview：特殊字幕（KI-13/KI-76）、无音轨与声道统一（KI-14）。"""
 import json
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -244,6 +246,164 @@ def test_cli_failure_leaves_no_half_file_or_temp_dir(tmp_path, monkeypatch):
     out, (code, log) = _render(tmp_path)
     assert code == 1 and "预览片渲染失败" in log
     assert _visible(out.parent) == [] and list(texts.iterdir()) == []
+
+
+# ---------------------------------------------------------------- Windows 命令行 32767 字符上限（WinError 206）
+WIN_CMDLINE_LIMIT = 32767
+
+
+def _capture_main(tmp_path, monkeypatch, n_text, shots=29, text_base=None):
+    """跑 main()，假 run_ffmpeg 抓 argv，并在调用期间读取 -/filter_complex 指向的文件。"""
+    import sys
+    longdir = tmp_path / ("很长的目录名" * 8)
+    longdir.mkdir()
+    sources = [longdir / f"素材_{'x' * 40}_{i}.mp4" for i in range(shots)]
+    t = tl([f"字幕 {i} 内容" for i in range(n_text)], sources=sources)
+    tl_file = tmp_path / "timeline.json"
+    tl_file.write_text(json.dumps(t, ensure_ascii=False), encoding="utf-8")
+    texts = tmp_path / "texts"
+    texts.mkdir()
+    monkeypatch.setattr(rp, "text_dir_base", lambda: str(text_base or texts))
+    monkeypatch.setattr(rp, "pick_font", lambda: "/Fonts/Hiragino Sans GB.ttc")
+    monkeypatch.setattr(rp.media_io, "has_audio", lambda p, **kw: True)
+    got = {}
+    real_build = rp.build
+
+    def spy_build(*a, **kw):
+        res = real_build(*a, **kw)
+        got["built"] = res[0]
+        return res
+    monkeypatch.setattr(rp, "build", spy_build)
+
+    def run(args, **kw):
+        got["argv"] = list(args)
+        if "-/filter_complex" in args:
+            f = Path(args[args.index("-/filter_complex") + 1])
+            got["file"] = f
+            got["raw"] = f.read_bytes()
+        Path(args[-1]).write_bytes(b"full")
+    monkeypatch.setattr(rp.media_io, "run_ffmpeg", run)
+    monkeypatch.setattr(sys, "argv", ["render_preview", str(tl_file), "-o", str(tmp_path / "o.mp4")])
+    rp.main()
+    return t, got
+
+
+def test_filter_graph_goes_through_file_not_argv(tmp_path, monkeypatch):
+    t, got = _capture_main(tmp_path, monkeypatch, 400)
+    argv = got["argv"]
+    assert len(got["built"]) > WIN_CMDLINE_LIMIT                  # 前提：内联确实会超 Windows 上限
+    assert "-filter_complex" not in argv and "-/filter_complex" in argv
+    assert len(" ".join(argv)) < WIN_CMDLINE_LIMIT // 2         # 与字幕条数无关
+    raw = got["raw"]
+    assert raw == got["built"].encode("utf-8")                     # 恰为 build() 输出
+    assert not raw.startswith(b"\xef\xbb\xbf")                    # 无 BOM
+    text = raw.decode("utf-8")
+    assert text.count("drawtext=") == 400 and text.endswith("[vout]")
+    assert ";\n" in text and "\r" not in text
+    assert text.split(";\n")[-1] == "[vt399]format=yuv420p[vout]"
+
+
+def test_argv_length_independent_of_subtitle_count(tmp_path, monkeypatch):
+    a = tmp_path / "a"
+    a.mkdir()
+    _, few = _capture_main(a, monkeypatch, 1)
+    b = tmp_path / "b"
+    b.mkdir()
+    _, many = _capture_main(b, monkeypatch, 400)
+    assert len(" ".join(many["argv"])) - len(" ".join(few["argv"])) < 200   # 仅临时目录名长度差异
+
+
+def test_filter_file_lives_in_text_dir_and_is_cleaned(tmp_path, monkeypatch):
+    _, got = _capture_main(tmp_path, monkeypatch, 3)
+    assert got["file"].parent.name.startswith(rp.TEXT_DIR_PREFIX)
+    assert got["file"].parent.parent == tmp_path / "texts"
+    assert not got["file"].exists() and list((tmp_path / "texts").iterdir()) == []
+
+
+def test_filter_file_path_is_passed_verbatim_for_windows_style_dir(tmp_path, monkeypatch):
+    """text_dir_base 返回含反斜杠 / 盘符 / 中文 / 空格的 Windows 风格路径：argv 原样给出，不做滤镜转义。"""
+    monkeypatch.setattr(rp.plat, "IS_WIN", True)
+    win_base = tmp_path / "C:\\Users\\中文 dir\\Temp" if os.name != "nt" else tmp_path / "中文 dir"
+    win_base.mkdir()
+    _, got = _capture_main(tmp_path, monkeypatch, 2, text_base=win_base)
+    arg = got["argv"][got["argv"].index("-/filter_complex") + 1]
+    assert arg == str(got["file"])
+    assert str(win_base) in arg and "\\:" not in arg and "'\\''" not in arg
+    assert arg.endswith(rp.FILTER_FILE_NAME)
+
+
+def _fail_with(monkeypatch, tmp_path, message):
+    import sys
+    t = tl(["一"])
+    tl_file = tmp_path / "timeline.json"
+    tl_file.write_text(json.dumps(t), encoding="utf-8")
+    texts = tmp_path / "texts"
+    texts.mkdir()
+    monkeypatch.setattr(rp, "text_dir_base", lambda: str(texts))
+    monkeypatch.setattr(rp, "pick_font", lambda: "/Fonts/x.ttc")
+    monkeypatch.setattr(rp.media_io, "has_audio", lambda p, **kw: True)
+    monkeypatch.setattr(sys, "argv", ["render_preview", str(tl_file), "-o", str(tmp_path / "o.mp4")])
+
+    def run(args, runner=None, **kw):
+        raise rp.media_io.MediaError(message)
+    monkeypatch.setattr(rp.media_io, "run_ffmpeg", run)
+
+
+def test_old_ffmpeg_gets_friendly_version_message(tmp_path, monkeypatch):
+    _fail_with(monkeypatch, tmp_path,
+               "ffmpeg 失败（退出码 8）：Unrecognized option '/filter_complex'.\nError splitting the argument list")
+    with pytest.raises(SystemExit) as e:
+        rp.main()
+    assert str(e.value) == "预览片渲染失败：需要 ffmpeg 7.0 或更高版本（打包版自带 8.1.3）；请升级本机 ffmpeg"
+
+
+def test_other_ffmpeg_failure_keeps_original_message(tmp_path, monkeypatch):
+    _fail_with(monkeypatch, tmp_path, "ffmpeg 失败（退出码 1）：boom")
+    with pytest.raises(SystemExit) as e:
+        rp.main()
+    assert "boom" in str(e.value) and "7.0" not in str(e.value)
+
+
+def test_temp_write_oserror_becomes_friendly_exit(tmp_path, monkeypatch):
+    _fail_with(monkeypatch, tmp_path, "unused")
+
+    def boom(*a, **kw):
+        raise OSError(28, "No space left on device")
+    monkeypatch.setattr(rp, "subtitle_files", boom)
+    with pytest.raises(SystemExit) as e:
+        rp.main()
+    assert str(e.value).startswith("预览片渲染失败：") and "No space left" in str(e.value)
+
+
+def test_filter_file_write_oserror_becomes_friendly_exit(tmp_path, monkeypatch):
+    _fail_with(monkeypatch, tmp_path, "unused")
+    monkeypatch.setattr(rp, "FILTER_FILE_NAME", "no/such/dir/filter.txt")
+    with pytest.raises(SystemExit) as e:
+        rp.main()
+    assert str(e.value).startswith("预览片渲染失败：")
+
+
+def _ffmpeg_major() -> int | None:
+    """`ffmpeg -version` 首行的主版本号；git 构建（N-…）等无法解析时返回 None。"""
+    if shutil.which("ffmpeg") is None:
+        return None
+    out = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True).stdout
+    m = re.match(r"ffmpeg version n?(\d+)\.", out)
+    return int(m.group(1)) if m else None
+
+
+@pytest.mark.skipif(not _ffmpeg_ready() or (_ffmpeg_major() or 99) < 7,
+                    reason="需要 ffmpeg ≥ 7.0（-/filter_complex）且带 drawtext / anullsrc")
+def test_real_ffmpeg_accepts_filter_complex_file(tmp_path):
+    f = tmp_path / "filter.txt"
+    f.write_text("color=c=blue:s=64x48:r=10:d=0.5[v];\nanullsrc=r=48000:cl=stereo,atrim=duration=0.5[a]",
+                 encoding="utf-8")
+    out = tmp_path / "o.mkv"
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-/filter_complex", str(f),
+                        "-map", "[v]", "-map", "[a]", "-c:v", "mpeg4", str(out)],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert out.stat().st_size > 0
 
 
 # ---------------------------------------------------------------- M6 · KI-73 预览字幕字体

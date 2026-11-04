@@ -34,6 +34,9 @@ FALLBACK_TMP = "/tmp"
 SAFE_WIN_FILTER_PATH = re.compile(r"[A-Za-z]:[\\/][A-Za-z0-9\\/._-]*")
 WIN_FALLBACK_SUBDIR = Path("Documents") / "aicut-tmp"  # 相对 %PUBLIC%
 TEXT_DIR_PREFIX = "aicut-preview-"
+FILTER_FILE_NAME = "filter.txt"
+OLD_FFMPEG_MARK = "Unrecognized option '/filter_complex'"   # ffmpeg < 7.0 不认 -/ 前缀
+OLD_FFMPEG_MSG = "需要 ffmpeg 7.0 或更高版本（打包版自带 8.1.3）；请升级本机 ffmpeg"
 
 # 首选简体黑体（KI-73 / D10）：drawtext 只能取 .ttc 第 0 个字形——
 #   Hiragino Sans GB #0 = W3 简体；STHeiti Medium #0 = 繁体字形；新版 macOS 的 PingFang 已不在 /System/Library/Fonts
@@ -174,16 +177,24 @@ def main() -> None:
             fc, n = build(tl, text_paths=subtitle_files(tl.get("text", []), Path(tmp)),
                           has_audio=audio)
             inputs = [a for s in segs for a in ("-i", s["source"])]
+            # 滤镜图随镜头/字幕数增长，内联会超 Windows 命令行 32767 字符上限（WinError 206）：
+            # 写入 UTF-8 无 BOM 文件，用 -/filter_complex（FFmpeg ≥ 7.0）读取；路径是普通 argv，无需滤镜转义
+            filter_file = Path(tmp) / FILTER_FILE_NAME
+            with open(filter_file, "w", encoding="utf-8", newline="") as fh:
+                fh.write(fc)
             print(f"渲染 {n} 个镜头 → {args.out}")
             # 原子写出：独立运行也不留半成品。完成标记由调用方负责（aicut 传入的 -o 已是它的临时文件）
             with media_io.atomic_output(Path(args.out), mark=False) as out:
-                media_io.run_ffmpeg([*inputs, "-filter_complex", fc,
+                media_io.run_ffmpeg([*inputs, "-/filter_complex", str(filter_file),
                                      "-map", "[vout]", "-map", "[ac]",
                                      *encode.h264_args("preview"),
                                      "-c:a", "aac", "-b:a", "192k",
                                      "-movflags", "+faststart", str(out)])
     except media_io.MediaError as exc:
-        sys.exit(f"预览片渲染失败：{exc}")
+        reason = OLD_FFMPEG_MSG if OLD_FFMPEG_MARK in str(exc) else exc
+        sys.exit(f"预览片渲染失败：{reason}")
+    except OSError as exc:  # 临时目录 / 字幕 / filter.txt 写入失败
+        sys.exit(f"预览片渲染失败：无法写入临时文件：{exc}")
     total = sum(s["out"] - s["in"] for s in segs)
     print(f"完成：{total:.1f}s")
 

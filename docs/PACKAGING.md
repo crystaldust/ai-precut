@@ -11,6 +11,7 @@ open "dist/AI粗剪.app"
 （FFmpeg 8.1.3 + FreeType 2.14.3 + HarfBuzz 14.6.0，源码包 SHA256 钉死、`curl -f` 下载，5–10 分钟；构建机需要
 Xcode Command Line Tools、`pkg-config` 与 `cmake`，用户机器不需要；不进 git），构建后自检
 （LGPL、`otool -L` 只链系统库、`h264_videotoolbox` 与代码用到的滤镜齐全），不过就中止。
+ffmpeg 最低版本 7.0（预览渲染用 `-/filter_complex` 读滤镜文件，规避 Windows 命令行长度上限；自建/下载的 8.1.3 满足）。
 已有 `vendor/bin/ffmpeg` 也要先过 `./packaging/build_ffmpeg.sh --verify-only` 才复用。
 然后 PyInstaller 打出 `dist/AI粗剪.app`，并在 `dist/` 旁放：
 
