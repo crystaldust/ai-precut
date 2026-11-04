@@ -6,7 +6,7 @@ from fe_harness import NODE, run_app
 
 pytestmark = pytest.mark.skipif(NODE is None, reason="需要 node")
 
-OPEN = "act('jumpSeg', {i: '1'}); await press('KeyE'); const V = el('#seVideo'); "   # S2：10–16，窗口 0–26
+OPEN = "act('jumpSeg', {i: '1'}); await press('KeyE'); const V = el('#seVideo'); "   # S2：10–16，素材 60 秒，窗口 0–60
 SLIDE = "const slide = (w, v) => act('segEditSlider', {which: w}, {value: String(v)}); "
 TYPE = "const type = (w, t) => act('segEditText', {which: w}, {value: t}); "
 PRE = OPEN + SLIDE + TYPE + """const SECOND = (s, e) => ({ok: true, cleared: null, manual_table: false, clip_list: B().clip, wizard: null,
@@ -57,11 +57,18 @@ def test_visual_segment_opens_and_saves():
 
 
 # ---------------------------------------------------------------- 手柄与输入框
-def test_slider_range_is_base_plus_minus_10s_clamped_to_material():
+def test_slider_range_is_base_plus_minus_60s_clamped_to_material():
     out = run("return [el('#seStart').min, el('#seStart').max, el('#seLo').textContent, el('#seHi').textContent];")
-    assert out == [0, 26, "0:00.0", "0:26.0"]
+    assert out == [0, 60, "0:00.0", "1:00.0"]   # S2 10–16：前后各 60 秒都被 0 和总长 60 截住
     out = in_browse("""act('jumpSeg', {i: '4'}); await press('KeyE'); return [el('#seEnd').min, el('#seEnd').max];""")
-    assert out == [40, 60]   # S5 50–55：下限 40，上限被总长 60 截住
+    assert out == [0, 60]   # S5 50–55：下限 -10 被截成 0，上限 115 被总长 60 截住
+    free = {**BROWSE, "segments": [seg(1, 100, 110, 2, "x", "乙")], "material_duration": 300}
+    out = in_browse("""act('jumpSeg', {i: '0'}); await press('KeyE'); return [el('#seStart').min, el('#seEnd').max, el('#seLo').textContent, el('#seHi').textContent];""",
+                    {"GET /api/browse": free})
+    assert out == [40, 170, "0:40.0", "2:50.0"]   # 两边都不被截：精确 ±60 秒
+    tail = {**BROWSE, "segments": [seg(1, 280, 290, 2, "x", "乙")], "material_duration": 300}
+    out = in_browse("""act('jumpSeg', {i: '0'}); await press('KeyE'); return [el('#seStart').min, el('#seEnd').max];""", {"GET /api/browse": tail})
+    assert out == [220, 300]
 
 
 def test_material_duration_falls_back_to_video_then_last_segment():
@@ -122,8 +129,10 @@ def test_fmt_ms_rounds_to_tenths():
 
 
 def test_input_may_exceed_slider_window_but_slider_clamps():
-    out = run("type('end', '0:40'); return [el('#seEnd').value, el('#seErr').textContent, el('#seSave').disabled];")
-    assert out == [26, "", False]
+    free = {**BROWSE, "segments": [seg(1, 100, 110, 2, "x", "乙")], "material_duration": 300}
+    out = in_browse("""act('jumpSeg', {i: '0'}); await press('KeyE'); act('segEditText', {which: 'end'}, {value: '3:00'});
+      return [el('#seEnd').value, el('#seErr').textContent, el('#seSave').disabled];""", {"GET /api/browse": free})
+    assert out == [170, "", False]   # 180 秒超出手柄窗口 170：手柄停在头，输入框照样接受
 
 
 # ---------------------------------------------------------------- 校验
@@ -290,12 +299,12 @@ def test_drag_to_collision_keeps_exact_half_second_gap():
 
 
 def test_slider_grid_is_tenths_and_values_shown_equal_values_sent():
-    data = {**BROWSE, "segments": [seg(1, 12.34, 18.76, 2, "讲合同", "乙")], "material_duration": 30}
+    data = {**BROWSE, "segments": [seg(1, 112.34, 118.76, 2, "讲合同", "乙")], "material_duration": 300}
     out = in_browse("""act('jumpSeg', {i: '0'}); await press('KeyE');
       const r = el('#seStart'); const g = [r.min, r.max, el('#seEnd').max];
-      act('segEditSlider', {which: 'start'}, {value: '18.2'}); return [g, el('#seStartTxt').value, ed().start];
+      act('segEditSlider', {which: 'start'}, {value: '118.2'}); return [g, el('#seStartTxt').value, ed().start];
       function ed(){ return state.segEdit; }""", {"GET /api/browse": data})
-    assert out == [[2.3, 28.8, 28.8], "0:18.2", 18.2]
+    assert out == [[52.3, 178.8, 178.8], "1:58.2", 118.2]
 
 
 def test_end_handle_reaches_exact_material_end_when_not_on_grid():
@@ -329,3 +338,240 @@ def test_unbound_edit_key_hides_hint_in_now_panel():
     out = in_browse("""state.shortcuts = {...state.shortcuts, edit: ''}; act('jumpSeg', {i: '1'}); await press('KeyE');
       return [el('#bNow').innerHTML.includes('<kbd>'), state.modalKind];""")
     assert out == [False, None]   # 没有键位：按 E 也不会打开
+
+
+# ---------------------------------------------------------------- 键盘微调
+KEY = """const keyOn = (id, k, extra = {}) => press('', {key: k, target: Object.assign(el('#' + id), {id, tagName: 'INPUT'}), ...extra});
+  const keyUp = (id, k) => fireDoc('keyup', {key: k, target: Object.assign(el('#' + id), {id, tagName: 'INPUT'})}); """
+
+
+def kb(script, routes=None):
+    return run(KEY + script, routes)
+
+
+@pytest.mark.parametrize("k,shift,expect,text", [("ArrowRight", False, 10.1, "0:10.1"), ("ArrowUp", False, 10.1, "0:10.1"),
+                                                 ("ArrowRight", True, 11, "0:11.0"), ("ArrowLeft", False, 9.9, "0:09.9"),
+                                                 ("ArrowDown", False, 9.9, "0:09.9"), ("ArrowLeft", True, 9, "0:09.0")])
+def test_arrow_on_start_handle_steps_and_syncs_inputs_and_video(k, shift, expect, text):
+    out = kb(f"""const ev = await keyOn('seStart', {js(k)}, {{shiftKey: {js(shift)}}});
+      return [ev.prevented, state.segEdit.start, el('#seStart').value, el('#seStartTxt').value, V.currentTime, el('#seDur').textContent];""")
+    assert out[:3] == [True, expect, expect] and out[3] == text and out[4] == expect
+
+
+def test_repeated_arrows_accumulate_without_float_drift():
+    out = kb("for(let i = 0; i < 3; i++) await keyOn('seStart', 'ArrowRight'); return [state.segEdit.start, el('#seStartTxt').value];")
+    assert out == [10.3, "0:10.3"]
+
+
+def test_arrow_left_on_start_handle_at_zero_stays():
+    out = kb("slide('start', 0); await keyOn('seStart', 'ArrowLeft'); await keyOn('seStart', 'ArrowLeft', {shiftKey: true}); return [state.segEdit.start, el('#seStartTxt').value];")
+    assert out == [0, "0:00.0"]
+
+
+def test_shift_arrow_on_start_handle_cannot_pass_end_minus_half_second():
+    out = kb("for(let i = 0; i < 8; i++) await keyOn('seStart', 'ArrowRight', {shiftKey: true}); return [state.segEdit.start, el('#seErr').textContent, el('#seSave').disabled];")
+    assert out == [15.5, "", False]
+
+
+def test_end_handle_steps_and_cannot_pass_start_plus_half_second_or_material_end():
+    out = kb("""await keyOn('seEnd', 'ArrowLeft'); const a = [state.segEdit.end, V.currentTime];   // 播放预览点：结束前 1 秒
+      for(let i = 0; i < 8; i++) await keyOn('seEnd', 'ArrowLeft', {shiftKey: true}); const low = state.segEdit.end;
+      for(let i = 0; i < 70; i++) await keyOn('seEnd', 'ArrowRight', {shiftKey: true});
+      return [a, low, state.segEdit.end, el('#seEndTxt').value, el('#seErr').textContent];""")
+    assert out == [[15.9, 14.9], 10.5, 60, "1:00.0", ""]
+
+
+def test_keyboard_adjustment_cannot_leave_material_even_with_off_grid_end():
+    data = {**BROWSE, "segments": [seg(1, 50, 55, 2, "x", "乙")], "material_duration": 59.95}
+    out = in_browse(PRE + KEY + """act('jumpSeg', {i: '0'}); await press('KeyE');
+      for(let i = 0; i < 12; i++) await keyOn('seEnd', 'ArrowRight', {shiftKey: true}); return [state.segEdit.end, el('#seErr').textContent];""",
+                    {"GET /api/browse": data})
+    assert out == [59.95, ""]
+
+
+def test_end_handle_previews_once_on_keyup_not_on_every_keydown():
+    out = kb("""let played = 0; V.play = () => { played++; return Promise.resolve(); };
+      for(let i = 0; i < 5; i++) await keyOn('seEnd', 'ArrowRight', {repeat: i > 0}); const held = played;
+      keyUp('seEnd', 'ArrowRight'); const once = played; const iv = intervals[intervals.length - 1];
+      keyUp('seEnd', 'ArrowRight'); const again = played;
+      V.currentTime = 16.4; iv.fn(); V.currentTime = 16.6; iv.fn();
+      return [held, once, again, V.currentTime, iv.cleared];""")
+    assert out[:3] == [0, 1, 1] and out[4] is True
+
+
+def test_start_handle_keyup_does_not_play_and_unmoved_end_does_not_either():
+    out = kb("""let played = 0; V.play = () => { played++; return Promise.resolve(); };
+      await keyOn('seStart', 'ArrowRight'); keyUp('seStart', 'ArrowRight'); keyUp('seEnd', 'ArrowRight'); return played;""")
+    assert out == 0
+
+
+def test_text_input_arrows_step_tenth_and_shift_second():
+    out = kb("""const a = await keyOn('seEndTxt', 'ArrowUp'); const up = [state.segEdit.end, el('#seEndTxt').value, el('#seEnd').value, V.currentTime];
+      await keyOn('seEndTxt', 'ArrowDown', {shiftKey: true}); const down = [state.segEdit.end, el('#seEndTxt').value];
+      await keyOn('seStartTxt', 'ArrowDown'); const st = [state.segEdit.start, el('#seStartTxt').value];
+      await keyOn('seStartTxt', 'ArrowUp', {shiftKey: true}); return [a.prevented, up, down, st, state.segEdit.start];""")
+    assert out == [True, [16.1, "0:16.1", 16.1, 15.1], [15.1, "0:15.1"], [9.9, "0:09.9"], 10.9]
+
+
+def test_text_input_arrows_work_from_the_text_in_the_box_even_beyond_slider_window():
+    out = kb("""type('end', '0:40'); el('#seEndTxt').value = '0:40'; await keyOn('seEndTxt', 'ArrowUp'); const a = el('#seEndTxt').value;
+      type('end', '62.3'); el('#seEndTxt').value = '62.3'; await keyOn('seEndTxt', 'ArrowDown', {shiftKey: true}); return [a, el('#seEndTxt').value, el('#seErr').textContent];""")
+    assert out == ["0:40.1", "1:01.3", "结束时间不能超过素材总长 1:00.0"]
+
+
+def test_text_input_arrow_with_invalid_text_is_a_noop():
+    out = kb("""type('end', 'abc'); el('#seEndTxt').value = 'abc'; const ev = await keyOn('seEndTxt', 'ArrowUp');
+      return [ev.prevented, el('#seEndTxt').value, state.segEdit.end, state.segEdit.bad.end, el('#seErr').textContent];""")
+    assert out == [False, "abc", 16, True, "时间格式不对，请写成 1:02.3 或直接写秒数"]
+
+
+def test_text_input_arrow_down_stops_at_zero():
+    out = kb("""type('start', '0.05'); el('#seStartTxt').value = '0.05'; await keyOn('seStartTxt', 'ArrowDown', {shiftKey: true});
+      return [state.segEdit.start, el('#seStartTxt').value];""")
+    assert out == [0, "0:00.0"]
+
+
+def test_save_after_keyboard_adjustment_posts_adjusted_start_and_end():
+    out = kb("""await keyOn('seStart', 'ArrowRight'); await keyOn('seStart', 'ArrowRight'); await keyOn('seEndTxt', 'ArrowUp', {shiftKey: true});
+      act('segEditSave'); await tick(); await tick(); return posts();""", {"POST /api/browse/bounds": bounds_ok(10.2, 17)})
+    assert out == [["/api/browse/bounds", {"project": "新项目", "id": "S2", "start": 10.2, "end": 17}]]
+
+
+def test_other_keys_and_modifiers_are_left_alone():
+    out = kb("""const r = [];
+      for(const [id, k, x] of [['seStartTxt', 'a'], ['seStartTxt', '1'], ['seStartTxt', 'Enter'], ['seStartTxt', 'ArrowLeft'],
+                               ['seStartTxt', 'ArrowRight'], ['seStart', 'Home'], ['seStart', 'ArrowRight', {ctrlKey: true}],
+                               ['seStart', 'ArrowRight', {metaKey: true}], ['seVideo', 'ArrowRight']]){
+        const ev = await keyOn(id, k, x || {}); r.push(ev.prevented);
+      }
+      const esc = await keyOn('seStartTxt', 'Escape');   // Esc 仍然只负责关弹窗
+      return [r, state.segEdit ? [state.segEdit.start, state.segEdit.end] : null, esc.prevented, state.modalKind];""")
+    assert out == [[False] * 9, None, False, None]
+
+
+def test_keys_do_nothing_after_modal_closed():
+    out = kb("""closeModal(); const ev = await keyOn('seStart', 'ArrowRight'); return [ev.prevented, B().segs[1].start, posts()];""")
+    assert out == [False, 10, []]
+
+
+def test_global_browse_shortcuts_stay_off_while_modal_is_open():
+    out = kb("""const before = curSeg().id;
+      await press('ArrowDown', {key: 'ArrowDown'}); await press('KeyS'); await press('KeyD'); await keyOn('seStart', 'ArrowDown');
+      return [curSeg().id, before, posts(), state.modalKind];""")
+    assert out[0] == out[1] and out[2:] == [[], "segedit"]
+
+
+def test_hint_shows_60_seconds_and_keyboard_tips():
+    out = run("return el('#modalBody').innerHTML;")
+    assert "前后各 60 秒" in out and "点一下手柄后按 ← →，每次 0.1 秒，加 Shift 每次 1 秒" in out and "在输入框里按 ↑ ↓ 也一样" in out
+    assert out.count('aria-describedby="seHint"') == 2 and 'id="seHint"' in out
+
+
+def test_ime_composition_arrows_are_not_steps():
+    out = kb("""const r = [];
+      for(const x of [{isComposing: true}, {keyCode: 229}]){ const ev = await keyOn('seEndTxt', 'ArrowUp', x); r.push(ev.prevented); }
+      const ev = await keyOn('seEnd', 'ArrowRight', {isComposing: true}); r.push(ev.prevented);
+      return [r, el('#seEndTxt').value, state.segEdit.end];""")
+    assert out == [[False, False, False], "0:16.0", 16]
+
+
+def test_stale_end_flag_is_cleared_by_blur_and_by_other_seeks_or_plays():
+    out = kb("""let played = 0; V.play = () => { played++; return Promise.resolve(); };
+      await keyOn('seEnd', 'ArrowRight'); fireDoc('focusout', {target: el('#seEnd')}); keyUp('seEnd', 'ArrowLeft'); const blur = played;
+      await keyOn('seEnd', 'ArrowRight'); act('segEditPlay'); const afterPlay = played; keyUp('seEnd', 'ArrowRight');
+      await keyOn('seEnd', 'ArrowRight'); slide('start', 11); keyUp('seEnd', 'ArrowRight');
+      return [blur, afterPlay, played];""")
+    assert out == [0, 1, 1]
+
+
+def test_end_preview_keyup_ignores_modifier_state():
+    out = kb("""let played = 0; V.play = () => { played++; return Promise.resolve(); };
+      await keyOn('seEnd', 'ArrowRight', {shiftKey: true}); fireDoc('keyup', {key: 'ArrowRight', shiftKey: true, ctrlKey: true, target: Object.assign(el('#seEnd'), {id: 'seEnd'})});
+      return played;""")
+    assert out == 1
+
+
+@pytest.mark.parametrize("k,shift,expect", [("ArrowRight", False, 12.4), ("ArrowLeft", False, 12.3), ("ArrowRight", True, 13.3), ("ArrowLeft", True, 11.4)])
+def test_keyboard_steps_snap_to_the_tenth_grid(k, shift, expect):
+    data = {**BROWSE, "segments": [seg(1, 12.34, 18.76, 2, "x", "乙")], "material_duration": 30}
+    out = in_browse(PRE + KEY + f"""act('jumpSeg', {{i: '0'}}); await press('KeyE');
+      await keyOn('seStart', {js(k)}, {{shiftKey: {js(shift)}}}); return [state.segEdit.start, el('#seStartTxt').value];""", {"GET /api/browse": data})
+    assert out[0] == expect
+
+
+def test_keyboard_step_up_to_off_grid_material_end_is_allowed_as_max():
+    data = {**BROWSE, "segments": [seg(1, 50, 59.9, 2, "x", "乙")], "material_duration": 59.95}
+    out = in_browse(PRE + KEY + """act('jumpSeg', {i: '0'}); await press('KeyE');
+      await keyOn('seEnd', 'ArrowRight'); const a = state.segEdit.end; await keyOn('seEnd', 'ArrowRight');
+      await keyOn('seEnd', 'ArrowLeft'); return [a, state.segEdit.end];""", {"GET /api/browse": data})
+    assert out == [59.95, 59.9]
+
+
+# ---------------------------------------------------------------- WebKit：点手柄不会把焦点给手柄
+# WKWebView 点 range 不聚焦，焦点还停在自动聚焦的 #seStartTxt（或 body），按键的 target 不是手柄。
+POINTER = """const down = id => { el('#' + id).focus = o => { el('#' + id).focused = o || true; }; fire('#' + id, 'pointerdown', {}); };
+  const keyAt = (target, k, extra = {}) => press('', {key: k, target, ...extra});
+  const BODY = {tagName: 'BODY'}; """
+
+
+def pk(script, routes=None):
+    return kb(POINTER + script, routes)
+
+
+def test_pointerdown_on_handle_focuses_it_without_preventing_the_drag():
+    out = pk("""let prevented = false; fire('#seEnd', 'pointerdown', {preventDefault(){ prevented = true; }});
+      down('seEnd'); return [el('#seEnd').focused, prevented, state.segEdit.keyHandle];""")
+    assert out == [{"preventScroll": True}, False, "end"]
+
+
+def test_arrow_after_clicking_end_handle_steps_it_even_when_target_is_body():
+    out = pk("""down('seEnd'); const ev = await keyAt(BODY, 'ArrowLeft'); const a = [ev.prevented, state.segEdit.end, el('#seEndTxt').value, V.currentTime];
+      await keyAt(BODY, 'ArrowRight', {shiftKey: true}); return [a, state.segEdit.end, state.segEdit.start];""")
+    assert out == [[True, 15.9, "0:15.9", 14.9], 16.9, 10]
+
+
+def test_fallback_steps_when_focus_stays_on_other_non_text_elements():
+    out = pk("""down('seStart'); const ev = await keyAt({tagName: 'DIV', id: 'modalBody'}, 'ArrowRight');
+      return [ev.prevented, state.segEdit.start];""")
+    assert out == [True, 10.1]
+
+
+def test_arrows_in_text_input_still_move_the_caret_after_clicking_a_handle():
+    out = pk("""down('seEnd'); const r = [];
+      for(const id of ['seStartTxt', 'seEndTxt']) for(const k of ['ArrowLeft', 'ArrowRight']) r.push((await keyOn(id, k)).prevented);
+      for(const t of [{tagName: 'TEXTAREA'}, {tagName: 'SELECT'}, {tagName: 'DIV', isContentEditable: true}, {tagName: 'VIDEO', id: 'seVideo'}])
+        r.push((await keyAt(t, 'ArrowLeft')).prevented);
+      return [r, state.segEdit.start, state.segEdit.end];""")
+    assert out == [[False] * 8, 10, 16]
+
+
+def test_no_fallback_before_any_handle_was_touched():
+    out = pk("""const ev = await keyAt(BODY, 'ArrowLeft'); return [ev.prevented, state.segEdit.start, state.segEdit.end];""")
+    assert out == [False, 10, 16]
+
+
+def test_dragging_a_handle_also_sets_the_key_handle():
+    out = pk("""slide('end', 20); const a = state.segEdit.keyHandle; slide('start', 12);
+      const ev = await keyAt(BODY, 'ArrowRight'); return [a, state.segEdit.keyHandle, state.segEdit.start];""")
+    assert out == ["end", "start", 12.1]
+
+
+def test_fallback_end_keyup_plays_preview_once():
+    out = pk("""let played = 0; V.play = () => { played++; return Promise.resolve(); };
+      down('seEnd'); await keyAt(BODY, 'ArrowRight'); await keyAt(BODY, 'ArrowRight', {repeat: true}); const held = played;
+      fireDoc('keyup', {key: 'ArrowRight', target: BODY}); const once = played; fireDoc('keyup', {key: 'ArrowRight', target: BODY});
+      return [held, once, played];""")
+    assert out == [0, 1, 1]
+
+
+def test_fallback_keyup_in_text_input_does_not_play():
+    out = pk("""let played = 0; V.play = () => { played++; return Promise.resolve(); };
+      down('seEnd'); await keyAt(BODY, 'ArrowRight'); fireDoc('keyup', {key: 'ArrowRight', target: Object.assign(el('#seStartTxt'), {id: 'seStartTxt'})});
+      return played;""")
+    assert out == 0
+
+
+def test_focused_handle_has_a_visible_focus_style():
+    from pathlib import Path
+    css = (Path(__file__).resolve().parent.parent / "gui" / "static" / "app.css").read_text(encoding="utf-8")
+    assert "input[type=range]:focus::-webkit-slider-thumb" in css and "input[type=range]:focus::-moz-range-thumb" in css
