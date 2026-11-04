@@ -80,7 +80,7 @@ Xcode Command Line Tools、`pkg-config` 与 `cmake`，用户机器不需要；�
 
 只在 Windows 上构建，Mac 不交叉打包。两种方式：
 
-- GitHub Actions：`.github/workflows/windows.yml`（push 到 main 或手动触发；verify → test → build），产物 artifact `ai-cut-windows-x64`（保留 14 天）；
+- GitHub Actions：`.github/workflows/windows.yml`（push 到 main、推 `v*` tag 或手动触发；verify → test → build，tag 时再跑 release），产物 artifact 以 `archive: false` 直接上传 zip 本身（单层），名字即文件名 `ai-cut-windows-x64-<版本>-<构建号>.zip`（保留 14 天）；
 - 在 Windows 机器上：`uv run python packaging/build_win.py`（步骤：下载并自检 ffmpeg → PyInstaller → 放入许可与源码 → 打 zip）。
 
 **ffmpeg**：`packaging/fetch_ffmpeg_win.py` 下载 BtbN/FFmpeg-Builds 的 win64-lgpl 构建（钉 tag `autobuild-2026-09-30-13-08`、FFmpeg `n8.1.3-9-g29e619e767`，zip 与对应源码包都钉 SHA256，校验失败删文件并中止）。
@@ -96,7 +96,16 @@ Xcode Command Line Tools、`pkg-config` 与 `cmake`，用户机器不需要；�
 - `首次打开说明-Windows.txt`（SmartScreen「更多信息 → 仍要运行」、WebView2 安装方式）；
 - `licenses/`、`sources/`（LGPL 许可全文与对应源码）。
 
-**解压与安装自检**：GitHub Actions 的 artifact 是 zip 套 zip（外层里是 `ai-cut-windows-x64-*.zip`），里外两层都要「全部提取」；从压缩包预览里直接拖文件夹会漏文件（曾出现 `simple-mode.js` 缺失，前端报 `modeFieldHtml is not defined`）。启动时 `gui/server.py` 用 `gui/static_files.missing_static()` 核对白名单静态文件，缺了就在日志里记一行错误；已通过 cookie 的页面请求改发「安装不完整」说明页（`gui/install_page.py`，列出缺失文件名与按平台区分的补救步骤），静态资源仍是 404，未带 cookie 的请求仍是 403 门页、不泄露文件名。
+**解压与安装自检**：Windows 包现在是单层 zip（artifact 不再被 Actions 套一层 zip；Release 附件本来就是单层）。用户右键「全部提取」到普通文件夹即可；不要在压缩包预览里双击，也不要把文件夹从预览里拖出来，那样会漏文件（曾出现 `simple-mode.js` 缺失，前端报 `modeFieldHtml is not defined`）。若提取出来的内容里还有一个 zip（例如旧版 artifact），再「全部提取」一次。启动时 `gui/server.py` 用 `gui/static_files.missing_static()` 核对白名单静态文件，缺了就在日志里记一行错误；已通过 cookie 的页面请求改发「安装不完整」说明页（`gui/install_page.py`，列出缺失文件名与按平台区分的补救步骤），静态资源仍是 404，未带 cookie 的请求仍是 403 门页、不泄露文件名。
+
+### 发版（GitHub Release）
+
+1. 改 `pyproject.toml` 的 `version`；
+2. 在 `CHANGELOG.md` 写更新记录；
+3. `git tag v<version> && git push origin v<version>`；
+4. CI 依次跑 verify / test / build，然后 release job 创建 Release 并附上 zip（说明为中文安装步骤 + 自动生成的变更列表）；
+5. tag 必须等于 `v<version>`（与 `pyproject.toml` 一致），否则 release job 失败、不发布；
+6. Release 附件不需要登录 GitHub 就能下载；Actions artifact 需要登录且 14 天后过期，所以给剪辑师的链接用 Release 页面。
 
 **Windows 差异**：Key 存 Windows 凭据管理器；日志 `%LOCALAPPDATA%\剪辑台\logs`；项目目录 `文档\AI粗剪`；任务进程树用 Job Object，关窗口 / 取消不留孤儿进程。
 

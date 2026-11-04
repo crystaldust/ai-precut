@@ -5,6 +5,10 @@
 
 ## 未发布
 
+### Windows 单层 zip 与 GitHub Release
+
+- Windows 包改为单层 zip 下载（不再是「zip 套 zip」），推送 `v*` tag 会自动发布 GitHub Release，剪辑师无需登录 GitHub 就能下载；安装说明同步更新。
+
 ### Windows 上运行（里程碑 16）
 
 - 剪辑台现在能在 Windows 10/11 x64 上运行：解压 zip，双击 `ai-cut.exe`（首次按 SmartScreen「更多信息 → 仍要运行」；需要 WebView2，Windows 11 自带）。
