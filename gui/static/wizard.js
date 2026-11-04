@@ -12,7 +12,7 @@ const COPY_NEXT = '下一步：{label} →';
 const COPY_GO_LABELS = {browse: '去看素材', criteria: '去定标准', result: '去看结果', export: '去导出'};
 const COPY_BANNER_ACTIONS = {reanalyze: '重新分析', reselect: '重新选段'};
 const STEP_NAMES = ['新建', '分析', '看素材', '定标准', '看结果', '导出'];  // ①–⑥，与服务端 gui/wizard.py 的 STEPS 一致（tests/test_terms.py 比对）
-const STEP_STATUSES = ['locked', 'done', 'stale', 'available'];  // class 名只认这几个
+const STEP_STATUSES = ['locked', 'done', 'stale', 'available', 'skipped'];  // class 名只认这几个
 const STATUS_MARK = {done: ' ✓', stale: ' ⚠'};
 const VIEW_ORDER = ['analyze', 'browse', 'criteria', 'result', 'export'];  // ① 新建是弹窗，不在页面序列里
 
@@ -53,8 +53,8 @@ function renderTitle(){
 function stepButtonHtml(s, viewing){
   const status = STEP_STATUSES.includes(s.status) ? s.status : 'available';
   const cls = ['step', 'st-' + status, s.key === viewing ? 'current' : ''].filter(Boolean).join(' ');
-  const disabled = status === 'locked' ? ' aria-disabled="true"' : '';
-  const title = s.hint || s.banner || '';  // 悬停原因：未到 → 先完成哪步；需要更新 → 为什么
+  const disabled = status === 'locked' || status === 'skipped' ? ' aria-disabled="true"' : '';
+  const title = s.hint || s.banner || s.note || '';  // 悬停原因：未到 → 先完成哪步；需要更新 → 为什么
   return `<button class="${cls}" data-act="go" data-step="${esc(s.key)}"${disabled} title="${esc(title)}">`
     + `${esc(CIRCLED[num(s.n) - 1] || '')}${esc(s.label || STEP_NAMES[num(s.n) - 1] || '')}${STATUS_MARK[status] || ''}</button>`;
 }
@@ -89,11 +89,12 @@ function renderBanner(){
 /* ---------------- 底部导航 ---------------- */
 function navModel(wizard, viewing){
   const steps = wizard?.steps || [];
-  const at = VIEW_ORDER.indexOf(viewing);
   const status = key => steps.find(s => s.key === key)?.status;
+  const order = VIEW_ORDER.filter(k => status(k) !== 'skipped');  // 简单模式的 ④ 不在导航序列里
+  const at = order.indexOf(viewing);
   const link = key => key && status(key) ? {key, enabled: status(key) !== 'locked'} : null;
-  const prev = link(VIEW_ORDER[at - 1]);
-  const next = link(VIEW_ORDER[at + 1]);
+  const prev = link(order[at - 1]);
+  const next = link(order[at + 1]);
   return {prev: at > 0 ? prev : null,
           next: next ? {...next, label: COPY_GO_LABELS[next.key] || ''} : null};
 }

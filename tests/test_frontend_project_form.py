@@ -11,7 +11,7 @@ pytestmark = pytest.mark.skipif(NODE is None, reason="需要 node")
 
 def test_new_modal_has_two_sections_prefs_collapsed_with_info_default():
     html = run_app("(async () => { await openNew(); return el('#modalBody').innerHTML; })()", routes=NEW_ROUTES)
-    assert "素材与成片" in html and "剪辑偏好（可跳过）" in html
+    assert "素材与成片" in html and "剪辑偏好（可选，影响 ③ 的 AI 分档）" in html  # 新建默认简单模式
     assert '<details class="prefs" id="npPrefs">' in html  # 没有 open 属性 = 默认折叠
     assert 'name="npTone" value="info" checked' in html and 'value="balanced"' not in html
     assert "必须保留的原话（每行一句，最多 3 句）" in html and "创建项目" in html and "可选画面理解，再点开始分析" in html
@@ -43,7 +43,7 @@ def test_create_posts_new_with_calibration_then_lands_on_step_two_without_starti
     order, new_body, project, view, modal, toast = out
     assert order == ["/api/new"]  # 只创建：不起分析任务，剪辑师在 ② 选好画面理解后再点「开始分析」
     assert new_body == {"material": "/m/a.mp4", "name": "新项目", "title": "片名", "preset": "纪实3min",
-                        "target": 180, "calibration": {"tone": "info", "audience": "", "must_lines": ""}}
+                        "target": 180, "calibration": {"tone": "info", "audience": "", "must_lines": ""}, "mode": "simple"}
     assert (project, view, modal, toast) == ("新项目", "analyze", False, "项目已创建")
 
 

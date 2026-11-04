@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from gui import analysis, jobs
-from pipeline import fingerprints, media_io, outputs, questions, readiness, schema
+from pipeline import fingerprints, media_io, mode, outputs, questions, readiness, schema
 
 STEPS = (("new", 1, "新建"), ("analyze", 2, "分析"), ("browse", 3, "看素材"),
          ("criteria", 4, "定标准"), ("result", 5, "看结果"), ("export", 6, "导出"))
@@ -21,13 +21,14 @@ STALE_ANALYZE_VISION = "画面理解设置改过了 · 重新分析（已完成�
 STALE_CRITERIA = "决策问题重新生成过 · 请重新作答并确认"
 STALE_RESULT_REASONS = {"scored": "分析结果更新了", "overrides": "素材标记改过了",
                         "answers": "答案改过了", "target": "目标时长改过了",
-                        "lines": "剪辑偏好里的指定原话改过了"}
+                        "lines": "剪辑偏好里的指定原话改过了", "mode": "出片模式改了"}
 STALE_RESULT_ACTION = " · 重新选段"
 LOCKED_EXPORT_HINT = "先在「⑤ 看结果」生成当前分镜表的预览片"  # Q2：有历史版本就能进 ⑥，否则要先有当前表的预览片
 LEGACY_NOTE = "这个项目在改版前已出过片，没经过定标准；需要时可以在这里确认一次"
 ACTION_REANALYZE = "reanalyze"
 ACTION_RESELECT = "reselect"
-DONE, AVAILABLE, LOCKED, STALE = "done", "available", "locked", "stale"
+SKIPPED_CRITERIA_HINT = "简单模式不需要定标准"
+DONE, AVAILABLE, LOCKED, STALE, SKIPPED = "done", "available", "locked", "stale", "skipped"
 
 
 def _lenient_dict(path: Path) -> dict | None:
@@ -80,6 +81,7 @@ def collect(pdir: Path, cfg: dict, name: str, *, digests: bool = True,
     saved_inputs = selection.get("inputs")
     stamp = _lenient_dict(work / readiness.ANALYSIS_STAMP)
     return {
+        "mode": mode.normalize(cfg.get("mode")),
         "analysis_done": done, "analysis_running": running,
         "analysis_stamp": stamp,
         "analysis_inputs": fingerprints.analysis_inputs(cfg) if digests else None,
@@ -153,8 +155,11 @@ def derive(f: dict) -> dict:
     """纯函数：facts → {"steps": [...], "next": key, "legacy": bool}。"""
     analyze = _analyze_step(f)
     browse = _step("browse", DONE) if f["analysis_done"] else _locked("browse", "analyze")
-    criteria = _criteria_step(f)
-    if criteria["status"] in (DONE, STALE):
+    simple = f.get("mode") == mode.SIMPLE  # 简单模式：④ 跳过，分析完就能看结果（② 末尾的选段是空剪辑列表；进 ⑤ 时前端会自动按当前剪辑列表重新选段）
+    criteria = _step("criteria", SKIPPED, hint=SKIPPED_CRITERIA_HINT) if simple else _criteria_step(f)
+    if simple and not f["analysis_done"]:
+        result, export = _locked("result", "analyze"), _locked("export", "analyze")
+    elif simple or criteria["status"] in (DONE, STALE):
         result, export = _result_step(f), _export_step(f)
     else:
         result, export = _locked("result", "criteria"), _locked("export", "criteria")

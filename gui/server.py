@@ -412,7 +412,8 @@ class Handler(BaseHTTPRequestHandler):
             # --x=value 形式：以 - 开头的值不会被 argparse 当成选项
             # GL-20：--no-input，绝不停在 input() 上
             try:  # M13：新建时就带上剪辑偏好（信息 / 情绪、观众、指定原话）
-                cal_args = project_routes.new_project_args(body.get("calibration"))
+                cal_args = [*project_routes.new_project_args(body.get("calibration")),
+                            *project_routes.new_mode_args(body)]
             except ValueError as e:
                 return self._json({"error": str(e)}, 400)
             args = ["new", name, "--no-input", f"--material={material}", f"--preset={preset}",

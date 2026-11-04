@@ -11,7 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from pipeline import media_io, proc, review, schema, shots_store, style, vision
+from pipeline import media_io, mode as run_mode, proc, review, schema, shots_store, style, vision
 
 DIGEST_LEN = 12
 CORRUPT = "corrupt"
@@ -86,6 +86,9 @@ def target_of(cfg: dict) -> int:
 def selection_inputs(workdir: Path, cfg: dict) -> dict[str, str]:
     """选段的分项输入指纹，键序固定为 SELECTION_KEYS（横幅按这个顺序拼原因）。"""
     work = Path(workdir)
+    if run_mode.is_simple(cfg):  # 简单模式只看分析结果、剪辑列表（素材标记）和模式：答案 / 目标 / 偏好都不影响结果
+        return {"scored": file_digest(work / "segments_scored.json"), "overrides": overrides_digest(work),
+                "mode": run_mode.SIMPLE}
     calib = style.normalize(cfg.get("calibration"))
     return {
         "scored": file_digest(work / "segments_scored.json"),
@@ -106,7 +109,11 @@ def changed(saved: object, now: dict) -> list[str]:
     """两份分项指纹里不同的分项名（按 now 的顺序）；saved 不是对象 / 缺这一项 → 不判（旧数据没有戳）。"""
     if not isinstance(saved, dict):
         return []
-    return [k for k, v in now.items() if k in saved and saved[k] != v]
+    out = [k for k, v in now.items() if k in saved and saved[k] != v and k != "mode"]
+    # 出片模式只在简单模式时才记：任一边缺 mode = 完整模式，所以要按「缺省 full」比，不能照「缺键不判」
+    if saved.get("mode", run_mode.FULL) != now.get("mode", run_mode.FULL):
+        out.append("mode")
+    return out
 
 
 def table_digest(shots: list[dict]) -> str:

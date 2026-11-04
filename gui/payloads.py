@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import applog, custom_rules, fingerprints, notices, questions, review, schema, select, topic_names, visual_clips
+from pipeline import applog, custom_rules, fingerprints, mode, notices, questions, review, schema, select, topic_names, visual_clips
 
 LOG = applog.get("gui")
 NO_SCORED_MSG = "还没有三档判定，先跑 analyze/text/score"
@@ -104,7 +104,7 @@ def browse(pdir: Path, name: str) -> dict:
     return {
         "project": {"name": cfg.get("name", name), "title": cfg.get("title", name),
                     "preset": cfg.get("preset"), "platform": cfg.get("platform"),
-                    "target_duration": cfg.get("target_duration")},
+                    "target_duration": cfg.get("target_duration"), "mode": mode.normalize(cfg.get("mode"))},
         "material_duration": material_duration,
         "summary": summary,
         "counts": {**{k: sum(1 for s in speech if s["level"] == v)

@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 from gui import payloads, wizard
 from pipeline import (
-    custom_rules, fingerprints, media_io, outputs, schema, select, shot_diff, shot_sub, shots_store, topic_names,
+    custom_rules, fingerprints, media_io, mode, outputs, schema, select, shot_diff, shot_sub, shots_store, topic_names,
     visual_clips,
 )
 
@@ -127,10 +127,14 @@ def _ai_shots_by_id(selection: dict) -> dict:
 
 
 def _topbar(cfg: dict, shots: list[dict], segments: list[dict]) -> dict:
+    """简单模式没有目标时长：target / over_target / suggested_target 为 null / false / null，其余照旧。"""
+    simple = mode.is_simple(cfg)
     target = cfg.get("target_duration") or payloads.DEFAULT_TARGET_S
     clip = payloads.clip_list(segments, float(target))
     missing = [s["id"] for s in select.uncovered_must_keep(segments, shots)]
-    return {"target": target,
+    if simple:
+        clip = {**clip, "over_target": False, "suggested_target": None}
+    return {"target": None if simple else target,
             "total": round(sum(float(s["out"]) - float(s["in"]) for s in shots), 2),
             "shots": len(shots),
             "clip": {"count": len(clip["items"]), "covered": len(clip["items"]) - len(missing),
@@ -157,11 +161,13 @@ def result(pdir: Path, name: str) -> dict:
     names = topic_names.load(work)
     missing = select.uncovered_must_keep(segments, shots)
     with_lines = {s["id"]: s for s in select.with_lines(segments, work / "segments.json")}
-    unused = _unused(segments, shots, source, selection, missing, names, with_lines,
-                     select.read_all_lines(work / "segments.json"))  # 手改过起止的段跨句取字幕
+    unused = [] if mode.is_simple(cfg) else _unused(  # 简单模式：没取的就是没放进剪辑列表，不列「可用但未采用」
+        segments, shots, source, selection, missing, names, with_lines,
+        select.read_all_lines(work / "segments.json"))  # 手改过起止的段跨句取字幕
     ai_by_id = _ai_shots_by_id(selection)
     inputs = fingerprints.preview_inputs(pdir, cfg)
     return {
+        "mode": mode.normalize(cfg.get("mode")),
         "topbar": _topbar(cfg, shots, segments),
         "notes": {sh["id"]: _note(sh, ai_by_id, segments, unused, names) for sh in shots} if segments else {},
         "unused": unused,

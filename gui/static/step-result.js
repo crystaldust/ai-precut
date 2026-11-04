@@ -74,13 +74,14 @@ function leaveResult(){   // 离开 ⑤：在途回包作废，页面上的块�
   if(r.reloadTimer){ clearTimeout(r.reloadTimer); r.reloadTimer = null; }
   r.html = {}; r.playerKey = null; r.tableSig = null; r.stopAt = null;
 }
-function enterResult(){
+function enterResult(opts = {}){
   resultGen += 1;
   if(!res() || res().project !== state.project) state.result = newResult();
   const r = res();
   r.html = {}; r.playerKey = null; r.tableSig = null;
+  const gen = resultGen, project = state.project;
   paintResult(true);
-  return loadResult();
+  return Promise.resolve(loadResult()).then(() => opts.again ? null : autoReselectOnEnter(gen, project));   // 简单模式过期 → 自动重新选段（simple-mode.js）
 }
 function setIf(sel, html){   // 内容没变就不写：输入框和滚动位置不被刷新打断
   const r = res();
@@ -137,7 +138,7 @@ function previewNoteHtml(pv){
   if(status === 'fresh') return '';
   const unusable = pv && Array.isArray(pv.reasons) && pv.reasons.includes('unusable') && !res().touched;
   const text = status === 'none' ? COPY_PREVIEW_NONE : (unusable ? COPY_PREVIEW_UNUSABLE : COPY_PREVIEW_OUTDATED);
-  return `<span class="hint">${esc(text)}</span> <button class="primary" data-act="makePreview" data-starts-job>${esc(COPY_PREVIEW_MAKE)}</button>`;
+  return `<span class="hint">${esc(text)}</span> ${previewButtonHtml()}`;
 }
 async function makePreview(){
   if(!state.project) return;
@@ -190,6 +191,7 @@ function manualNoteHtml(r){   // Q6：重新分析后分镜表仍是手动那一
 function topHtml(r, live){
   const tb = r.data?.topbar;
   if(!tb) return '';
+  if(isSimple()) return simpleTopHtml(r, live);   // simple-mode.js：没有目标 / 提示词 / 超时长提示
   const cur = live ? fmtLong(Math.max(0, Math.round(liveTotal()))) : '', cnt = live ? state.shots.length : '';
   const edited = manualInfo()?.edited === true;
   const restore = edited ? `<button class="ghost r-restore" data-act="openRestoreAi" data-starts-job>${esc(COPY_RESTORE_AI)}</button>` : '';

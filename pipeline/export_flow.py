@@ -22,6 +22,7 @@ OVERWRITE_REFUSED = ("{version} 的内容已经变了，不能再往剪映里装
 OVERWRITE_REFUSED_WIN = OVERWRITE_REFUSED.replace("Mac 剪映", "Windows 剪映")
 DRAFT_RECORD_FAILED = "草稿已经装进剪映（{draft}），但记录导出信息失败：{exc}。请不要重复导出，到剪映里确认这份草稿即可"
 WINDOWS_RECORD_FAILED = "Windows 包已生成（{zip}），但记录导出信息失败：{exc}"
+EMPTY_TABLE_MSG = "分镜表是空的，没有可出片的镜头：先在「③ 看素材」把要用的片段放进剪辑列表，再到「⑤ 看结果」重新选段"
 RECORD_ERRORS = (OSError, ValueError, project_lock.Busy)  # ValueError 含 CorruptJSON
 
 
@@ -40,6 +41,8 @@ def current_shots(ops: Any, pdir: Path) -> list[dict]:
     if not shots_file.exists():
         ops.die(f"缺少分镜表 {shots_file}（先跑 brief，再写 shots.json）")
     shots = schema.read_shots(shots_file)  # KI-48：损坏 / 缺键 / 入出点不对 → CorruptJSON，切片前由 main() 报
+    if not shots:  # 简单模式剪辑列表为空时选段得到 0 镜：给人话，不让后面切片 / 时间线报错
+        ops.die(EMPTY_TABLE_MSG)
     try:  # GL-25：切片（耗时）之前确认分镜表覆盖全部必留段
         missing = select.missing_must_keep(pdir / "work", shots)
     except review.OverridesCorrupt as exc:

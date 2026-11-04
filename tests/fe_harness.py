@@ -17,7 +17,7 @@ NODE = shutil.which("node")
 SCRIPTS = ["common.js", "platform.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
            "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js", "segment-edit.js", "step-criteria.js",
            "criteria-analysis.js", "criteria-pending.js", "reselect.js", "result-table.js", "result-unused.js",
-           "step-result.js", "step-export.js", "export-compare.js", "app.js"]
+           "step-result.js", "step-export.js", "export-compare.js", "simple-mode.js", "app.js"]
 
 HARNESS = r"""
 const vm = require('vm');

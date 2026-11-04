@@ -41,6 +41,11 @@ def check(body: dict) -> dict:
     return {"enabled": enabled, "tier": tier}
 
 
+def from_choice(choice: str | None) -> dict:
+    """命令行 --vision off|economy|balanced|quality → project.json 的 vision 字段。"""
+    return {"enabled": True, "tier": choice} if choice in TIERS else dict(DEFAULT)
+
+
 def is_on(cfg: dict) -> bool:
     return normalize(cfg.get("vision")).get("enabled") is True
 

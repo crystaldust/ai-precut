@@ -30,7 +30,7 @@ function unusedHtml(list, locked){
 function paintUnused(){
   const r = res();
   if(!r || state.view !== 'result') return;
-  setIf('#rUnused', unusedHtml(unusedItems(), resultLocked()));
+  setIf('#rUnused', isSimple() ? '' : unusedHtml(unusedItems(), resultLocked()));  // 简单模式没有未采用清单
 }
 // 试听/替代句里的段不一定还在清单里（刚加回），所以也在每镜的替代句里找
 function findSeg(id){

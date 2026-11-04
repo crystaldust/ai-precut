@@ -72,7 +72,7 @@ async function confirmReselect(extra, opts = {}){ return (await confirmReselectD
 function openRestoreAi(){
   const m = manualInfo();
   if(!m || m.edited !== true) return;
-  showModal(COPY_RESTORE_AI_ASK.replace('{n}', num(m.count)), `<div class="job-actions">
+  showModal((isSimple() ? COPY_SIMPLE_RESTORE_ASK : COPY_RESTORE_AI_ASK).replace('{n}', num(m.count)), `<div class="job-actions">
     <button class="primary" data-act="restoreAiGo">${esc(COPY_RESTORE_AI_GO)}</button>
     <button class="ghost" data-act="closeModal">${esc(COPY_RESELECT_CANCEL)}</button></div>`);
 }
@@ -87,7 +87,7 @@ async function restoreAi(){
     applyWizard(r.wizard);
     await refreshOrWarn(name);
     if(state.view === 'result'){ const x = res(); if(x) x.tableSig = null; await loadResult(); paintTable(true); }
-    toast(COPY_RESTORED_AI);
+    toast(isSimple() ? COPY_SIMPLE_RESTORED : COPY_RESTORED_AI);
   }catch(e){ toast(e.message, TOAST_ERROR_MS); }
   finally{ reselectUi.restoring = false; syncResultLock(); }
 }
