@@ -3,7 +3,7 @@
 
 优先级：
   1. 环境变量（CI / 临时覆盖）
-  2. 系统钥匙串（keyring → macOS Keychain / Windows Credential Manager）
+  2. 系统钥匙串（keyring → macOS Keychain / Windows Credential Manager；单条 JSON）
   3. 文件 ~/.config/ai-cut/credentials.json（0600）
 
 `AI_CUT_SECRETS=file` 可强制走文件后端（测试/无钥匙串环境）。
@@ -14,12 +14,17 @@ from __future__ import annotations
 import json
 import os
 import stat
+import threading
 import uuid
 from pathlib import Path
+from typing import Protocol
 
 from pipeline import plat, schema
 
-SERVICE = "ai-cut"
+# 钥匙串里只放一条（所有 Key 打包成 JSON），系统只弹一次授权，弹窗里显示中文名
+SERVICE = "AI粗剪"
+ACCOUNT = "api-keys"
+LEGACY_SERVICE = "ai-cut"   # 旧版每个 provider 一条：kr.get_password("ai-cut", provider)
 PROVIDERS = ("mediakit", "deepseek")
 ENV_KEYS = {
     "mediakit": "MEDIAKIT_API_KEY",
@@ -32,6 +37,14 @@ PROVIDER_LABELS = {
     "deepseek": {"label": "文本分析（DeepSeek）", "hint": "用于理解转写内容、找出重要片段"},
 }
 
+
+
+class _Keyring(Protocol):
+    """keyring 模块 / 测试替身需要提供的三个方法。"""
+
+    def get_password(self, service: str, username: str) -> str | None: ...
+    def set_password(self, service: str, username: str, password: str) -> None: ...
+    def delete_password(self, service: str, username: str) -> None: ...
 
 
 class SecretDeleteError(RuntimeError):
@@ -70,7 +83,7 @@ def _force_file() -> bool:
     return os.environ.get("AI_CUT_SECRETS", "").lower() == "file"
 
 
-def _keyring():
+def _keyring() -> _Keyring | None:
     if _force_file():
         return None
     try:
@@ -161,6 +174,116 @@ def _legacy_value(provider: str) -> str | None:
         return None
 
 
+# 进程内缓存：钥匙串每个进程最多读一次（GUI 服务是多线程的，所以加锁）
+_cache_lock = threading.Lock()
+_cache: dict[str, str] | None = None
+
+
+def _reset_cache() -> None:
+    """仅供测试：清掉进程内缓存。"""
+    global _cache
+    with _cache_lock:
+        _cache = None
+
+
+def _parse_bundle(raw: object) -> dict[str, str]:
+    """钥匙串条目 → {name: key}。坏内容（非 JSON / 非字典）按没有处理，绝不带出原文。
+
+    已知 provider 的值去空白、空的丢掉；未知名字的字符串值原样保留（改写时不丢，向前兼容），get 不会暴露它们。
+    """
+    if not isinstance(raw, str):
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for name, value in data.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        cleaned = _clean(value) if name in PROVIDERS else value
+        if cleaned:
+            out[name] = cleaned
+    return out
+
+
+def _write_bundle(kr: _Keyring, bundle: dict[str, str]) -> None:
+    kr.set_password(SERVICE, ACCOUNT, json.dumps(bundle, ensure_ascii=False))
+
+
+def _read_legacy_items(kr: _Keyring) -> tuple[dict[str, str], bool]:
+    """读旧版逐 provider 条目；第二个返回值 False 表示有读取抛错（不能当作「没有」）。"""
+    found: dict[str, str] = {}
+    complete = True
+    for provider in PROVIDERS:
+        try:
+            value = _clean(kr.get_password(LEGACY_SERVICE, provider))
+        except Exception:  # noqa: BLE001
+            complete = False
+            continue
+        if value:
+            found[provider] = value
+    return found, complete
+
+
+def _migrate_legacy(kr: _Keyring) -> tuple[dict[str, str], bool]:
+    """新条目不存在时，把旧版条目并入新条目。返回 (值, 能否缓存)。
+
+    任何一条旧条目读失败 → 不迁移、不缓存；写之前新条目已被别的进程建好 → 放弃迁移用它；
+    写入并读回确认后才删旧的，失败则保留旧的。
+    """
+    legacy, complete = _read_legacy_items(kr)
+    if not complete:
+        return legacy, False
+    if not legacy:
+        return {}, True
+    existing = kr.get_password(SERVICE, ACCOUNT)
+    if existing is not None:  # 竞态：别的进程刚迁移完
+        return _parse_bundle(existing), True
+    try:
+        _write_bundle(kr, legacy)
+        stored = _parse_bundle(kr.get_password(SERVICE, ACCOUNT))
+        if any(stored.get(p) != v for p, v in legacy.items()):
+            return legacy, True
+    except Exception:  # noqa: BLE001 - 迁移失败：旧条目原样保留，本次仍用读到的值
+        return legacy, True
+    for provider in legacy:
+        try:
+            kr.delete_password(LEGACY_SERVICE, provider)
+        except Exception:  # noqa: BLE001 - 删不掉不影响使用
+            pass
+    return legacy, True
+
+
+def _fetch_bundle(kr: _Keyring) -> tuple[dict[str, str], bool]:
+    """直接读钥匙串（读失败会抛），返回 (内容, 能否缓存)。条目不存在 → 尝试迁移；损坏 → 当作空。"""
+    raw = kr.get_password(SERVICE, ACCOUNT)
+    if raw is None:
+        return _migrate_legacy(kr)
+    return _parse_bundle(raw), True
+
+
+def _load_locked(kr: _Keyring) -> dict[str, str]:
+    """调用方须持有 _cache_lock。读失败不缓存，下次重试。"""
+    global _cache
+    if _cache is not None:
+        return _cache
+    bundle, cacheable = _fetch_bundle(kr)
+    if cacheable:
+        _cache = bundle
+    return bundle
+
+
+def _keyring_value(kr: _Keyring, provider: str) -> str | None:
+    with _cache_lock:
+        try:
+            return _load_locked(kr).get(provider)
+        except Exception:  # noqa: BLE001 - 钥匙串被锁/拒绝时继续降级
+            return None
+
+
 def get(provider: str) -> str | None:
     if provider not in PROVIDERS:
         raise ValueError(f"未知凭证：{provider}")
@@ -168,12 +291,8 @@ def get(provider: str) -> str | None:
     if env:
         return env.strip()
     kr = _keyring()
-    if kr is not None:
-        try:
-            if value := _clean(kr.get_password(SERVICE, provider)):
-                return value
-        except Exception:  # noqa: BLE001 - 钥匙串被锁/拒绝时继续降级
-            pass
+    if kr is not None and (value := _keyring_value(kr, provider)):
+        return value
     return _clean(_read_file().get(provider)) or _legacy_value(provider)
 
 
@@ -186,6 +305,36 @@ def peek(provider: str) -> str | None:
     return _clean(_read_file().get(provider)) or _legacy_value(provider)
 
 
+def _store_keyring(kr: _Keyring, provider: str, value: str) -> bool:
+    """以钥匙串里刚读到的内容为底合并并写回（不以缓存为底，防跨进程丢更新）；成功后才更新缓存。"""
+    global _cache
+    with _cache_lock:
+        try:
+            bundle = {**_fetch_bundle(kr)[0], provider: value}
+            _write_bundle(kr, bundle)
+        except Exception:  # noqa: BLE001 - 读/写失败都退化为文件
+            return False
+        _cache = bundle
+        return True
+
+
+def _scrub_keyring(kr: _Keyring, provider: str) -> None:
+    """尽力把钥匙串里这个 provider 的旧值（含旧版条目）清掉；任何失败都忽略。"""
+    global _cache
+    with _cache_lock:
+        _cache = None
+        try:
+            bundle = _fetch_bundle(kr)[0]
+            if provider in bundle:
+                _write_reduced(kr, {k: v for k, v in bundle.items() if k != provider})
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kr.delete_password(LEGACY_SERVICE, provider)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def set(provider: str, value: str) -> str:
     """写入凭证，返回实际使用的后端（keyring / file）。"""
     if provider not in PROVIDERS:
@@ -194,19 +343,53 @@ def set(provider: str, value: str) -> str:
     if not value:
         raise ValueError("凭证不能为空")
     kr = _keyring()
-    backend = "file"
-    if kr is not None:
-        try:
-            kr.set_password(SERVICE, provider, value)
-            backend = "keyring"
-        except Exception:  # noqa: BLE001
-            pass
+    backend = "keyring" if kr is not None and _store_keyring(kr, provider, value) else "file"
     if backend == "file":
+        if kr is not None:
+            _scrub_keyring(kr, provider)  # 别让钥匙串里的旧值盖住新写的文件值
         data = _read_file()
         data[provider] = value
         _write_file(data)
     _set_legacy_ignored(provider, False)  # 重新配置后恢复正常优先级
     return backend
+
+
+def _write_reduced(kr: _Keyring, reduced: dict[str, str]) -> None:
+    try:
+        if reduced:
+            _write_bundle(kr, reduced)
+        else:
+            kr.delete_password(SERVICE, ACCOUNT)
+    except Exception:  # noqa: BLE001 - 本来就没有也会抛；下面统一核实
+        pass
+
+
+def _verify_gone(kr: _Keyring, provider: str) -> None:
+    """绕过缓存重读钥匙串：新条目里没有它、旧版条目也没了，否则抛 SecretDeleteError。"""
+    try:
+        still = provider in _parse_bundle(kr.get_password(SERVICE, ACCOUNT))
+        still_legacy = bool(kr.get_password(LEGACY_SERVICE, provider))
+    except Exception as exc:  # noqa: BLE001
+        raise SecretDeleteError("无法确认钥匙串里的 Key 已删除") from exc
+    if still or still_legacy:
+        raise SecretDeleteError("钥匙串拒绝删除这个 Key（可能被锁定），请在「钥匙串访问」里手动删除")
+
+
+def _delete_keyring(kr: _Keyring, provider: str) -> None:
+    global _cache
+    with _cache_lock:
+        _cache = None  # 不以缓存为底：重新读，核实失败时也不留旧缓存
+        try:
+            reduced = {k: v for k, v in _fetch_bundle(kr)[0].items() if k != provider}
+        except Exception as exc:  # noqa: BLE001
+            raise SecretDeleteError("无法确认钥匙串里的 Key 已删除") from exc
+        _write_reduced(kr, reduced)
+        try:
+            kr.delete_password(LEGACY_SERVICE, provider)  # 防止以后迁移把它复活
+        except Exception:  # noqa: BLE001 - 本来就没有也会抛
+            pass
+        _verify_gone(kr, provider)
+        _cache = reduced
 
 
 def delete(provider: str) -> None:
@@ -215,17 +398,12 @@ def delete(provider: str) -> None:
     环境变量不归这里管；旧版文件不删（别的工具的），改为记下「不再读它」（KI-28）。
     """
     kr = _keyring()
+    keychain_error: SecretDeleteError | None = None
     if kr is not None:
         try:
-            kr.delete_password(SERVICE, provider)
-        except Exception:  # noqa: BLE001 - 本来就没有也会抛；下面统一核实
-            pass
-        try:
-            still = kr.get_password(SERVICE, provider)
-        except Exception as exc:  # noqa: BLE001
-            raise SecretDeleteError("无法确认钥匙串里的 Key 已删除") from exc
-        if still:
-            raise SecretDeleteError("钥匙串拒绝删除这个 Key（可能被锁定），请在「钥匙串访问」里手动删除")
+            _delete_keyring(kr, provider)
+        except SecretDeleteError as exc:  # 先把文件和旧版屏蔽处理完，最后再报错
+            keychain_error = exc
     data = _read_file()
     if data.pop(provider, None) is not None:
         _write_file(data)
@@ -233,6 +411,8 @@ def delete(provider: str) -> None:
         raise SecretDeleteError("凭证文件里的 Key 没删掉")
     if LEGACY_FILES.get(provider):
         _set_legacy_ignored(provider, True)
+    if keychain_error is not None:
+        raise keychain_error
 
 
 def status() -> dict[str, dict]:
