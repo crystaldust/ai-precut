@@ -386,6 +386,9 @@ tr.alt.open{display:table-row}
   margin-top:3px;border-radius:4px;border:2px solid var(--accent);background:#0e1014}
 .se-track input[type=range]::-moz-range-thumb{pointer-events:auto;cursor:ew-resize;width:8px;height:20px;border-radius:4px;
   border:2px solid var(--accent);background:#0e1014}
+.se-track input[type=range]:focus::-webkit-slider-thumb{border-color:var(--text);box-shadow:0 0 0 3px var(--accent)}   /* 方向键会动哪一端；用 :focus（鼠标点出来的焦点 :focus-visible 不一定亮） */
+.se-track input[type=range]:focus::-moz-range-thumb{border-color:var(--text);box-shadow:0 0 0 3px var(--accent)}
+.se-track input[type=range]:focus{outline:none}
 .se-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
 .se-fields{display:flex;gap:16px;align-items:center;margin-top:10px;flex-wrap:wrap}
 .se-fields label{display:flex;gap:6px;align-items:center;font-size:13px}

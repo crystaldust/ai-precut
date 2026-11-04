@@ -13,20 +13,22 @@ const COPY_SE_SAVE = '保存';
 const COPY_SE_SAVE_LIST = '保存并加到剪辑列表';
 const COPY_SE_DUR = '时长 {d} 秒';
 const COPY_SE_ORIGINAL = '原始 {a}–{b}';
-const COPY_SE_HINT = '拖动两端的手柄，或直接输入时间（1:02.3 或 62.3）。手柄范围是原始起止前后各 {n} 秒；输入框可以超出这个范围。';
+const COPY_SE_HINT = '拖动两端的手柄，或直接输入时间（1:02.3 或 62.3）。手柄范围是原始起止前后各 {n} 秒，输入框可以超出这个范围。微调：点一下手柄后按 ← →，每次 0.1 秒，加 Shift 每次 1 秒；在输入框里按 ↑ ↓ 也一样。';
 const COPY_SE_ERR_FORMAT = '时间格式不对，请写成 1:02.3 或直接写秒数';
 const COPY_SE_ERR_SHORT = '选段至少 {n} 秒';
 const COPY_SE_ERR_LONG = '结束时间不能超过素材总长 {d}';
 const COPY_SE_STALE = '片段列表刚刷新，请重新打开编辑';
 
-const SE_WINDOW_S = 10;          // 手柄范围：原始起止前后各 10 秒
+const SE_WINDOW_S = 60;          // 手柄范围：原始起止前后各 60 秒（再被 0 和素材总长截住）
 const SE_MIN_LEN_S = 0.5;        // 与服务端一致的最短选段
 const SE_STEP_S = 0.1;
+const SE_KEY_STEP_S = 0.1;       // 键盘微调：← → ↑ ↓ 每次 0.1 秒
+const SE_KEY_BIG_STEP_S = 1;     // 按住 Shift 每次 1 秒
 const SE_END_PREVIEW_S = 1;      // 拖结束手柄：从结束前 1 秒播到结束
 const SE_EPS_S = 1e-6;
 const SE_BOUNDS_PATH = '/api/browse/bounds';
 
-state.segEdit = null;   // 弹窗开着时：{b, seg, base, start, end, mat, bad, stopAt, lastT, timer}
+state.segEdit = null;   // 弹窗开着时：{b, seg, base, start, end, mat, bad, stopAt, lastT, timer, endKeyMoved, keyHandle}
 
 /* ---------------- 时间格式 ---------------- */
 function fmtMS(sec){   // 62.3 → 1:02.3；有百分位才显示两位（显示的就是发出去的，输入回去也能被接受）
@@ -85,7 +87,7 @@ function timeFieldHtml(which, label){
 }
 function sliderHtml(which){
   return `<input type="range" id="${which === 'start' ? 'seStart' : 'seEnd'}" data-input="segEditSlider" data-change="segEditSliderDone" data-which="${esc(which)}" `
-    + `aria-label="${esc(which === 'start' ? COPY_SE_START : COPY_SE_END)}">`;
+    + `aria-describedby="seHint" aria-label="${esc(which === 'start' ? COPY_SE_START : COPY_SE_END)}">`;
 }
 function segEditHtml(ed){
   return `<div class="seg-edit"><video id="seVideo" controls preload="metadata"></video>`
@@ -94,7 +96,7 @@ function segEditHtml(ed){
     + `<div class="se-scale"><span id="seLo"></span><span id="seHi"></span></div>`
     + `<div class="se-fields">${timeFieldHtml('start', COPY_SE_START)}${timeFieldHtml('end', COPY_SE_END)}<span class="se-dur" id="seDur"></span></div>`
     + `<div class="se-err" id="seErr" role="alert"></div>`
-    + `<p class="hint">${esc(COPY_SE_HINT.replace('{n}', SE_WINDOW_S))}</p>`
+    + `<p class="hint" id="seHint">${esc(COPY_SE_HINT.replace('{n}', SE_WINDOW_S))}</p>`
     + `<div class="job-actions"><button class="ghost" data-act="segEditReset">${esc(COPY_SE_RESET)}</button>`
     + `<button class="ghost" id="sePlay" data-act="segEditPlay">${esc(COPY_SE_PLAY)}</button><span class="se-gap"></span>`
     + `<button class="ghost" data-act="closeModal">${esc(COPY_SE_CANCEL)}</button>`
@@ -134,12 +136,13 @@ function openSegEdit(seg){
   if(!b || !seg || state.view !== 'browse' || modalOpen()) return false;
   const pv = $('#bPv');
   if(pv && !pv.paused) pv.pause();   // 主播放器让出声音
-  const ed = {b, seg, base: baseOf(seg), start: num(seg.start), end: num(seg.end), mat: 0, bad: {}, stopAt: null, lastT: null, timer: null};
+  const ed = {b, seg, base: baseOf(seg), start: num(seg.start), end: num(seg.end), mat: 0, bad: {}, stopAt: null, lastT: null, timer: null, endKeyMoved: false, keyHandle: null};
   ed.mat = materialDuration(ed, null);
   state.segEdit = ed;
   showModal(COPY_SE_TITLE, segEditHtml(ed));
   state.modalKind = 'segedit';
   wireVideo(ed);
+  wireHandles(ed);
   paintEdit(ed);
   const first = $('#seStartTxt');
   if(first) first.focus();   // 键盘用户直接能改开始时间
@@ -158,6 +161,17 @@ function wireVideo(ed){
   v.addEventListener('ended', () => stopEditPoll(ed));
   v.src = '/media/' + encodeURIComponent(ed.b.project) + '/proxy';
   v.currentTime = ed.start;
+}
+// WebKit（macOS 桌面壳）点 range 不会聚焦它，焦点还停在自动聚焦的输入框 / body 上：
+// 所以按下手柄时自己聚焦它并记下是哪一端（ed.keyHandle）；不 preventDefault，原生拖动照常。
+function wireHandles(ed){
+  [['seStart', 'start'], ['seEnd', 'end']].forEach(([id, which]) => {
+    const r = $('#' + id);
+    if(!r) return;
+    const grab = () => { ed.keyHandle = which; r.focus({preventScroll: true}); };
+    r.addEventListener('pointerdown', grab);
+    r.addEventListener('mousedown', grab);   // 没有 pointer 事件的环境
+  });
 }
 // 关弹窗（含被别的弹窗顶掉）：停视频、释放视频、清计时器
 function segEditClosed(){
@@ -185,7 +199,7 @@ function pollEdit(ed){
 function seekEdit(ed, t){
   const v = $('#seVideo');
   if(!v) return;
-  ed.stopAt = null; ed.lastT = null;
+  ed.stopAt = null; ed.lastT = null; ed.endKeyMoved = false;   // 任何别的定位 / 播放都让「按键后待试播」作废
   v.pause();
   v.currentTime = Math.max(0, t);
 }
@@ -193,44 +207,109 @@ function playEdit(ed, from, to){
   const v = $('#seVideo');
   if(!v) return;
   v.currentTime = Math.max(0, from);
-  ed.stopAt = to; ed.lastT = null;
+  ed.stopAt = to; ed.lastT = null; ed.endKeyMoved = false;
   startEditPoll(ed);
   playQuietly(v);
 }
 
 /* ---------------- 输入 ---------------- */
-function segEditSlider(el){   // 拖动中：只定位画面（end 手柄松手后才播）
-  const ed = state.segEdit;
-  if(!ed) return;
-  const v = round2(Math.min(num(el.value), ed.mat));   // 手柄最右可能比总长多一格
-  if(el.dataset.which === 'start'){ ed.start = round2(Math.max(0, Math.min(v, ed.end - SE_MIN_LEN_S))); ed.bad.start = false; }
+function seApplySlider(ed, which, raw){   // 手柄 / 键盘共用：夹到 [0, 总长] 与最短选段，再同步输入框并定位画面
+  const v = round2(Math.min(num(raw), ed.mat));   // 手柄最右可能比总长多一格
+  if(which === 'start'){ ed.start = round2(Math.max(0, Math.min(v, ed.end - SE_MIN_LEN_S))); ed.bad.start = false; }
   else{ ed.end = round2(Math.min(ed.mat, Math.max(v, ed.start + SE_MIN_LEN_S))); ed.bad.end = false; }
   paintEdit(ed);
   if(editError(ed)) return;
-  seekEdit(ed, el.dataset.which === 'start' ? ed.start : endPreviewFrom(ed));
+  seekEdit(ed, which === 'start' ? ed.start : endPreviewFrom(ed));
 }
-function endPreviewFrom(ed){ return Math.max(ed.start, ed.end - SE_END_PREVIEW_S); }
+function segEditSlider(el){   // 拖动中：只定位画面（end 手柄松手后才播）
+  const ed = state.segEdit;
+  if(!ed) return;
+  ed.keyHandle = el.dataset.which;   // 拖过哪一端，方向键就微调哪一端
+  seApplySlider(ed, el.dataset.which, el.value);
+}
+function endPreviewFrom(ed){ return round2(Math.max(ed.start, ed.end - SE_END_PREVIEW_S)); }
 function segEditSliderDone(el){   // 松手（change）：结束手柄从结束前 1 秒播到结束
   const ed = state.segEdit;
   if(ed && el.dataset.which === 'end' && !editError(ed)) playEdit(ed, endPreviewFrom(ed), ed.end);
 }
-function segEditText(el){   // 边打边校验（不改写正在打的框）
-  const ed = state.segEdit;
-  if(!ed) return;
-  const which = el.dataset.which, t = parseTime(el.value);
+function seTypeTime(ed, which, text){   // 边打边校验（不改写正在打的框）
+  const t = parseTime(text);
   ed.bad[which] = Number.isNaN(t);
   if(!ed.bad[which]) ed[which] = round2(t);
   paintEdit(ed, which);
 }
-function segEditCommit(el){   // 打完（失焦 / 回车）：整理成 m:ss.s，并把视频定到那里
-  const ed = state.segEdit;
-  if(!ed) return;
-  const which = el.dataset.which;
+function segEditText(el){ const ed = state.segEdit; if(ed) seTypeTime(ed, el.dataset.which, el.value); }
+function seCommitTime(ed, which, el){   // 打完（失焦 / 回车）：整理成 m:ss.s，并把视频定到那里
   if(ed.bad[which]) return;
   el.value = fmtMS(ed[which]);
   paintEdit(ed);
   if(!editError(ed)) seekEdit(ed, which === 'start' ? ed.start : endPreviewFrom(ed));
 }
+function segEditCommit(el){ const ed = state.segEdit; if(ed) seCommitTime(ed, el.dataset.which, el); }
+
+/* ---------------- 键盘微调（弹窗里的手柄和输入框） ---------------- */
+// 手柄：← → ↑ ↓ 每次 0.1 秒，Shift 每次 1 秒；输入框：↑ ↓（← → 留给光标）。
+// 手柄的键盘调整自己处理（preventDefault），约束与拖动完全一样（seApplySlider），不依赖浏览器原生的 0.1 步进。
+// 结束手柄：连按 / 按住时只定位画面，松开箭头键（keyup）时才从结束前 1 秒播到结束，一轮只播一次。
+const SE_KEY_TARGETS = {seStart: {which: 'start', slider: true}, seEnd: {which: 'end', slider: true},
+                        seStartTxt: {which: 'start', slider: false}, seEndTxt: {which: 'end', slider: false}};
+const SE_KEY_SIGN = {ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1};
+const SE_IME_KEYCODE = 229;
+function seKeyTarget(e){   // 输入法选字（isComposing / keyCode 229）里的方向键不是微调
+  const ed = state.segEdit, tg = e.target && SE_KEY_TARGETS[e.target.id];
+  if(e.isComposing || e.keyCode === SE_IME_KEYCODE) return null;
+  return ed && state.modalKind === 'segedit' && tg ? {ed, ...tg} : null;
+}
+const SE_TEXT_ENTRY_TAGS = ['INPUT', 'TEXTAREA', 'SELECT', 'VIDEO'];   // 这些元素自己要用方向键（光标 / 选项 / 播放器）
+// 兜底：焦点没落在手柄上（WebKit 点手柄不聚焦）时，← → 仍然微调最近碰过的那一端；输入框 / 下拉 / 视频里的方向键不动
+function seFallbackTarget(e){
+  const ed = state.segEdit, t = e.target;
+  if(!ed || state.modalKind !== 'segedit' || !ed.keyHandle || e.isComposing || e.keyCode === SE_IME_KEYCODE) return null;
+  if(e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return null;
+  if(t && (SE_KEY_TARGETS[t.id] || SE_TEXT_ENTRY_TAGS.includes(t.tagName) || t.isContentEditable)) return null;
+  return {ed, which: ed.keyHandle, slider: true};
+}
+function seKeyDelta(e, slider){   // 0 = 这个键不归我们管（带 Ctrl / Meta / Alt 的留给浏览器）
+  if(e.ctrlKey || e.metaKey || e.altKey) return 0;
+  const sign = SE_KEY_SIGN[e.key] || 0, vertical = e.key === 'ArrowUp' || e.key === 'ArrowDown';
+  return sign && (slider || vertical) ? sign * (e.shiftKey ? SE_KEY_BIG_STEP_S : SE_KEY_STEP_S) : 0;
+}
+// 落在 0.1 的格子上，和原生滑块一样：先把当前值吸到格子（往前走吸到下面一格，往后走吸到上面一格）再加减一个步长。
+// 12.34 → 12.4 / 12.3；Shift 同理（13.3 / 11.4）。总长不在格子上（59.95）时，上限仍由 seApplySlider 夹回总长。
+function seSnapStep(cur, delta){
+  const tenth = Math.round(1 / SE_STEP_S);
+  const base = delta > 0 ? Math.floor(cur * tenth + SE_EPS_S) : Math.ceil(cur * tenth - SE_EPS_S);
+  return round2(base / tenth + delta);
+}
+function seStepSlider(ed, which, delta){
+  const win = windowOf(ed), cur = Math.min(win.hi, Math.max(win.lo, ed[which]));   // 从手柄上显示的位置起步，和原生一样
+  seApplySlider(ed, which, Math.min(win.hi, Math.max(win.lo, seSnapStep(cur, delta))));
+  if(which === 'end') ed.endKeyMoved = true;
+}
+function seStepText(ed, which, el, delta){
+  const t = parseTime(el.value);
+  if(Number.isNaN(t)) return false;   // 写不出数字就不动
+  el.value = fmtMS(Math.max(0, round2(t + delta)));
+  seTypeTime(ed, which, el.value);
+  seCommitTime(ed, which, el);
+  return true;
+}
+function onSegEditKey(e){
+  const tg = seKeyTarget(e) || seFallbackTarget(e), delta = tg ? seKeyDelta(e, tg.slider) : 0;
+  if(!delta) return;
+  if(tg.slider){ e.preventDefault(); seStepSlider(tg.ed, tg.which, delta); }
+  else if(seStepText(tg.ed, tg.which, e.target, delta)) e.preventDefault();
+}
+function onSegEditKeyUp(e){
+  const tg = seKeyTarget(e) || seFallbackTarget(e);
+  if(!tg || !tg.slider || tg.which !== 'end' || !SE_KEY_SIGN[e.key] || !tg.ed.endKeyMoved) return;
+  tg.ed.endKeyMoved = false;
+  if(!editError(tg.ed)) playEdit(tg.ed, endPreviewFrom(tg.ed), tg.ed.end);
+}
+document.addEventListener('keydown', onSegEditKey);
+document.addEventListener('keyup', onSegEditKeyUp);
+document.addEventListener('focusout', e => { const ed = state.segEdit; if(ed && e.target && e.target.id === 'seEnd') ed.endKeyMoved = false; });   // 离开结束手柄：之后的松键不再试播
+
 function segEditPlay(){
   const ed = state.segEdit;
   if(ed && !editError(ed)) playEdit(ed, ed.start, ed.end);
