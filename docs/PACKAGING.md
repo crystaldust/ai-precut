@@ -72,7 +72,9 @@ Xcode Command Line Tools、`pkg-config` 与 `cmake`，用户机器不需要；�
    FFmpeg 8.x 的 `drawtext`（预览片字幕）依赖 libfreetype **和 libharfbuzz**：脚本同时静态编入
    FreeType 2.14.3（FTL）与 HarfBuzz 14.6.0（Old MIT，cmake 构建，glib/icu/cairo/graphite/CoreText 全关）。
 3. **Mac 仅 arm64**（Windows 为 x64，见下节）：Intel Mac 需要另外一份 x86_64 静态二进制与构建。
-4. 首次启动会弹**钥匙串授权**（读 API Key），选"始终允许"。
+4. 首次启动会弹**钥匙串授权**（读 API Key），选"始终允许"。两个 Key 存在同一条钥匙串记录「AI粗剪」
+   （账户 `api-keys`），每个进程只读一次，所以只弹一次；老版本存的两条 `ai-cut` 记录在第一次读取时自动并进来并删除，
+   这一次会多弹旧记录的授权。
 
 ## Windows 版（里程碑 16）
 
