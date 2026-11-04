@@ -176,8 +176,79 @@ def test_workflow_build_job():
     assert "timeout-minutes: 3" in build and "WaitForExit(120000)" in build and "Stop-Process" in build
     assert "-NoNewWindow" not in build and "Python.Runtime.dll" in build and "WebView2Loader.dll" in build
     assert re.search(r"upload-artifact@[0-9a-f]{40} # v", build)
-    run_blocks = re.findall(r"run: \|\n((?:          .*\n)+)", build)
+    run_blocks = re.findall(r"run: \|\n((?:(?:          .*)?\n)+)", build)
     assert not any("${{" in b for b in run_blocks)  # 表达式只放 env:
+
+
+def _job(wf, name):
+    start = wf.index(f"\n  {name}:")
+    ends = [wf.find(f"\n  {n}:", start + 1) for n in ("verify", "test", "build", "release")]
+    ends = [e for e in ends if e > start]
+    return wf[start:min(ends)] if ends else wf[start:]
+
+
+def test_workflow_upload_is_single_layer_zip():
+    build = _job(_read(".github/workflows/windows.yml"), "build")
+    m = re.search(r"- uses: actions/upload-artifact@([0-9a-f]{40}) # v\S+\n((?:        .*\n)+)", build)
+    assert m, "upload-artifact 必须按 40 位 SHA 钉死"
+    step = m.group(2)
+    assert re.search(r"^\s+archive: false\s*$", step, re.M)
+    assert not re.search(r"^\s+name:", step, re.M)  # archive:false 时 name 被忽略，artifact 名 = 文件名
+    assert "path: dist/ai-cut-windows-x64-*.zip" in step
+
+
+def test_workflow_triggers_on_main_and_version_tags():
+    text = _read(".github/workflows/windows.yml")
+    on = text[text.index("\non:"):text.index("\npermissions:")]
+    assert re.search(r"push:\n\s+branches: \[main\]\n\s+tags: \[(['\"])v\*\1\]", on)
+    assert "workflow_dispatch:" in on
+
+
+def test_workflow_release_job():
+    text = _read(".github/workflows/windows.yml")
+    top = text[:text.index("\njobs:")]
+    assert re.search(r"^permissions:\n  contents: read\n(?!  )", top[top.index("\npermissions:") + 1:], re.M)
+    assert text.count("contents: write") == 1  # 只有 release 一个 job 有写权限
+    body = _job(text, "release")
+    assert "contents: write" in body
+    assert "needs: build" in body
+    assert re.search(r"^    if: .*refs/tags/v", body, re.M)
+    assert re.search(r"runs-on: ubuntu-", body)
+    assert "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2" in body
+    assert "pattern: ai-cut-windows-x64-*" in body and "merge-multiple: true" in body and "path: dist" in body
+    assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1" in body
+    assert "persist-credentials: false" in body
+    assert "pyproject.toml" in body and "TAG: ${{ github.ref_name }}" in body
+    assert "GH_TOKEN: ${{ github.token }}" in body
+    assert 'gh release create "$TAG"' in body and "--verify-tag" in body and "--title" in body
+    assert "--notes-file" in body
+    assert "skip-decompress: true" in body
+    assert 'ZIPS=(dist/ai-cut-windows-x64-*.zip)' in body and '"${#ZIPS[@]}" -ne 1' in body and '-${TAG#v}-' in body
+    assert "fetch-depth: 0" in body
+    assert "git fetch --no-tags origin main" in body
+    assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in body
+    assert 'gh release view "$TAG"' in body and "--draft" in body
+    assert 'gh release upload "$TAG" "$ZIP" --clobber' in body and 'gh release edit "$TAG" --draft=false' in body
+    assert "不要在压缩包预览窗口里双击或把文件夹拖出来" in body
+    assert "Evergreen" in body and "WebView2 Runtime" in body and "developer.microsoft.com/microsoft-edge/webview2" in body
+    for key in ("全部提取", "ai-cut.exe", "仍要运行", "WebView2"):
+        assert key in body
+    for block in re.findall(r"run: \|\n((?:(?:          .*)?\n)+)", body):
+        assert "${{" not in block  # 表达式只放 env:
+    for ref in re.findall(r"uses: (\S+)", text):  # 所有 action 都按 SHA 钉死
+        assert re.search(r"@[0-9a-f]{40}$", ref), ref
+
+
+def test_windows_copy_is_single_layer():
+    from gui import install_page
+    texts = {
+        "readme": _read("packaging/首次打开说明-Windows.txt"),
+        "remedy": "\n".join(install_page.REMEDY_WIN),
+    }
+    for name, t in texts.items():
+        assert "两层" not in t, name
+        assert "全部提取" in t and "拖" in t, name
+        assert "还有" in t and "zip" in t, name  # 解压后里面还有 zip：再提取一次
 
 
 def test_pyinstaller_runs_without_repo_root_on_sys_path():
