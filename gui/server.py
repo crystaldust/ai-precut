@@ -35,7 +35,8 @@ from gui import (  # noqa: E402
     browse_batch, jianying, jobs, maintenance, media, opener, prefs, project_routes, result_routes, session, settings,
     support, views,
 )
-from gui.static_files import STATIC_FILES  # noqa: E402
+from gui import install_page  # noqa: E402
+from gui.static_files import STATIC_FILES, missing_static  # noqa: E402
 from gui.jobs import (  # noqa: E402,F401 - 路由与测试都按 server.<名字> 引用
     JOB_COMMANDS, JOBS, JOBS_LOCK, JobConflict, run_aicut, start_job,
 )
@@ -171,6 +172,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
 
     def _send_page(self, f: Path) -> None:
+        if missing := missing_static(STATIC):  # 安装不完整：不发会白屏的主页，给明确说明
+            return self._send(200, install_page.render(missing), "text/html; charset=utf-8",
+                              {"Content-Security-Policy": PAGE_CSP})
         return self._send(200, f.read_bytes(), "text/html; charset=utf-8",
                           {"Content-Security-Policy": PAGE_CSP})
 
@@ -528,6 +532,12 @@ def report_stale_job() -> None:
             pid=stale["pid"]), file=sys.stderr)
 
 
+def log_missing_static() -> None:
+    """启动自检：白名单里的静态文件缺了就记一行错误（只写文件名）。"""
+    if missing := missing_static(STATIC):
+        LOG.error("安装不完整，缺少 %d 个静态文件：%s", len(missing), ", ".join(missing))
+
+
 def serve_in_background(start_port: int = 8765) -> tuple[ThreadingHTTPServer, str]:
     """给桌面壳用：起服务并返回 (server, url)，不阻塞。"""
     port = start_port
@@ -540,6 +550,7 @@ def serve_in_background(start_port: int = 8765) -> tuple[ThreadingHTTPServer, st
             port += 1
     if srv is None:
         raise RuntimeError("没有可用端口")
+    log_missing_static()
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, f"http://127.0.0.1:{port}/"
 
@@ -574,6 +585,7 @@ def main() -> None:
     print(f"剪辑台已启动：{url}")
     print("关闭这个窗口即退出。")
     report_stale_job()
+    log_missing_static()
     if args.open:
         threading.Timer(0.6, open_browser, args=(url,)).start()
     else:

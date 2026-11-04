@@ -27,7 +27,7 @@ BUILD_INFO = _version.build_info(ROOT)
 
 hidden = [
     "aicut",
-    "gui.analysis", "gui.browse_batch", "gui.confirm", "gui.jianying", "gui.jobs", "gui.maintenance",
+    "gui.analysis", "gui.browse_batch", "gui.confirm", "gui.install_page", "gui.jianying", "gui.jobs", "gui.maintenance",
     "gui.media", "gui.opener", "gui.payloads", "gui.prefs", "gui.project_routes", "gui.result_payload", "gui.result_routes",
     "gui.server", "gui.session", "gui.settings",
     "gui.static_files", "gui.support", "gui.views", "gui.wizard",
