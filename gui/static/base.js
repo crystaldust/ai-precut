@@ -11,9 +11,14 @@ const state = {
   block: null,                                    // ② 页内联的前置条件：{need: 'consent'|'keys', message, missing, cfg}
 };
 
+state.nowPictureOpen = false;   // ③ 当前段里「画面」折叠区是否展开（只管本次页面会话，不存盘）
+
 const TOAST_ERROR_MS = 6000;
 const MB = 1e6;
 const POST_HEADERS = {'Content-Type': 'application/json'};
+
+// 最多保留 n 个字符，真截断了才补「…」
+function clipText(str, n){ const t = String(str ?? ''); return t.length > n ? t.slice(0, n) + '…' : t; }
 
 function toast(msg, ms=1800){
   const t = $('#toast'); t.textContent = msg; t.classList.add('on');

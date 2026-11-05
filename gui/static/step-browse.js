@@ -28,6 +28,7 @@ const COPY_GROUP_STATS = '可用 {u} · 待定 {p} · 废片 {w} · 可用时长
 const COPY_NO_TOPIC = '未归类';
 const COPY_NOT_IN_FILTER = '当前这一段已不在「{f}」里（切换筛选后会隐藏）';
 const COPY_PICTURE = '画面：';
+const COPY_NOW_VIS = '画面';   // 当前段里折叠的画面信息的标题
 const COPY_VISUAL_MARK = '▣ ';
 const COPY_VISUAL_SEG = '画面片段';
 const COPY_ON_SCREEN = '画面上的字：';
@@ -46,7 +47,6 @@ const VISUAL_TAGS = {soft: '虚焦', shaky: '抖动', dark: '过暗', still: '�
 const PAD_S = 0.3;                // 试听前后各多放 0.3 秒（D15）
 const KEYPOINT_LISTEN_S = 4;      // 点关键信息试听的秒数
 const TEXT_PREVIEW_CHARS = 60;
-const NOW_PREVIEW_CHARS = 40;
 const PICTURE_PREVIEW_CHARS = 40;
 const STOP_POLL_MS = 40;         // 播放中每 40ms 看一次有没有跨过出点
 
@@ -158,8 +158,8 @@ function segText(s){
 // 画面一小行：描述（画面片段的描述已在标题里，只补画面上的字）+ 画面问题标签
 function pictureHtml(s){
   const v = s.visual || {}, parts = [];
-  if(s.kind !== 'visual' && v.desc) parts.push(COPY_PICTURE + String(v.desc).slice(0, PICTURE_PREVIEW_CHARS));
-  if(v.text_on_screen) parts.push(COPY_ON_SCREEN + String(v.text_on_screen).slice(0, PICTURE_PREVIEW_CHARS));
+  if(s.kind !== 'visual' && v.desc) parts.push(COPY_PICTURE + clipText(v.desc, PICTURE_PREVIEW_CHARS));
+  if(v.text_on_screen) parts.push(COPY_ON_SCREEN + clipText(v.text_on_screen, PICTURE_PREVIEW_CHARS));
   const issues = (Array.isArray(v.issues) ? v.issues : []).map(x => `<span class="vt">${esc(String(x))}</span>`).join('');
   return parts.length || issues ? `<small class="vis">${esc(parts.join(' · '))}${issues}</small>` : '';
 }
@@ -171,7 +171,7 @@ function rowHtml(s){
     + `<div class="tc" id="tc${i}">${fmt(num(s.start))}</div>`
     + `<div class="lv lv${lv}" id="lv${i}">${esc(LEVEL_NAMES[lv] || '')}</div>`
     + `<div class="cat" title="${esc(s.topic || '')}">${esc(s.topic || '—')}</div>`
-    + `<div class="sum">${esc(segText(s).slice(0, TEXT_PREVIEW_CHARS))}`
+    + `<div class="sum">${esc(clipText(segText(s), TEXT_PREVIEW_CHARS))}`
     + `<span class="tag-list">${esc(COPY_TAG_IN_LIST)}</span><span class="tag-un">${esc(COPY_TAG_UNUSABLE)}</span>`
     + `<span class="tag-edit" id="ed${i}" title="${esc(boundsChipTitle(s))}">${esc(COPY_TAG_EDITED)}</span>`
     + (s.inCut ? `<span class="used">${esc(COPY_TAG_USED)}</span>` : '')
@@ -270,8 +270,9 @@ function paintRow(s){
 function editKeyHtml(){ const k = keyLabel(state.shortcuts.edit || ''); return k ? ` <kbd>${esc(k)}</kbd>` : ''; }   // 没有键位（被用户的绑定占了）就不显示
 function renderNow(){
   const s = curSeg(), now = $('#bNow');
+  wireNow(now);
   now.innerHTML = s
-    ? `<b>${esc(fmt(num(s.start)))}–${esc(fmt(num(s.end)))}</b>　${esc(segText(s).slice(0, NOW_PREVIEW_CHARS))}`
+    ? `<b>${esc(fmt(num(s.start)))}–${esc(fmt(num(s.end)))}</b>　${esc(segText(s))}`
       + ` <button class="ghost se-open" data-act="editBounds">${esc(COPY_EDIT_BOUNDS)}${editKeyHtml()}</button>`
       + `<br><span class="why">${esc(s.level_reason || '')}</span>` + nowPictureHtml(s)
     : `<span class="why">${esc(COPY_NOW_HINT)}</span>`;
@@ -282,7 +283,16 @@ function nowPictureHtml(s){
   const titled = s.kind === 'visual' && !s.label;   // 没有标题时正文已经是画面描述
   const lines = [v.desc && !titled ? COPY_PICTURE + String(v.desc) : '', v.text_on_screen ? COPY_ON_SCREEN + String(v.text_on_screen) : '',
                  issues.length ? COPY_PICTURE_ISSUES + issues.map(String).join('、') : ''].filter(Boolean);
-  return lines.map(t => `<br><span class="vis">${esc(t)}</span>`).join('');
+  if(!lines.length) return '';
+  return `<details class="now-vis"${state.nowPictureOpen ? ' open' : ''}><summary>${esc(COPY_NOW_VIS)}</summary>`
+    + lines.map(t => `<span class="vis">${esc(t)}</span>`).join('') + '</details>';
+}
+function wireNow(now){   // 只接一次；toggle 不冒泡，所以用捕获。renderNow 每次重写 innerHTML，开合状态存在 state 里
+  if(now.bWired) return;
+  now.bWired = true;
+  now.addEventListener('toggle', e => {
+    if(e.target && e.target.classList && e.target.classList.contains('now-vis')) state.nowPictureOpen = !!e.target.open;
+  }, true);
 }
 function setCurrent(s){   // 只换焦点框，不动播放器
   const b = bs(), prev = b.cur;
