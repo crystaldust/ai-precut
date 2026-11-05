@@ -249,6 +249,9 @@ pre.notices{white-space:pre-wrap;font-size:12px;line-height:1.5;max-height:60vh;
 .row .vt{margin-left:6px;padding:0 5px;border-radius:4px;background:#2a2f3a;color:#c8d2e0}
 .row .vis{display:block;opacity:.85}
 .b-now .vis{color:#9fb0c4}
+.b-now .now-vis{margin-top:4px}
+.b-now .now-vis summary{cursor:pointer;color:var(--muted);font-size:12px}
+.b-now .now-vis .vis{display:block}
 .row .tag-list,.row .tag-un{display:none;margin-left:6px;font-size:10px;padding:0 6px;border-radius:4px}
 .row .tag-list{background:#17304f;color:var(--accent)}
 .row .tag-un{background:#4a2b2b;color:var(--danger)}
@@ -374,7 +377,7 @@ tr.alt.open{display:table-row}
 
 /* ③ 编辑起止弹窗（segment-edit.js）：一条轨道上叠两个 range，只让手柄接收鼠标 */
 .seg-edit video{width:100%;max-height:34vh;background:#000;border-radius:8px}
-.se-text{margin:8px 0 2px;font-size:12.5px;color:var(--muted)}
+.se-text{margin:8px 0 2px;font-size:12.5px;line-height:1.5;max-height:calc(1.5em * 4);overflow-y:auto;color:var(--muted)}
 .se-track{position:relative;height:30px;margin:30px 0 0;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer}   /* 上面留位置给播放头的时间气泡 */
 .se-track::before{content:"";position:absolute;left:0;right:0;top:13px;height:4px;border-radius:2px;background:var(--line)}
 .se-fill{position:absolute;top:13px;height:4px;border-radius:2px;background:var(--accent)}
