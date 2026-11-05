@@ -375,7 +375,7 @@ tr.alt.open{display:table-row}
 /* ③ 编辑起止弹窗（segment-edit.js）：一条轨道上叠两个 range，只让手柄接收鼠标 */
 .seg-edit video{width:100%;max-height:34vh;background:#000;border-radius:8px}
 .se-text{margin:8px 0 2px;font-size:12.5px;color:var(--muted)}
-.se-track{position:relative;height:30px;margin:8px 0 0}
+.se-track{position:relative;height:30px;margin:30px 0 0;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer}   /* 上面留位置给播放头的时间气泡 */
 .se-track::before{content:"";position:absolute;left:0;right:0;top:13px;height:4px;border-radius:2px;background:var(--line)}
 .se-fill{position:absolute;top:13px;height:4px;border-radius:2px;background:var(--accent)}
 .se-track input[type=range]{position:absolute;left:0;top:0;width:100%;height:30px;margin:0;padding:0;border:0;background:none;
@@ -389,12 +389,22 @@ tr.alt.open{display:table-row}
 .se-track input[type=range]:focus::-webkit-slider-thumb{border-color:var(--text);box-shadow:0 0 0 3px var(--accent)}   /* 方向键会动哪一端；用 :focus（鼠标点出来的焦点 :focus-visible 不一定亮） */
 .se-track input[type=range]:focus::-moz-range-thumb{border-color:var(--text);box-shadow:0 0 0 3px var(--accent)}
 .se-track input[type=range]:focus{outline:none}
+.se-ph{position:absolute;top:-4px;bottom:-2px;width:2px;margin-left:-1px;background:var(--text);pointer-events:none;z-index:2}   /* 播放头：白线；不接鼠标，点击落到时间轴上 */
+.se-ph::before{content:"";position:absolute;left:-4px;top:-5px;border:5px solid transparent;border-bottom:0;border-top-color:var(--text)}
+.se-ph.snapped{background:var(--warn)}   /* 手柄吸附到播放头时变黄 */
+.se-ph.snapped::before{border-top-color:var(--warn)}
+.se-ph-chip{position:absolute;bottom:100%;margin-bottom:5px;padding:1px 6px;border-radius:4px;background:var(--text);color:#0e1014;
+  font-size:11px;line-height:16px;white-space:nowrap}
+.se-ph.snapped .se-ph-chip{background:var(--warn)}
+.se-track:focus{outline:none}
+.se-track:focus .se-ph{box-shadow:0 0 0 3px var(--accent)}   /* 方向键会动播放头 */
 .se-scale{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
 .se-fields{display:flex;gap:16px;align-items:center;margin-top:10px;flex-wrap:wrap}
 .se-fields label{display:flex;gap:6px;align-items:center;font-size:13px}
 .se-fields input{width:96px}
 .se-dur{color:var(--muted);font-size:12px}
 .se-err{min-height:18px;margin-top:6px;color:var(--danger);font-size:12.5px}
+.se-err.se-ph-err{min-height:0;margin-top:0}
 .se-gap{flex:1}
 .b-now .se-open{margin-left:8px;padding:2px 8px;font-size:12px}
 .row .tag-edit{display:none;margin-left:6px;font-size:10px;padding:0 6px;border-radius:4px;background:#3a3017;color:#e8c46a}
