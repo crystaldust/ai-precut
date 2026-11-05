@@ -24,7 +24,7 @@ ANALYSIS_STEPS = (
     ("asr", "云端转写", ("transcribe",), "segments"),
     ("voice", "声音分析", ("analyze",), "audio_json"),
     ("visual", "画面检查", ("scenes", "quality"), "visual"),
-    ("text", "AI 理解对话", ("text",), "text_json"),
+    ("text", "AI 理解对话", ("text", "segment_summary"), "text_json"),
     ("score", "判定档位", ("score",), "scored"),
     ("summary", "写内容摘要", ("summary",), "summary"),
     ("questions", "准备决策问题", ("questions",), "questions"),
@@ -48,6 +48,7 @@ ARTIFACT_KEYS = ("materials", "proxy", "wav", "segments", "audio_json", "visual"
                  "vision_aligned")
 # 整个「分析」算完成的判据，与 gui/wizard.py 的 analysis_done 同一份（旧项目没有戳也适用）
 COMPLETE_KEYS = ("proxy", "scored", "summary", "questions", "selection")
+OPTIONAL_STAGES = frozenset({"segment_summary"})  # 失败只是少了总结，不算这一行失败
 # 画面质量检查失败只是警告、不产出文件：这些步骤的依赖阶段全部 ok 也算完成
 TIMINGS_DONE_STEPS = frozenset({"visual"})
 # 同一个阶段里中途就产出文件的步骤：转写阶段先抽音轨再转写，抽完音轨就算「抽音轨」完成
@@ -132,13 +133,13 @@ def _owner_of_seconds(steps: tuple) -> dict[str, str]:
 def _step_status(key: str, deps: tuple, artifact: str, f: dict, run: dict | None) -> str:
     """run：分析正在跑时 {"since", "stage"}；没在跑为 None。"""
     timings = f["timings"]
-    entries = [_entry(timings, d) for d in deps]
+    required = [_entry(timings, d) for d in deps if d not in OPTIONAL_STAGES]  # 可选阶段不参与任何完成 / 失败判断
     has_result = bool(f["artifacts"].get(artifact)) or (
-        key in TIMINGS_DONE_STEPS and all(e.get("ok") is True for e in entries))
+        key in TIMINGS_DONE_STEPS and all(e.get("ok") is True for e in required))
     if has_result and (run is None or _ran_this_time(key, deps, run["stage"], timings, run["since"])):
         return "done"
     running = run is not None
-    if not running and any(e.get("ok") is False for e in entries):
+    if not running and any(e.get("ok") is False for e in required):
         return "failed"
     return "waiting"
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pipeline import applog, custom_rules, fingerprints, mode, notices, questions, review, schema, select, topic_names, visual_clips
+from pipeline import applog, custom_rules, fingerprints, mode, notices, questions, review, schema, segment_summary, select, topic_names, visual_clips
 
 LOG = applog.get("gui")
 NO_SCORED_MSG = "还没有三档判定，先跑 analyze/text/score"
@@ -58,6 +58,15 @@ def material_duration_of(work: Path) -> float:
     return duration
 
 
+def _summaries(work: Path) -> dict[str, str]:
+    """work/segment_summaries.json 里可用的一句话总结 {id: 文本}；缺失 / 损坏 / 不合法的条目当没有。"""
+    rows = _jload(work / segment_summary.OUT_FILE, None)
+    rows = rows.get("items") if isinstance(rows, dict) else None
+    rows = rows if isinstance(rows, dict) else {}
+    out = {k: segment_summary.normalize(v.get("summary")) for k, v in rows.items() if isinstance(v, dict)}
+    return {k: v for k, v in out.items() if v}
+
+
 def browse(pdir: Path, name: str) -> dict:
     cfg = schema.read_json(pdir / "project.json", default={})  # 损坏 → CorruptJSON → 409（KI-21）
     try:
@@ -93,12 +102,15 @@ def browse(pdir: Path, name: str) -> dict:
     summary = _jload(work / "content_summary.json") or {}
     material_duration = material_duration_of(work)
 
+    stored = _summaries(work)
     names = topic_names.load(work)  # P3：只改显示，topic_raw 仍是匹配键
     for s in segments:
         s["inCut"] = in_cut(s, shots)
         s["dur"] = round(s["end"] - s["start"], 2)
         s["topic_raw"] = s.get("topic")
         s["topic"] = topic_names.display(s.get("topic"), names)
+        if not visual_clips.is_visual(s) and s["id"] in stored:
+            s["summary"] = stored[s["id"]]
 
     goal = cfg.get("target_duration") or DEFAULT_TARGET_S
     return {

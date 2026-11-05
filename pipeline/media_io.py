@@ -169,6 +169,14 @@ def timeout_for(media_s: float) -> float:
     return max(FFMPEG_MIN_TIMEOUT_S, float(media_s or 0) * FFMPEG_TIMEOUT_PER_MEDIA_S)
 
 
+def material_timeout(pdir: Path) -> float:
+    """抽音轨 / 代理的 ffmpeg 超时：按素材台账里的时长；读不到用兜底值（KI-61）。"""
+    items = schema.read_json_lenient(Path(pdir) / "work/materials.json", {}).get("items") or [{}]
+    duration = items[0].get("duration") if isinstance(items[0], dict) else None
+    return timeout_for(duration) if isinstance(duration, (int, float)) and duration > 0 \
+        else FFMPEG_TIMEOUT_S
+
+
 def run_ffmpeg(args: list[str], *, runner=subprocess.run, timeout: float = FFMPEG_TIMEOUT_S) -> None:
     """ffmpeg <args>；非零退出 / 超时抛 MediaError（超时时 subprocess.run 已杀掉子进程）。"""
     try:

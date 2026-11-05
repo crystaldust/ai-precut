@@ -21,6 +21,9 @@ const COPY_TAG_IN_LIST = '已在剪辑列表';
 const COPY_TAG_UNUSABLE = '不可用';
 const COPY_TAG_USED = '已用';
 const COPY_TAG_EDITED = '已调整';   // 起止被改过（编辑在 segment-edit.js）
+const COPY_SUMMARY_STALE = '可能过时';   // 总结是模型按原对白写的，起止改过后不会重写
+const COPY_SUMMARY_STALE_TIP = '起止已改，总结按原来的对白写的，可能过时';
+const SUMMARY_MAX_CHARS = 20;   // 必须与 pipeline/segment_summary.SUMMARY_MAX 一致（tests/test_frontend_segment_summary.py 校验）
 const COPY_EDIT_BOUNDS = '编辑起止';
 const COPY_MARK_UNUSABLE = '标为不可用';
 const COPY_NOW_HINT = '按 ↓ 选一段，空格播放，S 放入剪辑列表';
@@ -155,6 +158,14 @@ function segText(s){
   if(s.kind !== 'visual') return String(s.text ?? '');
   return COPY_VISUAL_MARK + String(s.label || (s.visual || {}).desc || COPY_VISUAL_SEG);
 }
+// 对白段的一句话总结（模型输出，不可信：转义 + 客户端再截一次）；画面片段没有；起止改过则标灰 + 「可能过时」
+function segSummaryHtml(s){
+  if(!s || s.kind === 'visual' || typeof s.summary !== 'string' || !s.summary.trim()) return '';
+  const text = Array.from(s.summary).slice(0, SUMMARY_MAX_CHARS).join('');
+  const stale = !!s.bounds_edited;
+  return `<b class="ssum${stale ? ' stale' : ''}">${esc(text)}</b>`
+    + (stale ? `<span class="tag-stale" title="${esc(COPY_SUMMARY_STALE_TIP)}">${esc(COPY_SUMMARY_STALE)}</span>` : '');
+}
 // 画面一小行：描述（画面片段的描述已在标题里，只补画面上的字）+ 画面问题标签
 function pictureHtml(s){
   const v = s.visual || {}, parts = [];
@@ -171,10 +182,10 @@ function rowHtml(s){
     + `<div class="tc" id="tc${i}">${fmt(num(s.start))}</div>`
     + `<div class="lv lv${lv}" id="lv${i}">${esc(LEVEL_NAMES[lv] || '')}</div>`
     + `<div class="cat" title="${esc(s.topic || '')}">${esc(s.topic || '—')}</div>`
-    + `<div class="sum">${esc(clipText(segText(s), TEXT_PREVIEW_CHARS))}`
+    + `<div class="sum"><span class="sline" id="ss${i}">${segSummaryHtml(s)}</span><span class="orig">${esc(clipText(segText(s), TEXT_PREVIEW_CHARS))}`   // 状态标签放在原文这一行里：有总结时行高不变
     + `<span class="tag-list">${esc(COPY_TAG_IN_LIST)}</span><span class="tag-un">${esc(COPY_TAG_UNUSABLE)}</span>`
     + `<span class="tag-edit" id="ed${i}" title="${esc(boundsChipTitle(s))}">${esc(COPY_TAG_EDITED)}</span>`
-    + (s.inCut ? `<span class="used">${esc(COPY_TAG_USED)}</span>` : '')
+    + (s.inCut ? `<span class="used">${esc(COPY_TAG_USED)}</span>` : '') + `</span>`
     + `<small><span id="rs${i}">${esc(s.level_reason || '')}</span>${flags}</small>${pictureHtml(s)}</div>`
     + `<div class="dur" id="du${i}">${num(s.dur).toFixed(1)}s</div>`
     + `<button class="add" id="t${i}" data-act="toggleListIdx" data-i="${num(i)}">${esc(s.must_keep ? COPY_IN_LIST : COPY_ADD_LIST)}</button>`
@@ -245,6 +256,7 @@ async function resyncBrowse(){
     const f = fresh.get(s.id), busy = (markQueues.get(s.id) || {}).n;
     if(busy){ s.inCut = f.inCut; return; }
     Object.assign(s, f);
+    if(!('summary' in f)) delete s.summary;   // 服务端没有总结了：别留着旧的
     b.confirmed.set(s.id, snap(s));
   });
   b.targetOverride = null;   // 重读成功：以服务端为准（别处改过也一样），不再需要本地覆盖
@@ -258,6 +270,8 @@ function paintRow(s){
   row.classList.toggle('in-list', !!s.must_keep);
   row.classList.toggle('unusable', !!s.unusable);
   paintBoundsCells(s);
+  const ss = document.getElementById('ss' + i);
+  if(ss) ss.innerHTML = segSummaryHtml(s);   // 起止改了 / 撤销了：「可能过时」跟着变
   const add = document.getElementById('t' + i);
   if(add) add.textContent = s.must_keep ? COPY_IN_LIST : COPY_ADD_LIST;
   const lv = document.getElementById('lv' + i);
@@ -272,11 +286,12 @@ function renderNow(){
   const s = curSeg(), now = $('#bNow');
   wireNow(now);
   now.innerHTML = s
-    ? `<b>${esc(fmt(num(s.start)))}–${esc(fmt(num(s.end)))}</b>　${esc(segText(s))}`
+    ? `${nowSummaryHtml(s)}<b>${esc(fmt(num(s.start)))}–${esc(fmt(num(s.end)))}</b>　${esc(segText(s))}`
       + ` <button class="ghost se-open" data-act="editBounds">${esc(COPY_EDIT_BOUNDS)}${editKeyHtml()}</button>`
       + `<br><span class="why">${esc(s.level_reason || '')}</span>` + nowPictureHtml(s)
     : `<span class="why">${esc(COPY_NOW_HINT)}</span>`;
 }
+function nowSummaryHtml(s){ const h = segSummaryHtml(s); return h ? `<span class="sline">${h}</span>` : ''; }
 // 当前段的完整画面信息（列表里只放得下一行）
 function nowPictureHtml(s){
   const v = s.visual || {}, issues = Array.isArray(v.issues) ? v.issues : [];
