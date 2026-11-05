@@ -87,7 +87,7 @@ def test_meta_has_versions_and_masked_credentials(env, monkeypatch):
     for k in ("app_version", "macos", "arch", "python", "frozen", "ffmpeg", "created",
               "consent", "project"):
         assert k in meta
-    assert meta["ffmpeg"] is None and meta["app_version"] == "0.1.0" and meta["project"] == "p1"
+    assert meta["ffmpeg"] is None and meta["app_version"] == "0.1.1" and meta["project"] == "p1"
 
 
 def test_credentials_failure_does_not_break_bundle(env, monkeypatch):
