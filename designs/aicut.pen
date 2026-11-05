@@ -25102,6 +25102,4490 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "NOFTB",
+      "x": 5600,
+      "y": 3282,
+      "name": "③ 弹窗：编辑起止 · 播放头",
+      "clip": true,
+      "width": 1440,
+      "height": 900,
+      "fill": "$bg",
+      "children": [
+        {
+          "type": "frame",
+          "id": "xkytq",
+          "name": "项目栏（收起）",
+          "width": 48,
+          "height": "fill_container",
+          "fill": "$panel",
+          "stroke": "$line",
+          "strokeWidth": {
+            "right": 1
+          },
+          "strokeAlignment": "inner",
+          "strokeLinejoin": "round",
+          "layout": "vertical",
+          "gap": 14,
+          "padding": [
+            14,
+            0
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "Vp6pR",
+              "name": "菜单",
+              "width": 20,
+              "height": 20,
+              "icon": "menu",
+              "library": "lucide",
+              "fill": "$muted"
+            },
+            {
+              "type": "frame",
+              "id": "gaFsc",
+              "name": "当前项目",
+              "width": 30,
+              "height": 30,
+              "fill": "$accent-soft",
+              "cornerRadius": 6,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "WVRBE",
+                  "name": "字",
+                  "fill": "$accent",
+                  "content": "九",
+                  "fontFamily": "$font",
+                  "fontSize": 14,
+                  "fontWeight": "700"
+                }
+              ]
+            },
+            {
+              "type": "icon",
+              "id": "GUFBz",
+              "name": "新建",
+              "width": 20,
+              "height": 20,
+              "icon": "plus",
+              "library": "lucide",
+              "fill": "$muted"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "f4oy6d",
+          "name": "主区",
+          "width": "fill_container",
+          "height": "fill_container",
+          "layout": "vertical",
+          "children": [
+            {
+              "type": "frame",
+              "id": "u5hvS",
+              "name": "顶栏",
+              "width": "fill_container",
+              "height": 64,
+              "stroke": "$line",
+              "strokeWidth": {
+                "bottom": 1
+              },
+              "strokeAlignment": "inner",
+              "strokeLinejoin": "round",
+              "gap": 24,
+              "padding": [
+                0,
+                24
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "YjZCO",
+                  "name": "项目名",
+                  "width": 180,
+                  "layout": "vertical",
+                  "gap": 2,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "z3Avd1",
+                      "name": "名",
+                      "fill": "$text",
+                      "content": "2026-09-01_九月一号",
+                      "fontFamily": "$font",
+                      "fontSize": 15,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "Itsvb",
+                      "name": "片名",
+                      "fill": "$muted",
+                      "content": "片名：九月一号 · 纪实",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "D16U9",
+                  "name": "步骤条",
+                  "width": "fill_container",
+                  "gap": 4,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "zTf2b",
+                      "type": "ref",
+                      "ref": "Li31t",
+                      "name": "步骤1",
+                      "descendants": {
+                        "lprLq": {
+                          "fill": "$ok-soft"
+                        },
+                        "ASEn2": {
+                          "content": "✓",
+                          "fill": "$ok"
+                        },
+                        "MCKyj": {
+                          "content": "新建",
+                          "fill": "$text",
+                          "fontWeight": "400"
+                        }
+                      }
+                    },
+                    {
+                      "type": "icon",
+                      "id": "SCqCm",
+                      "name": "箭头",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$faint"
+                    },
+                    {
+                      "id": "S9luHo",
+                      "type": "ref",
+                      "ref": "Li31t",
+                      "name": "步骤2",
+                      "descendants": {
+                        "lprLq": {
+                          "fill": "$ok-soft"
+                        },
+                        "ASEn2": {
+                          "content": "✓",
+                          "fill": "$ok"
+                        },
+                        "MCKyj": {
+                          "content": "分析",
+                          "fill": "$text",
+                          "fontWeight": "400"
+                        }
+                      }
+                    },
+                    {
+                      "type": "icon",
+                      "id": "jOghr",
+                      "name": "箭头",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$faint"
+                    },
+                    {
+                      "id": "kNa6h",
+                      "type": "ref",
+                      "ref": "Li31t",
+                      "name": "步骤3",
+                      "fill": "$accent-soft",
+                      "descendants": {
+                        "lprLq": {
+                          "fill": "$accent"
+                        },
+                        "ASEn2": {
+                          "content": "3",
+                          "fill": "#FFFFFF"
+                        },
+                        "MCKyj": {
+                          "content": "看素材",
+                          "fill": "$accent",
+                          "fontWeight": "600"
+                        }
+                      }
+                    },
+                    {
+                      "type": "icon",
+                      "id": "e3r9v6",
+                      "name": "箭头",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$faint"
+                    },
+                    {
+                      "id": "ZhBKU",
+                      "type": "ref",
+                      "ref": "Li31t",
+                      "name": "步骤4",
+                      "descendants": {
+                        "lprLq": {
+                          "fill": "$panel2"
+                        },
+                        "ASEn2": {
+                          "content": "4",
+                          "fill": "$faint"
+                        },
+                        "MCKyj": {
+                          "content": "定标准",
+                          "fill": "$faint",
+                          "fontWeight": "400"
+                        }
+                      }
+                    },
+                    {
+                      "type": "icon",
+                      "id": "HBp4v",
+                      "name": "箭头",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$faint"
+                    },
+                    {
+                      "id": "IK1yA",
+                      "type": "ref",
+                      "ref": "Li31t",
+                      "name": "步骤5",
+                      "descendants": {
+                        "lprLq": {
+                          "fill": "$panel2"
+                        },
+                        "ASEn2": {
+                          "content": "5",
+                          "fill": "$faint"
+                        },
+                        "MCKyj": {
+                          "content": "看结果",
+                          "fill": "$faint",
+                          "fontWeight": "400"
+                        }
+                      }
+                    },
+                    {
+                      "type": "icon",
+                      "id": "BCG7F",
+                      "name": "箭头",
+                      "width": 14,
+                      "height": 14,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$faint"
+                    },
+                    {
+                      "id": "a0B9L",
+                      "type": "ref",
+                      "ref": "Li31t",
+                      "name": "步骤6",
+                      "descendants": {
+                        "lprLq": {
+                          "fill": "$panel2"
+                        },
+                        "ASEn2": {
+                          "content": "6",
+                          "fill": "$faint"
+                        },
+                        "MCKyj": {
+                          "content": "导出",
+                          "fill": "$faint",
+                          "fontWeight": "400"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "figFK",
+                  "type": "ref",
+                  "ref": "h3eBNB",
+                  "name": "更多",
+                  "descendants": {
+                    "q1Rdly": {
+                      "content": "更多"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "UHdFh",
+              "name": "内容",
+              "width": "fill_container",
+              "height": "fill_container",
+              "layout": "vertical",
+              "gap": 16,
+              "padding": [
+                20,
+                24
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "XvLrx",
+                  "name": "摘要行",
+                  "width": "fill_container",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "d9i9dR",
+                      "name": "内容摘要",
+                      "width": "fill_container",
+                      "fill": "$panel",
+                      "cornerRadius": 8,
+                      "layout": "vertical",
+                      "gap": 10,
+                      "padding": 16,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "OrY8B",
+                          "name": "标题",
+                          "fill": "$muted",
+                          "content": "内容摘要",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "PVgmF",
+                          "name": "一句话",
+                          "fill": "$text",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container",
+                          "content": "一场职业培训招生说明会：顾问向家长和学员讲解课程、学费与退费规则，并承诺结业推荐就业；中途有学员分享经历。",
+                          "lineHeight": 1.5,
+                          "fontFamily": "$font",
+                          "fontSize": 15,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "eJ70f",
+                          "name": "关键信息",
+                          "gap": 8,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "zXEvK",
+                              "name": "信息",
+                              "fill": "$panel2",
+                              "cornerRadius": 4,
+                              "gap": 6,
+                              "padding": [
+                                4,
+                                10
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "X2LlP",
+                                  "name": "时间",
+                                  "fill": "$accent",
+                                  "content": "03:12",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "vrZ1h",
+                                  "name": "内容",
+                                  "fill": "$text",
+                                  "content": "学费 9800 元，可分期",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "i8bWXa",
+                              "name": "信息",
+                              "fill": "$panel2",
+                              "cornerRadius": 4,
+                              "gap": 6,
+                              "padding": [
+                                4,
+                                10
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Q6gTh",
+                                  "name": "时间",
+                                  "fill": "$accent",
+                                  "content": "18:40",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ZIit4",
+                                  "name": "内容",
+                                  "fill": "$text",
+                                  "content": "7 天内可无理由退费",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "BEylQ",
+                              "name": "信息",
+                              "fill": "$panel2",
+                              "cornerRadius": 4,
+                              "gap": 6,
+                              "padding": [
+                                4,
+                                10
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pRCxR",
+                                  "name": "时间",
+                                  "fill": "$accent",
+                                  "content": "27:05",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Ru4qT",
+                                  "name": "内容",
+                                  "fill": "$text",
+                                  "content": "结业推荐就业，不承诺薪资",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "NZ6Q6",
+                              "name": "信息",
+                              "fill": "$panel2",
+                              "cornerRadius": 4,
+                              "gap": 6,
+                              "padding": [
+                                4,
+                                10
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "y6irLK",
+                                  "name": "时间",
+                                  "fill": "$accent",
+                                  "content": "41:22",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "C54zN",
+                                  "name": "内容",
+                                  "fill": "$text",
+                                  "content": "年龄限制 16–35 岁",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "o6pf3",
+                      "name": "说话人",
+                      "width": 300,
+                      "fill": "$panel",
+                      "cornerRadius": 8,
+                      "layout": "vertical",
+                      "gap": 10,
+                      "padding": 16,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "aIPMW",
+                          "name": "标题",
+                          "fill": "$muted",
+                          "content": "说话人",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "l9YNKl",
+                          "name": "顾问 · 王老师",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "n3pcn3",
+                              "name": "名",
+                              "fill": "$text",
+                              "content": "顾问 · 王老师",
+                              "fontFamily": "$font",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "DdFC2",
+                              "name": "条",
+                              "fill": "$accent",
+                              "width": 100,
+                              "height": 6
+                            },
+                            {
+                              "type": "text",
+                              "id": "kN3mP",
+                              "name": "时长",
+                              "fill": "$muted",
+                              "content": "28 分钟",
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "z5sDHv",
+                          "name": "家长",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "nsoxd",
+                              "name": "名",
+                              "fill": "$text",
+                              "content": "家长",
+                              "fontFamily": "$font",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "Tnubn",
+                              "name": "条",
+                              "fill": "$accent",
+                              "width": 40,
+                              "height": 6
+                            },
+                            {
+                              "type": "text",
+                              "id": "os2uR",
+                              "name": "时长",
+                              "fill": "$muted",
+                              "content": "11 分钟",
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "fawPf",
+                          "name": "学员 · 小李",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "justifyContent": "space_between",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "jopWk",
+                              "name": "名",
+                              "fill": "$text",
+                              "content": "学员 · 小李",
+                              "fontFamily": "$font",
+                              "fontSize": 13,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "rectangle",
+                              "cornerRadius": 3,
+                              "id": "Q1Jts",
+                              "name": "条",
+                              "fill": "$accent",
+                              "width": 22,
+                              "height": 6
+                            },
+                            {
+                              "type": "text",
+                              "id": "NPDHj",
+                              "name": "时长",
+                              "fill": "$muted",
+                              "content": "6 分钟",
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "rgLrH",
+                  "name": "分布条",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 6,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "OvXBa",
+                      "name": "头",
+                      "width": "fill_container",
+                      "justifyContent": "space_between",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "TvROF",
+                          "name": "说明",
+                          "fill": "$muted",
+                          "content": "全片 54:12 · 142 段 · 点击跳转",
+                          "fontFamily": "$font",
+                          "fontSize": 12,
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "xSqLM",
+                          "name": "图例",
+                          "gap": 14,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "kB3It",
+                              "name": "可用 61",
+                              "gap": 5,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "rectangle",
+                                  "cornerRadius": 2,
+                                  "id": "bDMOJ",
+                                  "name": "色",
+                                  "fill": "$ok",
+                                  "width": 8,
+                                  "height": 8
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Z7fEYt",
+                                  "name": "名",
+                                  "fill": "$muted",
+                                  "content": "可用 61",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "E22FgJ",
+                              "name": "待定 38",
+                              "gap": 5,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "rectangle",
+                                  "cornerRadius": 2,
+                                  "id": "Y7KDb8",
+                                  "name": "色",
+                                  "fill": "$warn",
+                                  "width": 8,
+                                  "height": 8
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "XjCN7",
+                                  "name": "名",
+                                  "fill": "$muted",
+                                  "content": "待定 38",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "T7T19",
+                              "name": "废片 40",
+                              "gap": 5,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "rectangle",
+                                  "cornerRadius": 2,
+                                  "id": "gw5I1",
+                                  "name": "色",
+                                  "fill": "$faint",
+                                  "width": 8,
+                                  "height": 8
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "R8bsJ",
+                                  "name": "名",
+                                  "fill": "$muted",
+                                  "content": "废片 40",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "SnC66",
+                              "name": "剪辑列表 3",
+                              "gap": 5,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "rectangle",
+                                  "cornerRadius": 2,
+                                  "id": "tmWzz",
+                                  "name": "色",
+                                  "fill": "$accent",
+                                  "width": 8,
+                                  "height": 8
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "sLrRR",
+                                  "name": "名",
+                                  "fill": "$muted",
+                                  "content": "剪辑列表 3",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "GLn1u",
+                              "name": "不可用 3",
+                              "gap": 5,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "rectangle",
+                                  "cornerRadius": 2,
+                                  "id": "pSnW9",
+                                  "name": "色",
+                                  "fill": "$danger",
+                                  "width": 8,
+                                  "height": 8
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "UI3yz",
+                                  "name": "名",
+                                  "fill": "$muted",
+                                  "content": "不可用 3",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "adyNo",
+                      "name": "条",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": 14,
+                      "cornerRadius": 3,
+                      "gap": 1,
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "id": "VYNai",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "Ufe6l",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "hqatG",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "UU1ym",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "nXe5N",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "reHSG",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "Eocy0",
+                          "name": "段",
+                          "fill": "$accent",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "qhxtV",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "qrOEN",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "d7oLHd",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "XFg5t",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "eoMzO",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "k6m0d",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "i47iv",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "XwCul",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "fLV8D",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "bDJXA",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "I881Z",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "o8CSE",
+                          "name": "段",
+                          "fill": "$accent",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "AdSds",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "JOqTD",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "PVJOZ",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "yDHuI",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "OyspP",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "TidGu",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "WC5iY",
+                          "name": "段",
+                          "fill": "$danger",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "HQz3R",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "ECV5f",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "yrdvx",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "EI5nl",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "CRLYn",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "aIcR5",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "WyQic",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "gDcJY",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "OxEDn",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "q5bWE",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "vqzFB",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "frsot",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "wwb3Z",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "SKHGE",
+                          "name": "段",
+                          "fill": "$accent",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "KQRVl",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "P1Knve",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "f7a5J",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "tjDiS",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "fxMWz",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "yNu2g",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "pGnwK",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "R87dGP",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "GWhjy",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "nQARo",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "ayTsV",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "EVsdY",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "sGnDV",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "rovWD",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "DrXCW",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "xqyk4",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "lGBll",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "DpIH0",
+                          "name": "段",
+                          "fill": "$danger",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "Mi00M",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "M7NGC",
+                          "name": "段",
+                          "fill": "$warn",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "Ct4bp",
+                          "name": "段",
+                          "fill": "$faint",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "sp1l1",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "lcN5s",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "m9NV1Q",
+                          "name": "段",
+                          "fill": "$ok",
+                          "width": "fill_container",
+                          "height": "fill_container"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "Q1qLZc",
+                  "name": "工作区",
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "gap": 16,
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "v9eKX",
+                      "name": "片段列表",
+                      "clip": true,
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "fill": "$panel",
+                      "cornerRadius": 8,
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "aJ600",
+                          "name": "列表头",
+                          "width": "fill_container",
+                          "stroke": "$line",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "strokeLinejoin": "round",
+                          "gap": 16,
+                          "padding": [
+                            10,
+                            14
+                          ],
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "FoqrO",
+                              "name": "视图切换",
+                              "fill": "$panel2",
+                              "cornerRadius": 6,
+                              "padding": 3,
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "flhGO",
+                                  "name": "按时间",
+                                  "fill": "$bg",
+                                  "cornerRadius": 4,
+                                  "padding": [
+                                    4,
+                                    12
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "sHpT0",
+                                      "name": "名",
+                                      "fill": "$text",
+                                      "content": "按时间",
+                                      "fontFamily": "$font",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "CxiZ5",
+                                  "name": "按话题",
+                                  "cornerRadius": 4,
+                                  "padding": [
+                                    4,
+                                    12
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "K5oSQQ",
+                                      "name": "名",
+                                      "fill": "$muted",
+                                      "content": "按话题",
+                                      "fontFamily": "$font",
+                                      "fontSize": 13,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "yZKgS",
+                              "name": "筛选",
+                              "gap": 6,
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "aA2yY",
+                                  "name": "全部 142",
+                                  "cornerRadius": 12,
+                                  "stroke": "$line",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner",
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "cUbL2",
+                                      "name": "名",
+                                      "fill": "$muted",
+                                      "content": "全部 142",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "C13UyT",
+                                  "name": "待定 38",
+                                  "fill": "$warn-soft",
+                                  "cornerRadius": 12,
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "T5qCx",
+                                      "name": "名",
+                                      "fill": "$warn",
+                                      "content": "待定 38",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "pUhFY",
+                                  "name": "可用 61",
+                                  "cornerRadius": 12,
+                                  "stroke": "$line",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner",
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "VaGbF",
+                                      "name": "名",
+                                      "fill": "$muted",
+                                      "content": "可用 61",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "EYVjD",
+                                  "name": "废片 40",
+                                  "cornerRadius": 12,
+                                  "stroke": "$line",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner",
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "cFi5f",
+                                      "name": "名",
+                                      "fill": "$muted",
+                                      "content": "废片 40",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "hvcb0",
+                                  "name": "剪辑列表 3",
+                                  "cornerRadius": 12,
+                                  "stroke": "$line",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner",
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "m8Oav",
+                                      "name": "名",
+                                      "fill": "$muted",
+                                      "content": "剪辑列表 3",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "xPKab",
+                                  "name": "不可用 3",
+                                  "cornerRadius": 12,
+                                  "stroke": "$line",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner",
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "VNVuq",
+                                      "name": "名",
+                                      "fill": "$muted",
+                                      "content": "不可用 3",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ovBhk",
+                                  "name": "未用 112",
+                                  "cornerRadius": 12,
+                                  "stroke": "$line",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner",
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "Cc1kI",
+                                      "name": "名",
+                                      "fill": "$muted",
+                                      "content": "未用 112",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "H69VX",
+                              "name": "撑",
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "text",
+                              "id": "DOUcK",
+                              "name": "快捷键",
+                              "fill": "$muted",
+                              "content": "S 剪辑列表 · 空格 播放",
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "HBrmP",
+                          "name": "片段 03:12",
+                          "width": "fill_container",
+                          "fill": "$panel2",
+                          "stroke": "$accent",
+                          "strokeWidth": {
+                            "top": 1,
+                            "right": 1,
+                            "bottom": 1,
+                            "left": 3
+                          },
+                          "strokeAlignment": "inner",
+                          "strokeLinejoin": "round",
+                          "gap": 12,
+                          "padding": [
+                            12,
+                            14
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "m6w7mQ",
+                              "name": "时间码",
+                              "fill": "$muted",
+                              "content": "03:12",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "id": "Z1vUP",
+                              "type": "ref",
+                              "ref": "UxIxz",
+                              "name": "档位",
+                              "fill": "$warn-soft",
+                              "descendants": {
+                                "p3veEV": {
+                                  "content": "待定",
+                                  "fill": "$warn"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "sLqfy",
+                              "name": "正文",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 4,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Zz9gS",
+                                  "name": "话题",
+                                  "fill": "$accent",
+                                  "content": "学费与分期",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "gqg9p",
+                                  "name": "原文",
+                                  "fill": "$text",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "学费是九千八，可以分三期，第一期交完就能开课。",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Cblz8",
+                                  "name": "依据",
+                                  "fill": "$muted",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "依据：含关键信息：学费、分期；但说话人混杂，AI 拿不准",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "fQ6zJ",
+                              "name": "标记",
+                              "gap": 10,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "A9Wmr",
+                                  "name": "剪辑列表开关",
+                                  "fill": "$accent-soft",
+                                  "cornerRadius": 12,
+                                  "gap": 4,
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "M99Jq",
+                                      "name": "字",
+                                      "fill": "$accent",
+                                      "content": "✓ 剪辑列表",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "600"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "K2exlQ",
+                                  "name": "不可用",
+                                  "width": 18,
+                                  "height": 18,
+                                  "icon": "ban",
+                                  "library": "lucide",
+                                  "fill": "$faint"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ydvM9",
+                          "name": "片段 03:31",
+                          "width": "fill_container",
+                          "stroke": "$line",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "strokeLinejoin": "round",
+                          "gap": 12,
+                          "padding": [
+                            12,
+                            14
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "P2foU5",
+                              "name": "时间码",
+                              "fill": "$muted",
+                              "content": "03:31",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "id": "Cd0V6",
+                              "type": "ref",
+                              "ref": "UxIxz",
+                              "name": "档位",
+                              "fill": "$warn-soft",
+                              "descendants": {
+                                "p3veEV": {
+                                  "content": "待定",
+                                  "fill": "$warn"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "HbcJz",
+                              "name": "正文",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 4,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "h7meX",
+                                  "name": "话题",
+                                  "fill": "$accent",
+                                  "content": "学费与分期",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "AeEU2",
+                                  "name": "原文",
+                                  "fill": "$text",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "那要是中途不想学了呢？钱能退吗？",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "e0FIv",
+                                  "name": "依据",
+                                  "fill": "$muted",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "依据：提问句，信息在下一段回答里",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "IUJXY",
+                              "name": "标记",
+                              "gap": 10,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "id": "QnJX5",
+                                  "type": "ref",
+                                  "ref": "UxIxz",
+                                  "name": "画面提示",
+                                  "fill": "$panel2",
+                                  "descendants": {
+                                    "p3veEV": {
+                                      "content": "画面·抖动",
+                                      "fill": "$muted",
+                                      "fontWeight": "400"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "BprhA",
+                                  "name": "剪辑列表开关",
+                                  "cornerRadius": 12,
+                                  "stroke": "$line",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner",
+                                  "gap": 4,
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "usICF",
+                                      "name": "字",
+                                      "fill": "$faint",
+                                      "content": "＋ 剪辑列表",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "TxFxF",
+                                  "name": "不可用",
+                                  "width": 18,
+                                  "height": 18,
+                                  "icon": "ban",
+                                  "library": "lucide",
+                                  "fill": "$faint"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "Ezrw4",
+                          "name": "片段 18:40",
+                          "width": "fill_container",
+                          "stroke": "$accent",
+                          "strokeWidth": {
+                            "left": 3
+                          },
+                          "strokeAlignment": "inner",
+                          "strokeLinejoin": "round",
+                          "gap": 12,
+                          "padding": [
+                            12,
+                            14
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "tX3UT",
+                              "name": "时间码",
+                              "fill": "$muted",
+                              "content": "18:40",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "id": "ltr7p",
+                              "type": "ref",
+                              "ref": "UxIxz",
+                              "name": "档位",
+                              "fill": "$warn-soft",
+                              "descendants": {
+                                "p3veEV": {
+                                  "content": "待定",
+                                  "fill": "$warn"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "RmSjI",
+                              "name": "正文",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 4,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "aWac3",
+                                  "name": "话题",
+                                  "fill": "$accent",
+                                  "content": "退费规则",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "aj9qt",
+                                  "name": "原文",
+                                  "fill": "$text",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "七天之内无理由退，超过七天按课时比例退。",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "BQ4N9",
+                                  "name": "依据",
+                                  "fill": "$muted",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "依据：含关键信息：退费；篇幅长、置信度 0.62",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "CkgQc",
+                              "name": "标记",
+                              "gap": 10,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "A5YuK",
+                                  "name": "剪辑列表开关",
+                                  "fill": "$accent-soft",
+                                  "cornerRadius": 12,
+                                  "gap": 4,
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "l1NgV",
+                                      "name": "字",
+                                      "fill": "$accent",
+                                      "content": "✓ 剪辑列表",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "600"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "SNa0P",
+                                  "name": "不可用",
+                                  "width": 18,
+                                  "height": 18,
+                                  "icon": "ban",
+                                  "library": "lucide",
+                                  "fill": "$faint"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "oum5r",
+                          "name": "片段 22:15",
+                          "width": "fill_container",
+                          "stroke": "$line",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "strokeLinejoin": "round",
+                          "gap": 12,
+                          "padding": [
+                            12,
+                            14
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "YeagM",
+                              "name": "时间码",
+                              "fill": "$muted",
+                              "content": "22:15",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "id": "O5UyqZ",
+                              "type": "ref",
+                              "ref": "UxIxz",
+                              "name": "档位",
+                              "fill": "$warn-soft",
+                              "descendants": {
+                                "p3veEV": {
+                                  "content": "待定",
+                                  "fill": "$warn"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "nJfIY",
+                              "name": "正文",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 4,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "FnIav",
+                                  "name": "话题",
+                                  "fill": "$accent",
+                                  "content": "学员故事",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "g6qMq",
+                                  "name": "原文",
+                                  "fill": "$text",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "我去年来的时候其实什么都不会……",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "JFM7s",
+                                  "name": "依据",
+                                  "fill": "$muted",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "依据：情绪强，但无关键词",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "tGV70",
+                              "name": "标记",
+                              "gap": 10,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "id": "KjFsD",
+                                  "type": "ref",
+                                  "ref": "UxIxz",
+                                  "name": "画面提示",
+                                  "fill": "$panel2",
+                                  "descendants": {
+                                    "p3veEV": {
+                                      "content": "画面·过暗",
+                                      "fill": "$muted",
+                                      "fontWeight": "400"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "QN6Ce",
+                                  "name": "剪辑列表开关",
+                                  "cornerRadius": 12,
+                                  "stroke": "$line",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner",
+                                  "gap": 4,
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "hMGnC",
+                                      "name": "字",
+                                      "fill": "$faint",
+                                      "content": "＋ 剪辑列表",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "Q3cyC",
+                                  "name": "不可用",
+                                  "width": 18,
+                                  "height": 18,
+                                  "icon": "ban",
+                                  "library": "lucide",
+                                  "fill": "$faint"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "s8h1Z",
+                          "name": "片段 27:05",
+                          "width": "fill_container",
+                          "stroke": "$accent",
+                          "strokeWidth": {
+                            "left": 3
+                          },
+                          "strokeAlignment": "inner",
+                          "strokeLinejoin": "round",
+                          "gap": 12,
+                          "padding": [
+                            12,
+                            14
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "vp8if",
+                              "name": "时间码",
+                              "fill": "$muted",
+                              "content": "27:05",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "id": "sb08O",
+                              "type": "ref",
+                              "ref": "UxIxz",
+                              "name": "档位",
+                              "fill": "$warn-soft",
+                              "descendants": {
+                                "p3veEV": {
+                                  "content": "待定",
+                                  "fill": "$warn"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "UTAsh",
+                              "name": "正文",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 4,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "taS1G",
+                                  "name": "话题",
+                                  "fill": "$accent",
+                                  "content": "就业承诺",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "j0o9lB",
+                                  "name": "原文",
+                                  "fill": "$text",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "结业我们推荐就业，但具体薪资没法保证。",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "FhEna",
+                                  "name": "依据",
+                                  "fill": "$muted",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "依据：含关键信息：就业；与 26:50 重复度 40%",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ot3nk",
+                              "name": "标记",
+                              "gap": 10,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "zcHAz",
+                                  "name": "剪辑列表开关",
+                                  "fill": "$accent-soft",
+                                  "cornerRadius": 12,
+                                  "gap": 4,
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "b32r6",
+                                      "name": "字",
+                                      "fill": "$accent",
+                                      "content": "✓ 剪辑列表",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "600"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "VxWmX",
+                                  "name": "不可用",
+                                  "width": 18,
+                                  "height": 18,
+                                  "icon": "ban",
+                                  "library": "lucide",
+                                  "fill": "$faint"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "sWPaJ",
+                          "name": "片段 31:48",
+                          "width": "fill_container",
+                          "stroke": "$line",
+                          "strokeWidth": {
+                            "bottom": 1
+                          },
+                          "strokeAlignment": "inner",
+                          "strokeLinejoin": "round",
+                          "gap": 12,
+                          "padding": [
+                            12,
+                            14
+                          ],
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "j9sU3",
+                              "name": "时间码",
+                              "fill": "$muted",
+                              "content": "31:48",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "id": "gbDV5",
+                              "type": "ref",
+                              "ref": "UxIxz",
+                              "name": "档位",
+                              "fill": "$warn-soft",
+                              "descendants": {
+                                "p3veEV": {
+                                  "content": "待定",
+                                  "fill": "$warn"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "APogv",
+                              "name": "正文",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "gap": 4,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "IqEdj",
+                                  "name": "话题",
+                                  "fill": "$accent",
+                                  "content": "家长顾虑",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "bbkrM",
+                                  "name": "原文",
+                                  "fill": "$text",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "孩子才十六，这个年龄你们收吗？",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 14,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "GnhYv",
+                                  "name": "依据",
+                                  "fill": "$muted",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container",
+                                  "content": "依据：含关键信息：年龄；画面虚焦",
+                                  "lineHeight": 1.45,
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "i0w8e",
+                              "name": "标记",
+                              "gap": 10,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "id": "YSA62",
+                                  "type": "ref",
+                                  "ref": "UxIxz",
+                                  "name": "画面提示",
+                                  "fill": "$panel2",
+                                  "descendants": {
+                                    "p3veEV": {
+                                      "content": "画面·虚焦",
+                                      "fill": "$muted",
+                                      "fontWeight": "400"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "WO2gd",
+                                  "name": "剪辑列表开关",
+                                  "cornerRadius": 12,
+                                  "stroke": "$line",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner",
+                                  "gap": 4,
+                                  "padding": [
+                                    3,
+                                    10
+                                  ],
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "WmvQ3",
+                                      "name": "字",
+                                      "fill": "$faint",
+                                      "content": "＋ 剪辑列表",
+                                      "fontFamily": "$font",
+                                      "fontSize": 12,
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "vlEyg",
+                                  "name": "不可用",
+                                  "width": 18,
+                                  "height": 18,
+                                  "icon": "ban",
+                                  "library": "lucide",
+                                  "fill": "$faint"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "FNwTM",
+                      "name": "播放器",
+                      "width": 440,
+                      "height": "fill_container",
+                      "fill": "$panel",
+                      "cornerRadius": 8,
+                      "layout": "vertical",
+                      "gap": 12,
+                      "padding": 16,
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "Rr4Pr",
+                          "name": "画面",
+                          "width": "fill_container",
+                          "height": 170,
+                          "fill": "#0B0C0F",
+                          "cornerRadius": 6,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "gcOKp",
+                              "name": "播放",
+                              "width": 40,
+                              "height": 40,
+                              "icon": "play",
+                              "library": "lucide",
+                              "fill": "$muted"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "DlHLp",
+                          "name": "进度",
+                          "width": "fill_container",
+                          "gap": 10,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "b3OU3I",
+                              "name": "入",
+                              "fill": "$muted",
+                              "content": "03:11.7",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "S3YoO",
+                              "name": "轨",
+                              "width": "fill_container",
+                              "height": 4,
+                              "fill": "$panel2",
+                              "cornerRadius": 2,
+                              "children": [
+                                {
+                                  "type": "rectangle",
+                                  "cornerRadius": 2,
+                                  "id": "uP6gT",
+                                  "name": "已播",
+                                  "fill": "$accent",
+                                  "width": 120,
+                                  "height": 4
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "rIab0",
+                              "name": "出",
+                              "fill": "$muted",
+                              "content": "03:29.4",
+                              "fontFamily": "Inter",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pJia2",
+                          "name": "档位快捷",
+                          "width": "fill_container",
+                          "gap": 8,
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "YONgq",
+                              "name": "名",
+                              "fill": "$muted",
+                              "content": "这段的档位",
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "i89rgO",
+                              "name": "撑",
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "id": "UJ2qM",
+                              "type": "ref",
+                              "ref": "h3eBNB",
+                              "name": "可用",
+                              "padding": [
+                                4,
+                                10
+                              ],
+                              "descendants": {
+                                "q1Rdly": {
+                                  "content": "可用 A",
+                                  "fontSize": 12
+                                }
+                              }
+                            },
+                            {
+                              "id": "IBAzL",
+                              "type": "ref",
+                              "ref": "h3eBNB",
+                              "name": "废片",
+                              "padding": [
+                                4,
+                                10
+                              ],
+                              "descendants": {
+                                "q1Rdly": {
+                                  "content": "废片 D",
+                                  "fontSize": 12
+                                }
+                              }
+                            },
+                            {
+                              "id": "hDmv1",
+                              "type": "ref",
+                              "ref": "h3eBNB",
+                              "name": "不可用",
+                              "padding": [
+                                4,
+                                10
+                              ],
+                              "descendants": {
+                                "q1Rdly": {
+                                  "content": "不可用 X",
+                                  "fontSize": 12
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "NhZhW",
+                          "name": "剪辑列表面板",
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "fill": "$bg",
+                          "cornerRadius": 8,
+                          "stroke": "$accent",
+                          "strokeWidth": 1,
+                          "strokeAlignment": "inner",
+                          "layout": "vertical",
+                          "gap": 10,
+                          "padding": 14,
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "p63Gu",
+                              "name": "头",
+                              "width": "fill_container",
+                              "gap": 8,
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "bGhIW",
+                                  "name": "图",
+                                  "width": 16,
+                                  "height": 16,
+                                  "icon": "list-video",
+                                  "library": "lucide",
+                                  "fill": "$accent"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "NUhHy",
+                                  "name": "标题",
+                                  "fill": "$text",
+                                  "content": "剪辑列表",
+                                  "fontFamily": "$font",
+                                  "fontSize": 14,
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "t024jC",
+                                  "name": "数",
+                                  "fill": "$muted",
+                                  "content": "3 段",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "rDDYQ",
+                                  "name": "撑",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "tPdXS",
+                                  "name": "时长",
+                                  "fill": "$accent",
+                                  "content": "0:38 / 目标 3:00",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 13,
+                                  "fontWeight": "600"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "AmjN9",
+                              "name": "进度",
+                              "width": "fill_container",
+                              "height": 4,
+                              "fill": "$panel2",
+                              "cornerRadius": 2,
+                              "children": [
+                                {
+                                  "type": "rectangle",
+                                  "cornerRadius": 2,
+                                  "id": "X2SXLE",
+                                  "name": "已选",
+                                  "fill": "$accent",
+                                  "width": 86,
+                                  "height": 4
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "Y1YNo",
+                              "name": "项 03:12",
+                              "width": "fill_container",
+                              "fill": "$accent-soft",
+                              "cornerRadius": 4,
+                              "gap": 10,
+                              "padding": [
+                                6,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "Au5BS",
+                                  "name": "时",
+                                  "fill": "$accent",
+                                  "content": "03:12",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "BPuGW",
+                                  "name": "文",
+                                  "fill": "$text",
+                                  "content": "学费是九千八，可以分三期…",
+                                  "fontFamily": "$font",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "HNMMs",
+                                  "name": "撑",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "C12PLY",
+                                  "name": "长",
+                                  "fill": "$muted",
+                                  "content": "0:12",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "VaIOu",
+                                  "name": "移出",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "$faint"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ORt2R",
+                              "name": "项 18:40",
+                              "width": "fill_container",
+                              "cornerRadius": 4,
+                              "gap": 10,
+                              "padding": [
+                                6,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "rodgG",
+                                  "name": "时",
+                                  "fill": "$accent",
+                                  "content": "18:40",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ascmY",
+                                  "name": "文",
+                                  "fill": "$text",
+                                  "content": "七天之内无理由退，超过七天…",
+                                  "fontFamily": "$font",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "AFKsM",
+                                  "name": "撑",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "qDjYz",
+                                  "name": "长",
+                                  "fill": "$muted",
+                                  "content": "0:14",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "Sa6NK",
+                                  "name": "移出",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "$faint"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "uG5ge",
+                              "name": "项 27:05",
+                              "width": "fill_container",
+                              "cornerRadius": 4,
+                              "gap": 10,
+                              "padding": [
+                                6,
+                                8
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "xmpZr",
+                                  "name": "时",
+                                  "fill": "$accent",
+                                  "content": "27:05",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "tQrjO",
+                                  "name": "文",
+                                  "fill": "$text",
+                                  "content": "结业我们推荐就业，但具体薪资…",
+                                  "fontFamily": "$font",
+                                  "fontSize": 13,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "m6xb4",
+                                  "name": "撑",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "kzgw8",
+                                  "name": "长",
+                                  "fill": "$muted",
+                                  "content": "0:12",
+                                  "fontFamily": "Inter",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "swRok",
+                                  "name": "移出",
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "x",
+                                  "library": "lucide",
+                                  "fill": "$faint"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "bgxiZ",
+                              "name": "反馈",
+                              "width": "fill_container",
+                              "fill": "$panel2",
+                              "cornerRadius": 6,
+                              "gap": 8,
+                              "padding": [
+                                8,
+                                10
+                              ],
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "B56XUU",
+                                  "name": "勾",
+                                  "width": 15,
+                                  "height": 15,
+                                  "icon": "circle-check",
+                                  "library": "lucide",
+                                  "fill": "$ok"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "H7wAX",
+                                  "name": "字",
+                                  "fill": "$text",
+                                  "content": "已放入：03:12 学费是九千八…",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "vbLeA",
+                                  "name": "撑",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "dzZC9",
+                                  "name": "撤",
+                                  "fill": "$accent",
+                                  "content": "撤销 Z",
+                                  "fontFamily": "$font",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "text",
+                              "id": "B1I0g",
+                              "name": "说明",
+                              "fill": "$faint",
+                              "textGrowth": "fixed-width",
+                              "width": "fill_container",
+                              "content": "列表里的段 100% 进片，AI 再用其它可用段补到目标时长",
+                              "lineHeight": 1.45,
+                              "fontFamily": "$font",
+                              "fontSize": 12,
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "IVz9R",
+              "name": "底部导航",
+              "width": "fill_container",
+              "height": 60,
+              "fill": "$panel",
+              "stroke": "$line",
+              "strokeWidth": {
+                "top": 1
+              },
+              "strokeAlignment": "inner",
+              "strokeLinejoin": "round",
+              "padding": [
+                0,
+                24
+              ],
+              "justifyContent": "space_between",
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "KI6F5",
+                  "type": "ref",
+                  "ref": "h3eBNB",
+                  "name": "上一步",
+                  "descendants": {
+                    "q1Rdly": {
+                      "content": "← 上一步：分析"
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "fpKDU",
+                  "name": "右",
+                  "gap": 16,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "SfZyG",
+                      "name": "提示",
+                      "fill": "$muted",
+                      "content": "看完素材、标好必留，就可以去定标准",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "id": "r6aDh",
+                      "type": "ref",
+                      "ref": "lkIuB",
+                      "name": "下一步",
+                      "descendants": {
+                        "JcHmU": {
+                          "content": "下一步：定标准 →"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "rectangle",
+          "id": "xUHD0",
+          "layoutPosition": "absolute",
+          "x": 0,
+          "y": 0,
+          "name": "遮罩",
+          "fill": "#000000A6",
+          "width": 1440,
+          "height": 900
+        },
+        {
+          "type": "frame",
+          "id": "F1Oez",
+          "layoutPosition": "absolute",
+          "x": 340,
+          "y": 40,
+          "name": "编辑起止弹窗",
+          "width": 760,
+          "fill": "$panel",
+          "cornerRadius": 10,
+          "stroke": "$line",
+          "strokeWidth": 1,
+          "strokeAlignment": "inner",
+          "layout": "vertical",
+          "gap": 12,
+          "padding": 24,
+          "children": [
+            {
+              "type": "frame",
+              "id": "V19IXj",
+              "name": "头",
+              "width": "fill_container",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "j36Na",
+                  "name": "标题",
+                  "fill": "$text",
+                  "content": "编辑起止",
+                  "fontFamily": "$font",
+                  "fontSize": 18,
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "z6GOQa",
+                  "name": "撑",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "icon",
+                  "id": "IKk2e",
+                  "name": "关",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "x",
+                  "library": "lucide",
+                  "fill": "$muted"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "YdBXr",
+              "name": "视频",
+              "width": "fill_container",
+              "height": 330,
+              "fill": "#000000",
+              "cornerRadius": 8,
+              "layout": "vertical",
+              "padding": 10,
+              "justifyContent": "space_between",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "x9GccC",
+                  "name": "画面说明",
+                  "fill": "#FFFFFF1A",
+                  "cornerRadius": 4,
+                  "padding": [
+                    3,
+                    8
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "v3Tgi4",
+                      "name": "值",
+                      "fill": "#FFFFFFCC",
+                      "content": "画面 = 播放头 1:24.0",
+                      "fontFamily": "$font",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "c5L7Ba",
+                  "name": "播放控件",
+                  "width": "fill_container",
+                  "gap": 10,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "FtpL3",
+                      "name": "播放",
+                      "width": 16,
+                      "height": 16,
+                      "icon": "play",
+                      "library": "lucide",
+                      "fill": "#FFFFFFCC"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pgaH1",
+                      "name": "时间",
+                      "fill": "#FFFFFFCC",
+                      "content": "1:24.0",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 12,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "NHJYH",
+                      "name": "原生进度",
+                      "width": "fill_container",
+                      "height": 3,
+                      "fill": "#FFFFFF33",
+                      "cornerRadius": 2
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "G3ooi2",
+              "name": "原文",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "原始 1:10.0–1:28.5　合同里写的是七天无理由退费，但是开课以后就不一样了……",
+              "fontFamily": "$font",
+              "fontSize": 12.5,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "PQUL3",
+              "name": "时间轴",
+              "width": "fill_container",
+              "height": 74,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "GsZcO",
+                  "x": 0,
+                  "y": 30,
+                  "name": "可点击区域（整条）",
+                  "fill": "#FFFFFF05",
+                  "width": 712,
+                  "height": 32
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "i3QWEj",
+                  "x": 0,
+                  "y": 44,
+                  "name": "轨道",
+                  "fill": "$line",
+                  "width": 712,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "zZnsQ",
+                  "x": 308,
+                  "y": 44,
+                  "name": "选段",
+                  "fill": "$accent",
+                  "width": 96,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "W5aSqi",
+                  "x": 302,
+                  "y": 34,
+                  "name": "开始手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "LLY84",
+                  "x": 398,
+                  "y": 34,
+                  "name": "结束手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "id": "M7aVuv",
+                  "x": 379,
+                  "y": 18,
+                  "name": "播放头·线",
+                  "fill": "$text",
+                  "width": 2,
+                  "height": 56
+                },
+                {
+                  "type": "path",
+                  "id": "uLRNy",
+                  "x": 374,
+                  "y": 14,
+                  "name": "播放头·三角",
+                  "geometry": "M0 0l12 0-6 8z",
+                  "viewBox": [
+                    0,
+                    0,
+                    12,
+                    8
+                  ],
+                  "fill": "$text",
+                  "width": 12,
+                  "height": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "Z3Gtd",
+                  "x": 354,
+                  "y": 0,
+                  "name": "播放头·时间",
+                  "fill": "$text",
+                  "cornerRadius": 4,
+                  "padding": [
+                    1,
+                    6
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Ud1Oq",
+                      "name": "值",
+                      "fill": "#0E1014",
+                      "content": "1:24.0",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "tbTuP",
+              "name": "刻度",
+              "width": "fill_container",
+              "justifyContent": "space_between",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "e9VuU",
+                  "name": "刻度值",
+                  "fill": "$muted",
+                  "content": "0:10.0",
+                  "fontFamily": "JetBrains Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "text",
+                  "id": "TTNwO",
+                  "name": "刻度值",
+                  "fill": "$muted",
+                  "content": "2:28.5",
+                  "fontFamily": "JetBrains Mono",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "NT00A",
+              "name": "时间输入",
+              "width": "fill_container",
+              "gap": 16,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "oML4W",
+                  "name": "开始",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "tOS7f",
+                      "name": "色标",
+                      "fill": "$accent",
+                      "width": 3,
+                      "height": 14
+                    },
+                    {
+                      "type": "text",
+                      "id": "VCpzQ",
+                      "name": "标签",
+                      "fill": "$text",
+                      "content": "开始",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "gXAE0",
+                      "name": "输入框",
+                      "width": 96,
+                      "height": 32,
+                      "fill": "$bg",
+                      "cornerRadius": 6,
+                      "stroke": "$line",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "xuNyQ",
+                          "name": "值",
+                          "fill": "$text",
+                          "content": "1:10.0",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "m3uRR",
+                  "name": "结束",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "utCUh",
+                      "name": "色标",
+                      "fill": "$accent",
+                      "width": 3,
+                      "height": 14
+                    },
+                    {
+                      "type": "text",
+                      "id": "AW4Op",
+                      "name": "标签",
+                      "fill": "$text",
+                      "content": "结束",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "NAqRq",
+                      "name": "输入框",
+                      "width": 96,
+                      "height": 32,
+                      "fill": "$bg",
+                      "cornerRadius": 6,
+                      "stroke": "$line",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "dtp8s",
+                          "name": "值",
+                          "fill": "$text",
+                          "content": "1:28.5",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "R9Vx9",
+                  "name": "播放头",
+                  "gap": 6,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 1,
+                      "id": "ZXhte",
+                      "name": "色标",
+                      "fill": "$text",
+                      "width": 3,
+                      "height": 14
+                    },
+                    {
+                      "type": "text",
+                      "id": "nV5Q5",
+                      "name": "标签",
+                      "fill": "$text",
+                      "content": "播放头",
+                      "fontFamily": "$font",
+                      "fontSize": 13,
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "Y8VJx",
+                      "name": "输入框",
+                      "width": 96,
+                      "height": 32,
+                      "fill": "$bg",
+                      "cornerRadius": 6,
+                      "stroke": "$text",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "padding": [
+                        0,
+                        10
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "YCCOo",
+                          "name": "值",
+                          "fill": "$text",
+                          "content": "1:24.0",
+                          "fontFamily": "JetBrains Mono",
+                          "fontSize": 13,
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "ppnWK",
+                  "name": "时长",
+                  "fill": "$muted",
+                  "content": "时长 18.5 秒",
+                  "fontFamily": "$font",
+                  "fontSize": 13,
+                  "fontWeight": "normal"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "d58kes",
+              "name": "提示",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "点时间轴任意位置移动播放头，空格播放 / 暂停（播到时间轴右端停）。拖动两端手柄靠近播放头会吸附到播放头。手柄范围是原始起止前后各 60 秒，输入框可以超出这个范围。微调：点一下手柄或时间轴后按 ← →，每次 0.1 秒，加 Shift 每次 1 秒；在输入框里按 ↑ ↓ 也一样。",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12.5,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "rKPLN",
+              "name": "操作",
+              "width": "fill_container",
+              "gap": 8,
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "Q5nHMJ",
+                  "type": "ref",
+                  "ref": "h3eBNB",
+                  "name": "恢复原始",
+                  "descendants": {
+                    "q1Rdly": {
+                      "content": "恢复原始"
+                    }
+                  }
+                },
+                {
+                  "id": "CB5aZ",
+                  "type": "ref",
+                  "ref": "h3eBNB",
+                  "name": "▶ 播放选段",
+                  "descendants": {
+                    "q1Rdly": {
+                      "content": "▶ 播放选段"
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "O3qA7S",
+                  "name": "撑",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "id": "fmE24",
+                  "type": "ref",
+                  "ref": "h3eBNB",
+                  "name": "取消",
+                  "descendants": {
+                    "q1Rdly": {
+                      "content": "取消"
+                    }
+                  }
+                },
+                {
+                  "id": "Q8yMh",
+                  "type": "ref",
+                  "ref": "lkIuB",
+                  "name": "保存",
+                  "descendants": {
+                    "JcHmU": {
+                      "content": "保存"
+                    }
+                  }
+                },
+                {
+                  "id": "UWIUx",
+                  "type": "ref",
+                  "ref": "lkIuB",
+                  "name": "保存并加到剪辑列表",
+                  "descendants": {
+                    "JcHmU": {
+                      "content": "保存并加到剪辑列表"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "k9IrJh",
+      "x": 7160,
+      "y": 3282,
+      "name": "③ 编辑起止 · 播放头交互说明",
+      "width": 700,
+      "fill": "$bg",
+      "layout": "vertical",
+      "gap": 20,
+      "padding": 32,
+      "children": [
+        {
+          "type": "text",
+          "id": "heoCS",
+          "name": "标题",
+          "fill": "$text",
+          "content": "播放头交互",
+          "fontFamily": "$font",
+          "fontSize": 20,
+          "fontWeight": "600"
+        },
+        {
+          "type": "frame",
+          "id": "povHb",
+          "name": "① 点时间轴任意位置",
+          "width": "fill_container",
+          "fill": "$panel",
+          "cornerRadius": 8,
+          "layout": "vertical",
+          "gap": 8,
+          "padding": [
+            16,
+            18
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "RYcUi",
+              "name": "小标题",
+              "fill": "$text",
+              "content": "① 点时间轴任意位置",
+              "fontFamily": "$font",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "QcWQb",
+              "name": "说明",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "播放头和画面跳到点击处，起止范围内外都可以点。手柄附近 8 像素以内仍然归手柄（按住可拖手柄）。按住播放头可以左右拖动看画面。",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12.5,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "AXJx4",
+              "name": "时间轴",
+              "width": 600,
+              "height": 74,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "FHnlj",
+                  "x": 0,
+                  "y": 44,
+                  "name": "轨道",
+                  "fill": "$line",
+                  "width": 600,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "ORiYe",
+                  "x": 260,
+                  "y": 44,
+                  "name": "选段",
+                  "fill": "$accent",
+                  "width": 80,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "w9oke3",
+                  "x": 254,
+                  "y": 34,
+                  "name": "开始手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "NHgXg",
+                  "x": 334,
+                  "y": 34,
+                  "name": "结束手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "id": "tPhka",
+                  "x": 476,
+                  "y": 18,
+                  "name": "播放头·线",
+                  "fill": "$text",
+                  "width": 2,
+                  "height": 56
+                },
+                {
+                  "type": "path",
+                  "id": "ShDWb",
+                  "x": 471,
+                  "y": 14,
+                  "name": "播放头·三角",
+                  "geometry": "M0 0l12 0-6 8z",
+                  "viewBox": [
+                    0,
+                    0,
+                    12,
+                    8
+                  ],
+                  "fill": "$text",
+                  "width": 12,
+                  "height": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "n1ZKy",
+                  "x": 451,
+                  "y": 0,
+                  "name": "播放头·时间",
+                  "fill": "$text",
+                  "cornerRadius": 4,
+                  "padding": [
+                    1,
+                    6
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "bl4bh",
+                      "name": "值",
+                      "fill": "#0E1014",
+                      "content": "2:00.0",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "rABjD",
+          "name": "② 空格播放",
+          "width": "fill_container",
+          "fill": "$panel",
+          "cornerRadius": 8,
+          "layout": "vertical",
+          "gap": 8,
+          "padding": [
+            16,
+            18
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "scA2q",
+              "name": "小标题",
+              "fill": "$text",
+              "content": "② 空格播放",
+              "fontFamily": "$font",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "X4hEp",
+              "name": "说明",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "从播放头开始播放，播放头跟着走；再按空格暂停。一直播到时间轴右端（结束后 60 秒）才停，可以作为往右延长结束的参考。",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12.5,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "Txdl1",
+              "name": "时间轴",
+              "width": 600,
+              "height": 74,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "Qf2i6",
+                  "x": 0,
+                  "y": 44,
+                  "name": "轨道",
+                  "fill": "$line",
+                  "width": 600,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "IsAIs",
+                  "x": 260,
+                  "y": 44,
+                  "name": "选段",
+                  "fill": "$accent",
+                  "width": 80,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "CLax7",
+                  "x": 254,
+                  "y": 34,
+                  "name": "开始手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "UFZfM",
+                  "x": 334,
+                  "y": 34,
+                  "name": "结束手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "id": "yDaLL",
+                  "x": 406,
+                  "y": 18,
+                  "name": "播放头·线",
+                  "fill": "$text",
+                  "width": 2,
+                  "height": 56
+                },
+                {
+                  "type": "path",
+                  "id": "Qdm9O",
+                  "x": 401,
+                  "y": 14,
+                  "name": "播放头·三角",
+                  "geometry": "M0 0l12 0-6 8z",
+                  "viewBox": [
+                    0,
+                    0,
+                    12,
+                    8
+                  ],
+                  "fill": "$text",
+                  "width": 12,
+                  "height": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "TwbzF",
+                  "x": 381,
+                  "y": 0,
+                  "name": "播放头·时间",
+                  "fill": "$text",
+                  "cornerRadius": 4,
+                  "padding": [
+                    1,
+                    6
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "lbBAG",
+                      "name": "值",
+                      "fill": "#0E1014",
+                      "content": "1:44.0",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "STPLO",
+                  "x": 417,
+                  "y": 52,
+                  "name": "方向",
+                  "fill": "$muted",
+                  "content": "播放中 →",
+                  "fontFamily": "$font",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "kmHvw",
+          "name": "③ 拖动手柄时",
+          "width": "fill_container",
+          "fill": "$panel",
+          "cornerRadius": 8,
+          "layout": "vertical",
+          "gap": 8,
+          "padding": [
+            16,
+            18
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "hMLdL",
+              "name": "小标题",
+              "fill": "$text",
+              "content": "③ 拖动手柄时",
+              "fontFamily": "$font",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "l3btfP",
+              "name": "说明",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "正在把结束手柄往右拖到 1:36.0：画面临时显示手柄所在的帧，播放头（白线）原地不动；松手后画面回到播放头。松手不再自动试播结束前 1 秒，想看就按空格。",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12.5,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "KYXoG",
+              "name": "时间轴",
+              "width": 600,
+              "height": 74,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "i7sgN",
+                  "x": 0,
+                  "y": 44,
+                  "name": "轨道",
+                  "fill": "$line",
+                  "width": 600,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "bPeLh",
+                  "x": 260,
+                  "y": 44,
+                  "name": "选段",
+                  "fill": "$accent",
+                  "width": 113,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "yCMfK",
+                  "x": 254,
+                  "y": 34,
+                  "name": "开始手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "nzJql",
+                  "x": 367,
+                  "y": 34,
+                  "name": "结束手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$text",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "id": "phKUN",
+                  "x": 320,
+                  "y": 18,
+                  "name": "播放头·线",
+                  "fill": "$text",
+                  "width": 2,
+                  "height": 56
+                },
+                {
+                  "type": "path",
+                  "id": "hoVgc",
+                  "x": 315,
+                  "y": 14,
+                  "name": "播放头·三角",
+                  "geometry": "M0 0l12 0-6 8z",
+                  "viewBox": [
+                    0,
+                    0,
+                    12,
+                    8
+                  ],
+                  "fill": "$text",
+                  "width": 12,
+                  "height": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "axTsu",
+                  "x": 295,
+                  "y": 0,
+                  "name": "播放头·时间",
+                  "fill": "$text",
+                  "cornerRadius": 4,
+                  "padding": [
+                    1,
+                    6
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "RI2a7",
+                      "name": "值",
+                      "fill": "#0E1014",
+                      "content": "1:24.0",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "vZzBP",
+                  "x": 383,
+                  "y": 52,
+                  "name": "画面提示",
+                  "fill": "$accent-soft",
+                  "cornerRadius": 4,
+                  "padding": [
+                    1,
+                    6
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "etTxv",
+                      "name": "值",
+                      "fill": "$accent",
+                      "content": "画面 1:36.0（拖动中）",
+                      "fontFamily": "$font",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "KrB29",
+          "name": "④ 吸附",
+          "width": "fill_container",
+          "fill": "$panel",
+          "cornerRadius": 8,
+          "layout": "vertical",
+          "gap": 8,
+          "padding": [
+            16,
+            18
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "a9urBU",
+              "name": "小标题",
+              "fill": "$text",
+              "content": "④ 吸附",
+              "fontFamily": "$font",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "Y7qhC",
+              "name": "说明",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "手柄拖到离播放头 8 像素以内时吸到播放头：播放头变黄，起止 = 播放头时间。不满足「至少 0.5 秒、开始早于结束」时不吸附。方向键微调手柄时不吸附。",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12.5,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "ff6Vj",
+              "name": "时间轴",
+              "width": 600,
+              "height": 74,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "zj4sY",
+                  "x": 0,
+                  "y": 44,
+                  "name": "轨道",
+                  "fill": "$line",
+                  "width": 600,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "TvtIl",
+                  "x": 260,
+                  "y": 44,
+                  "name": "选段",
+                  "fill": "$accent",
+                  "width": 61,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "xDfzr",
+                  "x": 254,
+                  "y": 34,
+                  "name": "开始手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "O2RSh",
+                  "x": 315,
+                  "y": 34,
+                  "name": "结束手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$text",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "id": "Fse39",
+                  "x": 320,
+                  "y": 18,
+                  "name": "播放头·线",
+                  "fill": "$warn",
+                  "width": 2,
+                  "height": 56
+                },
+                {
+                  "type": "path",
+                  "id": "qlJLi",
+                  "x": 315,
+                  "y": 14,
+                  "name": "播放头·三角",
+                  "geometry": "M0 0l12 0-6 8z",
+                  "viewBox": [
+                    0,
+                    0,
+                    12,
+                    8
+                  ],
+                  "fill": "$warn",
+                  "width": 12,
+                  "height": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "n8GLWP",
+                  "x": 295,
+                  "y": 0,
+                  "name": "播放头·时间",
+                  "fill": "$warn",
+                  "cornerRadius": 4,
+                  "padding": [
+                    1,
+                    6
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "UCLNr",
+                      "name": "值",
+                      "fill": "#0E1014",
+                      "content": "1:24.0",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "hWJJC",
+          "name": "⑤ 方向键动谁",
+          "width": "fill_container",
+          "fill": "$panel",
+          "cornerRadius": 8,
+          "layout": "vertical",
+          "gap": 8,
+          "padding": [
+            16,
+            18
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "MLptj",
+              "name": "小标题",
+              "fill": "$text",
+              "content": "⑤ 方向键动谁",
+              "fontFamily": "$font",
+              "fontSize": 14,
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "zX8UU",
+              "name": "说明",
+              "fill": "$muted",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
+              "content": "最后点过的是什么，方向键就动什么：刚点时间轴 → ← → 移动播放头；刚点手柄 → 移动手柄。0.1 秒一步，Shift 1 秒。在播放头输入框里 ↑ ↓ 同样微调，也可以直接输入时间。",
+              "lineHeight": 1.5,
+              "fontFamily": "$font",
+              "fontSize": 12.5,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "uTLpS",
+              "name": "时间轴",
+              "width": 600,
+              "height": 74,
+              "layout": "none",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "rDR66",
+                  "x": 0,
+                  "y": 44,
+                  "name": "轨道",
+                  "fill": "$line",
+                  "width": 600,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 2,
+                  "id": "Mi2Zh",
+                  "x": 260,
+                  "y": 44,
+                  "name": "选段",
+                  "fill": "$accent",
+                  "width": 80,
+                  "height": 4
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "kydNj",
+                  "x": 254,
+                  "y": 34,
+                  "name": "开始手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "cornerRadius": 4,
+                  "id": "e9dGKH",
+                  "x": 334,
+                  "y": 34,
+                  "name": "结束手柄",
+                  "fill": "#0E1014",
+                  "width": 12,
+                  "height": 24,
+                  "stroke": "$accent",
+                  "strokeWidth": 2
+                },
+                {
+                  "type": "rectangle",
+                  "id": "tKH8j",
+                  "x": 320,
+                  "y": 18,
+                  "name": "播放头·线",
+                  "fill": "$text",
+                  "width": 2,
+                  "height": 56
+                },
+                {
+                  "type": "path",
+                  "id": "dOVnm",
+                  "x": 315,
+                  "y": 14,
+                  "name": "播放头·三角",
+                  "geometry": "M0 0l12 0-6 8z",
+                  "viewBox": [
+                    0,
+                    0,
+                    12,
+                    8
+                  ],
+                  "fill": "$text",
+                  "width": 12,
+                  "height": 8
+                },
+                {
+                  "type": "frame",
+                  "id": "gHesW",
+                  "x": 295,
+                  "y": 0,
+                  "name": "播放头·时间",
+                  "fill": "$text",
+                  "cornerRadius": 4,
+                  "padding": [
+                    1,
+                    6
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ScBik",
+                      "name": "值",
+                      "fill": "#0E1014",
+                      "content": "1:24.1",
+                      "fontFamily": "JetBrains Mono",
+                      "fontSize": 11,
+                      "fontWeight": "600"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {

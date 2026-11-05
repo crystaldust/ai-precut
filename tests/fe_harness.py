@@ -15,7 +15,7 @@ NODE = shutil.which("node")
 
 # index.html 里的加载顺序，不含最后的 main.js（它只负责启动，测试里手动调用 boot()）
 SCRIPTS = ["common.js", "platform.js", "base.js", "jobs.js", "settings.js", "support.js", "sidebar.js", "wizard.js",
-           "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js", "segment-edit.js", "step-criteria.js",
+           "shortcuts.js", "cliplist.js", "project-form.js", "step-analyze.js", "step-browse.js", "batch-select.js", "segment-edit.js", "segment-playhead.js", "step-criteria.js",
            "criteria-analysis.js", "criteria-pending.js", "reselect.js", "result-table.js", "result-unused.js",
            "step-result.js", "step-export.js", "export-compare.js", "simple-mode.js", "app.js"]
 
@@ -23,7 +23,7 @@ HARNESS = r"""
 const vm = require('vm');
 const fs = require('fs');
 const [files, routes, setup, script, ua] = JSON.parse(process.argv[1]);
-const els = {}, calls = [], timers = [], intervals = [], docListeners = {}, lists = {};
+const els = {}, calls = [], timers = [], intervals = [], docListeners = {}, lists = {}, captureFns = new Set();
 function mkEl(sel, parent){
   let html = '';
   const e = {sel, parent: parent || null, textContent: '', value: '', checked: false, disabled: false, hidden: false,
@@ -42,6 +42,7 @@ function mkEl(sel, parent){
       while(n){ if(a in n.attrs) return n; n = n.parent; }
       return null;
     },
+    getBoundingClientRect(){ return {left: 0, width: 0}; }, setPointerCapture(){}, offsetWidth: 0,   // 真浏览器才有的几何 / 指针捕获：测试按需覆盖
     contains(){ return false; }, focus(){}, blur(){ this.blurred = (this.blurred || 0) + 1; }, pause(){}, play(){ return Promise.resolve(); },
     querySelector(){ return null; }, querySelectorAll(){ return []; }};
   // innerHTML 的 setter：#stage / #modalBody 整块重画时，里面的 Key 输入框会被清空（和真 DOM 一样）
@@ -65,7 +66,7 @@ const ctx = {
   location: {href: 'http://127.0.0.1:8765/', origin: 'http://127.0.0.1:8765', hash: '', search: ''},
   document: {
     querySelector: s => el(s), getElementById: id => el('#' + id), querySelectorAll: s => lists[s] || [],
-    addEventListener(t, fn){ (docListeners[t] = docListeners[t] || []).push(fn); },
+    addEventListener(t, fn, cap){ (docListeners[t] = docListeners[t] || []).push(fn); if (cap === true || (cap && cap.capture)) captureFns.add(fn); },
     createElement: () => mkEl('created'), body: mkEl('body'), hidden: false,
   },
   fetch: async (path, opt) => {
@@ -91,7 +92,7 @@ const ctx = {
     for (const t of due) if (t.fn) await t.fn();
     await new Promise(r => setImmediate(r));
   },
-  docListeners,
+  docListeners, captureFns,
   act: (name, dataset = {}, extra = {}) => ctx.ACTIONS[name](
     Object.assign(mkEl('act'), {dataset, getAttribute: k => dataset[k.replace(/^data-/, '')]}, extra), {preventDefault(){}}),
   fire: (sel, type, ev = {}) => (el(sel).listeners[type] || []).forEach(fn => fn(Object.assign({target: el(sel)}, ev))),
