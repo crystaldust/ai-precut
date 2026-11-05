@@ -49,6 +49,9 @@ def _project_commands(sub, handlers: dict[str, Callable]) -> None:
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.set_defaults(fn=handlers["text"])
 
+    p = sub.add_parser("segment_summary"); p.add_argument("name")
+    p.set_defaults(fn=handlers["segment_summary"])
+
     p = sub.add_parser("export"); p.add_argument("name")
     p.add_argument("--timeline", default=None)
     p.add_argument("--package-name", dest="package_name", default=None)

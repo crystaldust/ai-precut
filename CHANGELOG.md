@@ -5,6 +5,10 @@
 
 ## 未发布
 
+### 片段一句话总结
+
+- ② 分析在逐句标注之后多一轮（并入「AI 理解对话」一行）：给每句对白写一行 ≤20 字的总结，③ 看素材的列表里显示。分批并发调用 DeepSeek，按句缓存，重新分析只补新增或改过的句子；这一轮失败只提示，不影响选段和成片。总结存在 `work/segment_summaries.json`。
+
 ### Windows 单层 zip 与 GitHub Release
 
 - Windows 包改为单层 zip 下载（不再是「zip 套 zip」），推送 `v*` tag 会自动发布 GitHub Release，剪辑师无需登录 GitHub 就能下载；安装说明同步更新。

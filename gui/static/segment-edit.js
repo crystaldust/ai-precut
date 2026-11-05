@@ -90,7 +90,7 @@ function sliderHtml(which){
 }
 function segEditHtml(ed){
   return `<div class="seg-edit"><video id="seVideo" controls preload="metadata"></video>`
-    + `<p class="se-text">${esc(COPY_SE_ORIGINAL.replace('{a}', fmtMS(ed.base.start)).replace('{b}', fmtMS(ed.base.end)))}　${esc(segText(ed.seg))}</p>`
+    + `<p class="se-text">${nowSummaryHtml(ed.seg)}${esc(COPY_SE_ORIGINAL.replace('{a}', fmtMS(ed.base.start)).replace('{b}', fmtMS(ed.base.end)))}　${esc(segText(ed.seg))}</p>`
     + `<div class="se-track" id="seTrack" tabindex="0" role="slider" aria-label="${esc(COPY_SE_PLAYHEAD)}"><div class="se-fill" id="seFill"></div>${sliderHtml('start')}${sliderHtml('end')}${sePlayheadHtml()}</div>`
     + `<div class="se-scale"><span id="seLo"></span><span id="seHi"></span></div>`
     + `<div class="se-fields">${timeFieldHtml('start', COPY_SE_START)}${timeFieldHtml('end', COPY_SE_END)}${sePlayheadFieldHtml()}<span class="se-dur" id="seDur"></span></div>`

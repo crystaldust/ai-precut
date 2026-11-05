@@ -246,6 +246,15 @@ pre.notices{white-space:pre-wrap;font-size:12px;line-height:1.5;max-height:60vh;
           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .sum{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .sum small{color:var(--muted);font-size:11px;display:block;overflow:hidden;text-overflow:ellipsis}
+.sline{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sline .ssum{color:var(--text);font-weight:700}
+.sline .ssum.stale{color:var(--muted)}
+.row .sline:not(:empty) + .orig{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px}
+.tag-stale{margin-left:6px;font-size:10px;padding:0 6px;border-radius:4px;background:#3a3017;color:var(--warn);font-weight:400;white-space:nowrap}
+.b-now .sline .ssum{color:var(--text)}
+.b-now .sline .ssum.stale{color:var(--muted)}
+.b-now .sline{margin-bottom:2px}
+.se-text .sline{margin-bottom:2px}
 .row .vt{margin-left:6px;padding:0 5px;border-radius:4px;background:#2a2f3a;color:#c8d2e0}
 .row .vis{display:block;opacity:.85}
 .b-now .vis{color:#9fb0c4}

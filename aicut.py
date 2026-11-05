@@ -35,8 +35,8 @@ from pathlib import Path
 from pipeline.pyver import require_supported_python; require_supported_python()  # noqa: E702 先于新语法
 from pipeline import (applog, build_documentary, classify, cloud, consent, diskspace, encode, exclusions, export_draft,  # noqa: E402
                       jy_env, media_io, notices, proc, questions, readiness, review, schema, secrets,
-                      select, style, summarize, to_jianying, understand_audio, understand_text, understand_visual,
-                      usage, vision, vision_align, vision_run)
+                      segment_summary, select, style, summarize, to_jianying, understand_audio, understand_text,
+                      understand_visual, usage, vision, vision_align, vision_run)
 from pipeline import brief, cli_args, clips, config_cli, custom_rules, export_flow, fingerprints, mode, outputs, project_cli, project_lock, shots_store, transcript_stamp  # noqa: E402
 from pipeline.clips import CLIP_TIMEOUT_FACTOR  # noqa: E402,F401 - 测试按 aicut.<名> 引用
 from pipeline.llm import DEFAULT_MODEL, DeepSeekClient, LLMError  # noqa: E402
@@ -153,14 +153,6 @@ def _run_pipeline(module: str, argv: list[str]) -> None:
         die(f"{module} 执行失败")
 
 
-def material_timeout(pdir: Path) -> float:
-    """抽音轨 / 代理的 ffmpeg 超时：按素材台账里的时长；读不到用兜底值（KI-61）。"""
-    items = schema.read_json_lenient(pdir / "work/materials.json", {}).get("items") or [{}]
-    duration = items[0].get("duration") if isinstance(items[0], dict) else None
-    return media_io.timeout_for(duration) if isinstance(duration, (int, float)) and duration > 0 \
-        else media_io.FFMPEG_TIMEOUT_S
-
-
 def metered(work: Path, stage: str, model: str = DEFAULT_MODEL) -> usage.MeteredClient:
     """按需建立的计量客户端（KI-32）：每次真正调用前查预算，命中缓存的步骤不受预算影响。"""
     return usage.MeteredClient(lambda: DeepSeekClient(model=model), work, stage, model=model)
@@ -258,7 +250,7 @@ def cmd_transcribe(args) -> None:
         info("抽音轨…")
         try:
             media_io.ffmpeg_to(wav, ["-i", c["material"], "-vn", "-ac", "1", "-ar", "16000",
-                                     "-c:a", "pcm_s16le"], timeout=material_timeout(pdir),
+                                     "-c:a", "pcm_s16le"], timeout=media_io.material_timeout(pdir),
                                source=c["material"])
         except media_io.MediaError as exc:
             die(f"抽音轨失败：{exc}")
@@ -328,6 +320,13 @@ def cmd_text(args) -> None:
        + (" · 已补齐上次失败的句子" if res.get("resumed") else ""))
 
 
+def cmd_segment_summary(args) -> None:
+    """text 之后独立一轮：每句一行总结；失败只提示，不影响后面的步骤。"""
+    work, ss = project_dir(args.name) / "work", segment_summary
+    ss.run_stage(work, lambda: metered(work, ss.STAGE, ss.SEGMENT_SUMMARY_MODEL), info, warn,
+                 precheck=ss.cloud_precheck)  # 与 cmd_text 同一道外发许可；被拒只跳过这一轮
+
+
 def cmd_score(args) -> None:
     """合成三档：废片 / 待定 / 可用。"""
     pdir = project_dir(args.name)
@@ -364,7 +363,7 @@ def cmd_junk(args) -> None:
         try:
             media_io.ffmpeg_to(proxy, ["-i", c["material"], "-vf", "scale=-2:540,fps=30",
                                        *encode.h264_args("proxy"),
-                                       "-c:a", "aac", "-b:a", "64k"], timeout=material_timeout(pdir),
+                                       "-c:a", "aac", "-b:a", "64k"], timeout=media_io.material_timeout(pdir),
                                source=c["material"])
         except media_io.MediaError as exc:
             die(f"生成分析代理失败：{exc}")

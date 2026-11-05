@@ -89,7 +89,7 @@ def _project(projects, transcript=False):
 
 
 STAGES = ("cmd_ingest", "cmd_junk", "cmd_transcribe", "cmd_analyze", "cmd_scenes", "cmd_quality", "cmd_vision",
-          "cmd_align", "cmd_text", "cmd_score", "cmd_summary", "cmd_questions", "cmd_select", "cmd_brief")
+          "cmd_align", "cmd_text", "cmd_segment_summary", "cmd_score", "cmd_summary", "cmd_questions", "cmd_select", "cmd_brief")
 
 
 def _record_stages(monkeypatch):

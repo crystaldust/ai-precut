@@ -40,7 +40,7 @@ hidden = [
     "pipeline.media_io", "pipeline.mode", "pipeline.notices", "pipeline.outputs", "pipeline.plat", "pipeline.proc", "pipeline.proctree", "pipeline.project_cli",
     "pipeline.project_lock", "pipeline.prompts", "pipeline.pyver", "pipeline.questions",
     "pipeline.readiness", "pipeline.render_preview", "pipeline.review", "pipeline.safe_http",
-    "pipeline.schema", "pipeline.secrets", "pipeline.select", "pipeline.select_rules",
+    "pipeline.schema", "pipeline.secrets", "pipeline.segment_summary", "pipeline.select", "pipeline.select_rules",
     "pipeline.shot_diff", "pipeline.shot_sub", "pipeline.shots_store", "pipeline.style", "pipeline.summarize", "pipeline.timeline", "pipeline.topic_names",
     "pipeline.to_jianying", "pipeline.transcript_stamp", "pipeline.understand_audio", "pipeline.understand_text",
     "pipeline.understand_visual", "pipeline.usage", "pipeline.vision", "pipeline.vision_proxy",

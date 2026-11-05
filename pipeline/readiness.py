@@ -15,13 +15,14 @@ TRANSCRIPT_RAW = "transcript_raw.json"  # 与 aicut.cmd_transcribe 的跳过条�
 # M13 D10：顺序 = 界面「② 分析」的人话列表顺序（浏览小样提到转写前；总耗时不变，本来就是串行）
 # vision / align：画面理解与画面整合，没开时立即返回（逐句标注要用整合结果，所以在 text 之前）
 PREPARE_STEPS = ("ingest", "junk", "transcribe", "analyze", "scenes", "quality", "vision", "align",
-                 "text", "score", "summary", "questions", "select", "brief")
+                 "text", "segment_summary", "score", "summary", "questions", "select", "brief")
 ANALYSIS_STAMP = "analysis_inputs.json"  # 分析成功时写：当时的剪辑偏好 + 预设指纹（判断「需要更新」）
 # `aicut status` 逐项列出的产物（标签, 相对项目目录的路径）
 STATUS_ARTIFACTS = (
     ("素材台账", "work/materials.json"), ("音轨", "work/audio/asr.wav"),
     ("转写", "work/transcript_raw.json"), ("分段文稿", "work/transcript.md"),
     ("声音特征 (a)", "work/segments_audio.json"), ("文本标注 (b)", "work/segments_text.json"),
+    ("片段总结", "work/segment_summaries.json"),
     ("分析代理", "work/proxy.mp4"), ("废片表", "work/junk_report.csv"),
     ("镜头切分 (c)", "work/shots_visual.json"),
     ("画面时间轴", "work/visual_timeline.json"), ("画面与对白整合", "work/vision_aligned.json"),
