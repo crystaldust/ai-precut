@@ -50,6 +50,8 @@ def test_main_wires_window_and_always_cleans_up(entry, monkeypatch, start_exc):
     monkeypatch.setattr(server, "report_stale_job", lambda: seen.append("stale"))
     monkeypatch.setattr(jobs, "shutdown_all", lambda *a, **k: seen.append("jobs.shutdown"))
     monkeypatch.setattr(proc, "ensure_bundled_path", lambda: seen.append("path"))
+    from app import cursor_mac
+    monkeypatch.setattr(cursor_mac, "keep_cursor_visible", lambda: seen.append(("cursor", len(wv.calls))) or True)
     ns = runpy.run_path(str(MAIN), run_name="app_main_under_test")
     if start_exc:
         with pytest.raises(RuntimeError):
@@ -64,6 +66,7 @@ def test_main_wires_window_and_always_cleans_up(entry, monkeypatch, start_exc):
     assert [c for c in wv.calls if c[0] == "create"] == [wv.calls[0]]  # M13：只有主窗口，没有子窗口了
     assert not hasattr(server, "set_window_opener")
     assert ("start", {"private_mode": False}) in wv.calls
+    assert [c for c in seen if c[0:1] == ("cursor",)] == [("cursor", 0)]  # 只装一次，且在创建窗口之前
     assert "path" in seen and ("picker", ["/v/a.mov"]) in seen and "stale" in seen
     assert seen[-2:] == ["jobs.shutdown", "srv.shutdown"]  # 关窗口 = 停任务，不留孤儿进程
 
