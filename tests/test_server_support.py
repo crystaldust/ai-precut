@@ -72,7 +72,7 @@ def test_about_returns_notices_and_version(gs):
     body = json.loads(raw)
     assert status == 200
     assert "FFmpeg" in body["notices"] and "LGPL" in body["notices"]
-    assert body["version"] == "0.1.0"
+    assert body["version"] == "0.1.1"
 
 
 def test_about_requires_token(gs):
