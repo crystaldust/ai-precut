@@ -23,13 +23,14 @@ if (_code := proc.dispatch(sys.argv)) is not None:
 
 import webview  # noqa: E402
 
-from app import cursor_mac  # noqa: E402
+from app import cursor_mac, motw_win  # noqa: E402
 from gui import jobs, server  # noqa: E402
 
 
 def main() -> None:
     applog.setup("app")  # 第一件事：窗口化 App 没有终端，之后的一切都要能在日志里找到
     cursor_mac.keep_cursor_visible()  # 在创建窗口之前：WebKit 处理按键后不再隐藏鼠标指针
+    motw_win.strip_download_marks()  # 网页下载的 zip 带 Zone.Identifier，.NET 会拒绝加载 Python.Runtime.dll
     proc.ensure_bundled_path()
     srv, url = server.serve_in_background()
     window = webview.create_window(  # KI-88：一次性入口地址，服务端换成 HttpOnly 会话 cookie
@@ -47,6 +48,11 @@ def main() -> None:
     try:
         # KI-88：会话 cookie 不落盘、每次启动都换值；private_mode 保持 False（M13 起只有一个窗口，没有子窗口了）
         webview.start(private_mode=False)
+    except Exception as exc:
+        if sys.platform == "win32" and motw_win.is_clr_load_error(exc):
+            motw_win.explain_load_failure(exc)
+            raise SystemExit(1) from exc
+        raise
     finally:
         jobs.shutdown_all()  # 关窗口 = 停掉后台任务，不留孤儿进程继续计费
         srv.shutdown()

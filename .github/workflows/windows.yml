@@ -187,6 +187,8 @@ jobs:
 
           界面空白或打不开：需要微软的 WebView2 运行时。Windows 11 自带；Windows 10 一般会自动装好，没有的话搜索「WebView2 Runtime」，下载「Evergreen 独立安装程序」装一次：https://developer.microsoft.com/microsoft-edge/webview2/
 
+          打开时弹出报错框（提到 Python.Runtime 或 .NET）：App 一般会自动处理；仍然不行就删掉解压出来的文件夹，右键 zip →「属性」→ 勾选「解除锁定」→「确定」，再「全部提取」。
+
           ---
           EOF
           # 幂等：Release 不存在就先建草稿；zip 用 --clobber 上传（重跑可覆盖）；传完再公开，

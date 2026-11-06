@@ -99,6 +99,8 @@ ffmpeg 最低版本 7.0（预览渲染用 `-/filter_complex` 读滤镜文件，�
 
 **解压与安装自检**：Windows 包现在是单层 zip（artifact 不再被 Actions 套一层 zip；Release 附件本来就是单层）。用户右键「全部提取」到普通文件夹即可；不要在压缩包预览里双击，也不要把文件夹从预览里拖出来，那样会漏文件（曾出现 `simple-mode.js` 缺失，前端报 `modeFieldHtml is not defined`）。若提取出来的内容里还有一个 zip（例如旧版 artifact），再「全部提取」一次。启动时 `gui/server.py` 用 `gui/static_files.missing_static()` 核对白名单静态文件，缺了就在日志里记一行错误；已通过 cookie 的页面请求改发「安装不完整」说明页（`gui/install_page.py`，列出缺失文件名与按平台区分的补救步骤），静态资源仍是 404，未带 cookie 的请求仍是 403 门页、不泄露文件名。
 
+**下载标记（Mark of the Web）**：浏览器 / 网盘下载的 zip 提取后每个文件带 `Zone.Identifier` 下载标记，.NET Framework 会拒绝加载 `Python.Runtime.dll`（pywebview 退回 coreclr 后抛错）；`app/motw_win.py` 在打包版 Windows 启动时删掉 dll / exe / pyd 的标记流（范围：exe 所在目录顶层文件 + `_internal`（`sys._MEIPASS`）子树，不递归 exe 所在目录的其他子目录，跳过联接 / 符号链接），若 `webview.start` 仍因 pythonnet / .NET 失败，则记日志、弹中文说明框（解除锁定 zip 或装 .NET Framework 4.7.2+）并以退出码 1 结束。
+
 ### 发版（GitHub Release）
 
 1. 改 `pyproject.toml` 的 `version`；

@@ -52,6 +52,8 @@ def test_main_wires_window_and_always_cleans_up(entry, monkeypatch, start_exc):
     monkeypatch.setattr(proc, "ensure_bundled_path", lambda: seen.append("path"))
     from app import cursor_mac
     monkeypatch.setattr(cursor_mac, "keep_cursor_visible", lambda: seen.append(("cursor", len(wv.calls))) or True)
+    from app import motw_win
+    monkeypatch.setattr(motw_win, "strip_download_marks", lambda *a, **k: seen.append(("motw", len(wv.calls))) or 0)
     ns = runpy.run_path(str(MAIN), run_name="app_main_under_test")
     if start_exc:
         with pytest.raises(RuntimeError):
@@ -67,8 +69,45 @@ def test_main_wires_window_and_always_cleans_up(entry, monkeypatch, start_exc):
     assert not hasattr(server, "set_window_opener")
     assert ("start", {"private_mode": False}) in wv.calls
     assert [c for c in seen if c[0:1] == ("cursor",)] == [("cursor", 0)]  # 只装一次，且在创建窗口之前
+    assert [c for c in seen if c[0:1] == ("motw",)] == [("motw", 0)]  # 去下载标记在创建窗口、启动 webview 之前
     assert "path" in seen and ("picker", ["/v/a.mov"]) in seen and "stale" in seen
     assert seen[-2:] == ["jobs.shutdown", "srv.shutdown"]  # 关窗口 = 停任务，不留孤儿进程
+
+
+def _run_with_start_error(monkeypatch, exc, platform):
+    from app import motw_win
+    from gui import jobs, server
+    wv = fake_webview(exc)
+    monkeypatch.setitem(sys.modules, "webview", wv)
+    seen = []
+    monkeypatch.setattr(server, "serve_in_background",
+                        lambda: (types.SimpleNamespace(shutdown=lambda: seen.append("srv.shutdown")), "http://x/"))
+    monkeypatch.setattr(server, "set_picker", lambda fn: None)
+    monkeypatch.setattr(server, "report_stale_job", lambda: None)
+    monkeypatch.setattr(jobs, "shutdown_all", lambda *a, **k: seen.append("jobs.shutdown"))
+    monkeypatch.setattr(proc, "ensure_bundled_path", lambda: None)
+    monkeypatch.setattr(motw_win, "strip_download_marks", lambda *a, **k: 0)
+    monkeypatch.setattr(motw_win, "explain_load_failure", lambda e, **k: seen.append(("explain", str(e))))
+    ns = runpy.run_path(str(MAIN), run_name="app_main_under_test")
+    monkeypatch.setattr(sys, "platform", platform)  # 在 main() 调用时才生效，只影响 main 里的平台判断
+    return ns, seen
+
+
+def test_clr_load_error_on_win32_explains_exits_1_and_cleans_up(entry, monkeypatch):
+    err = RuntimeError("Failed to resolve Python.Runtime.Loader.Initialize from C:\\x\\Python.Runtime.dll")
+    ns, seen = _run_with_start_error(monkeypatch, err, "win32")
+    with pytest.raises(SystemExit) as exc:
+        ns["main"]()
+    assert exc.value.code == 1
+    assert seen[0][0] == "explain" and seen[-2:] == ["jobs.shutdown", "srv.shutdown"]
+
+
+def test_clr_load_error_off_win32_propagates(entry, monkeypatch):
+    err = RuntimeError("Python.Runtime missing")
+    ns, seen = _run_with_start_error(monkeypatch, err, "darwin")
+    with pytest.raises(RuntimeError):
+        ns["main"]()
+    assert not any(isinstance(c, tuple) for c in seen)
 
 
 def test_picker_returns_empty_list_when_dialog_cancelled(entry, monkeypatch):
