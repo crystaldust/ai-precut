@@ -15,6 +15,9 @@
 没有的话到微软官网搜索「WebView2 Runtime」，下载「Evergreen 独立安装程序」装一次：
 https://developer.microsoft.com/microsoft-edge/webview2/
 
+打开时弹出报错框（提到 Python.Runtime 或 .NET）：App 一般会自动处理；仍然不行就删掉解压出来的文件夹，
+右键 zip →「属性」→ 勾选「解除锁定」→「确定」，再「全部提取」。
+
 数据放在哪：
   项目与素材分析：文档\AI粗剪
   日志：%LOCALAPPDATA%\剪辑台\logs（在资源管理器地址栏粘贴即可打开）
