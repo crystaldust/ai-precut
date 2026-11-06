@@ -129,7 +129,7 @@ def test_ffmpeg_build_checks_preview_audio_filters():
 
 def test_spec_includes_jy_version():
     spec = _read("packaging/ai-cut.spec")
-    for mod in ("pipeline.jy_version", "pipeline.jy_env", "pipeline.pyver"):
+    for mod in ("pipeline.jy_version", "pipeline.jy_env", "pipeline.jy_registry", "pipeline.pyver"):
         assert f'"{mod}"' in spec, mod
 
 

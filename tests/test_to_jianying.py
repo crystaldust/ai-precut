@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -161,8 +162,9 @@ def test_install_registers_validated_draft(tmp_path, jy_root, clip, capsys):
 
 
 def test_with_entry_returns_new_registry():
-    reg = {"all_draft_store": [{"draft_name": "T", "old": 1}, {"draft_name": "U"}], "x": 1}
-    new = tj.with_entry(reg, {"draft_name": "T"})
+    reg = {"all_draft_store": [{"draft_name": "T", "draft_fold_path": "/r/T", "old": 1},
+                               {"draft_name": "U", "draft_fold_path": "/r/U"}], "x": 1}
+    new = tj.with_entry(reg, {"draft_name": "T", "draft_fold_path": "/r/T"})
     assert [e["draft_name"] for e in new["all_draft_store"]] == ["T", "U"]
     assert "old" not in new["all_draft_store"][0] and new["x"] == 1
     assert reg["all_draft_store"][0]["old"] == 1  # 不原地改
@@ -353,6 +355,208 @@ def test_load_registry_clear_error_when_jianying_missing(tmp_path, setup):
         (root / "root_meta_info.json").write_text("[]", encoding="utf-8")
     with pytest.raises(tj.InstallError, match="剪映"):
         tj.load_registry(root)
+
+
+# ---------------------------------------------------------------- 全局注册表（草稿位置改到别处）
+@pytest.fixture
+def split_root(tmp_path, monkeypatch):
+    """剪映草稿位置改到 F_drafts（无注册表），注册表仍在默认位置，且其中已有一条草稿登记在 F_drafts 下。
+    全部在 tmp_path，不碰真实目录；Windows 分支靠 plat.IS_WIN 补丁（Mac 上测纯逻辑）。"""
+    monkeypatch.delenv("AI_CUT_DRAFT_ROOT", raising=False)
+    monkeypatch.setattr(tj, "jianying_running", lambda: False)
+    env = {"LOCALAPPDATA": str(tmp_path / "AppData" / "Local")}
+    custom = tmp_path / "F_drafts"
+    custom.mkdir()
+    with monkeypatch.context() as m:
+        m.setattr(plat, "IS_WIN", True)
+        default = plat.jianying_draft_root(env=env, home=tmp_path)
+    default.mkdir(parents=True)
+    meta = default / tj.ROOT_META_NAME
+    other = {"draft_name": "旧", "draft_root_path": custom.as_posix(),
+             "draft_fold_path": (custom / "旧").as_posix()}
+    meta.write_text(json.dumps({"all_draft_store": [other], "draft_ids": 3,
+                                "root_path": str(default)}), encoding="utf-8")
+    return {"env": env, "home": tmp_path, "custom": custom, "default": default, "meta": meta}
+
+
+@pytest.fixture
+def as_win(monkeypatch):
+    monkeypatch.setattr(plat, "IS_WIN", True)
+
+
+def _write_registry(s, entries):
+    s["meta"].write_text(json.dumps({"all_draft_store": entries}), encoding="utf-8")
+
+
+def test_registry_path_prefers_registry_inside_root(tmp_path):
+    (tmp_path / tj.ROOT_META_NAME).write_text("{}", encoding="utf-8")
+    assert tj.registry_path(tmp_path, env={}, home=tmp_path / "h") == tmp_path / tj.ROOT_META_NAME
+
+
+def test_registry_path_falls_back_to_default_location(split_root, as_win):
+    s = split_root
+    assert tj.registry_path(s["custom"], s["env"], s["home"]) == s["meta"]
+
+
+def test_registry_path_fallback_accepts_draft_folder_evidence(split_root, as_win):
+    s = split_root
+    _write_registry(s, [])
+    (s["custom"] / "某草稿").mkdir()
+    (s["custom"] / "某草稿" / "draft_meta_info.json").write_text("{}", encoding="utf-8")
+    assert tj.registry_path(s["custom"], s["env"], s["home"]) == s["meta"]
+
+
+def test_registry_path_fallback_needs_evidence_root_is_jianying(split_root, as_win):
+    s = split_root
+    _write_registry(s, [])
+    with pytest.raises(tj.InstallError, match="先在剪映里新建一个草稿") as exc:
+        tj.registry_path(s["custom"], s["env"], s["home"])
+    assert str(s["meta"]) in str(exc.value) and str(s["custom"] / tj.ROOT_META_NAME) in str(exc.value)
+
+
+def test_registry_path_no_fallback_off_windows(split_root, monkeypatch):
+    s = split_root
+    monkeypatch.setattr(plat, "IS_WIN", False)
+    with pytest.raises(tj.InstallError):
+        tj.registry_path(s["custom"], s["env"], s["home"])
+
+
+def test_registry_path_error_names_both_locations(split_root, as_win):
+    s = split_root
+    s["meta"].unlink()
+    with pytest.raises(tj.InstallError) as exc:
+        tj.registry_path(s["custom"], s["env"], s["home"])
+    assert str(s["custom"] / tj.ROOT_META_NAME) in str(exc.value)
+    assert str(s["meta"]) in str(exc.value)
+
+
+def test_registry_path_never_falls_back_when_env_root_set(split_root, as_win):
+    s = split_root
+    env = {**s["env"], "AI_CUT_DRAFT_ROOT": str(s["custom"])}
+    with pytest.raises(tj.InstallError) as exc:
+        tj.registry_path(s["custom"], env, s["home"])
+    assert str(s["meta"]) not in str(exc.value)
+
+
+def test_registry_path_requires_existing_root(split_root, as_win):
+    s = split_root
+    with pytest.raises(tj.InstallError, match="剪映"):
+        tj.registry_path(s["custom"] / "不存在", s["env"], s["home"])
+
+
+def test_load_registry_warns_when_using_global_registry(split_root, as_win, capsys):
+    s = split_root
+    tj.reset_warnings()
+    tj.load_registry(s["custom"], s["env"], s["home"])
+    tj.load_registry(s["custom"], s["env"], s["home"])
+    out = capsys.readouterr().out
+    assert out.count("[warn]") == 1 and str(s["custom"]) in out and str(s["meta"]) in out
+    assert len(tj.warnings()) == 1
+
+
+def test_install_uses_global_registry_when_draft_location_customised(tmp_path, split_root, clip,
+                                                                      monkeypatch):
+    s = split_root
+    d, info, size, expect = staged(tmp_path, s["custom"], clip)
+    monkeypatch.setattr(plat, "IS_WIN", True)
+    target, bak = tj.install(d, s["custom"], "T", info, size, expect, env=s["env"], home=s["home"])
+    assert target == s["custom"] / "T" and (target / "draft_info.json").exists()
+    store = json.loads(s["meta"].read_text(encoding="utf-8"))["all_draft_store"]
+    entry = store[0]
+    assert entry["draft_fold_path"] == str(s["custom"] / "T")
+    assert entry["draft_root_path"] == str(s["custom"])
+    assert [e["draft_name"] for e in store] == ["T", "旧"]
+    assert bak.parent == s["default"] and bak.exists()
+    assert not (s["custom"] / tj.ROOT_META_NAME).exists()
+
+
+def test_install_keeps_same_name_draft_from_other_root(tmp_path, split_root, clip, monkeypatch):
+    s = split_root
+    elsewhere = {"draft_name": "T", "draft_root_path": "D:/x", "draft_fold_path": "D:/x/T"}
+    _write_registry(s, [elsewhere, {"draft_name": "旧", "draft_root_path": s["custom"].as_posix(),
+                           "draft_fold_path": (s["custom"] / "旧").as_posix()}])
+    d, info, size, expect = staged(tmp_path, s["custom"], clip)
+    monkeypatch.setattr(plat, "IS_WIN", True)
+    tj.install(d, s["custom"], "T", info, size, expect, env=s["env"], home=s["home"])
+    folds = [e["draft_fold_path"] for e in json.loads(s["meta"].read_text(encoding="utf-8"))["all_draft_store"]]
+    assert "D:/x/T" in folds and str(s["custom"] / "T") in folds
+
+
+def test_with_entry_dedupes_on_normalized_fold_path():
+    reg = {"all_draft_store": [{"draft_name": "T", "draft_fold_path": "/a/T"},
+                               {"draft_name": "T", "draft_fold_path": "/b/T"}]}
+    new = tj.with_entry(reg, {"draft_name": "T", "draft_fold_path": "/a//T"})
+    assert [e["draft_fold_path"] for e in new["all_draft_store"]] == ["/a//T", "/b/T"]
+
+
+def test_is_registered_compares_normalized_paths():
+    reg = {"all_draft_store": [{"draft_fold_path": "/a/b/../T"}]}
+    assert tj._is_registered(reg, Path("/a/T"))
+
+
+def test_install_rolls_back_global_registry(tmp_path, split_root, clip, monkeypatch):
+    s = split_root
+    before = s["meta"].read_bytes()
+    d, info, size, expect = staged(tmp_path, s["custom"], clip)
+    real = tj.write_json
+
+    def flaky(path, obj):
+        if path.name == tj.ROOT_META_NAME:
+            real(path, {**obj, "broken": True})  # 先真写入，回滚必须还原
+            raise OSError("disk full")
+        real(path, obj)
+    monkeypatch.setattr(tj, "write_json", flaky)
+    monkeypatch.setattr(plat, "IS_WIN", True)
+    with pytest.raises(OSError, match="disk full"):
+        tj.install(d, s["custom"], "T", info, size, expect, env=s["env"], home=s["home"])
+    assert s["meta"].read_bytes() == before
+    assert not (s["custom"] / "T").exists() and d.exists()
+    assert backups(s["default"]) == []
+
+
+def test_prune_backups_keeps_only_own_backup_names(tmp_path):
+    names = [f"root_meta_info.json.20250101-0000{i:02d}.bak" for i in range(tj.BACKUP_KEEP + 2)]
+    for i, n in enumerate(names):
+        f = tmp_path / n
+        f.write_text("x")
+        os.utime(f, (1000 + i, 1000 + i))
+    foreign = tmp_path / "root_meta_info.json.manual.bak"
+    foreign.write_text("x")
+    os.utime(foreign, (1, 1))
+    tj._prune_backups(tmp_path)
+    assert foreign.exists()
+    assert len(list(tmp_path.glob("root_meta_info.json.2*.bak"))) == tj.BACKUP_KEEP
+
+
+def test_prune_backups_is_best_effort(tmp_path, monkeypatch):
+    for i in range(tj.BACKUP_KEEP + 1):
+        (tmp_path / f"root_meta_info.json.20250101-0000{i:02d}.bak").write_text("x")
+    real = Path.unlink
+
+    def boom(self, *a, **k):
+        raise PermissionError("busy")
+    monkeypatch.setattr(Path, "unlink", boom)
+    tj._prune_backups(tmp_path)  # 不抛
+    monkeypatch.setattr(Path, "unlink", real)
+
+
+def test_prepare_root_threads_env_and_home(split_root, as_win, monkeypatch):
+    s = split_root
+    monkeypatch.setattr(tj, "TEMPLATE", tj.TEMPLATE)
+    seen = {}
+    monkeypatch.setattr(tj, "resolve_draft_root",
+                        lambda env=None, home=None: seen.update(env=env, home=home) or s["custom"])
+    tj._prepare_root(False, "N", env=s["env"], home=s["home"])
+    assert seen == {"env": s["env"], "home": s["home"]}
+
+
+def test_main_prints_install_error_lines_with_x_prefix(tmp_path, monkeypatch):
+    monkeypatch.setattr(tj, "jianying_running", lambda: False)
+    tl = _timeline_file(tmp_path, text_timeline([]))
+    monkeypatch.setenv("AI_CUT_DRAFT_ROOT", str(tmp_path / "nope"))
+    code, out = _run_main(tmp_path, tl)
+    lines = [ln for ln in out.splitlines() if "找不到剪映草稿库" in ln or "请确认已安装" in ln]
+    assert code == 1 and lines and all(ln.startswith("[x] ") for ln in lines)
 
 
 def _setting(tmp_path, monkeypatch, value):
@@ -558,3 +762,9 @@ def test_same_major_version_is_silent(tmp_path, jy_root, clip, monkeypatch):
 def test_platform_app_version_comes_from_jy_version(tmp_path, jy_root, clip):
     d, _, _, _ = staged(tmp_path, jy_root, clip)
     assert _content(d)["platform"]["app_version"] == tj.jy_version.VERIFIED_VERSION
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows 上才统一分隔符与大小写")
+def test_norm_treats_jianying_forward_slashes_as_same_dir_on_windows():
+    from pipeline import jy_registry
+    assert jy_registry.norm("F:/JianyingPro Drafts") == jy_registry.norm("f:\\JianyingPro Drafts\\")

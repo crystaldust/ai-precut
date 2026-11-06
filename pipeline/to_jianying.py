@@ -41,16 +41,20 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
 from pipeline import jy_version, plat, schema  # noqa: E402
+from pipeline.jy_registry import (  # noqa: E402,F401 - 注册表逻辑已拆到 jy_registry，这里保留原名
+    BACKUP_KEEP, JY_MISSING, ROOT_META_NAME, InstallError, registry_path, with_entry)
+from pipeline.jy_registry import is_registered as _is_registered  # noqa: E402
+from pipeline.jy_registry import backup_registry as _backup_registry  # noqa: E402
+from pipeline.jy_registry import restore_registry as _restore_registry  # noqa: E402
+from pipeline.jy_registry import prune_backups as _prune_backups  # noqa: E402
+from pipeline import jy_registry  # noqa: E402
 
 DEFAULT_DRAFT_ROOT = plat.jianying_draft_root_rel()   # 相对 home（Mac ~/Movies/…；Windows AppData/Local/…，见 plat）
 JY_SETTING = plat.jianying_setting_rel()               # 相对 home
-ROOT_META_NAME = "root_meta_info.json"
 INSTALL_MARKER = ".aicut_installing"   # 安装中标记：只有带它且未注册的目录才允许自动清理
 TMP_SUFFIX = ".aicut-tmp"               # 草稿根内的同卷临时目录：.<草稿名>.aicut-tmp
 VALIDATION_FAIL_LINES = 10              # 校验失败时最多列出几条 FAIL
 VALIDATION_WARN_LINES = 3               # 校验 WARN 汇总时列出几条
-BACKUP_KEEP = 5                         # 注册表备份只留最新几份
-BACKUP_GLOB = "root_meta_info.json.*.bak"
 COVER_ERR_TAIL = 200
 TEMPLATE = jy_version.TEMPLATE   # 保留这个名字：测试会替换它
 
@@ -64,20 +68,12 @@ JY_CHECK_FAILED_WIN = "无法确认剪映是否在运行（{detail}）；为避�
 TASKLIST_TIMEOUT_S = 10
 TEMPLATE_MISSING = jy_version.TEMPLATE_MISSING
 DRAFT_EXISTS = "草稿已存在：{target}（换名字，或先在剪映里删除）"
-JY_MISSING = ("找不到剪映草稿库：{meta}\n"
-              "请确认已安装剪映专业版并至少打开过一次；如果在剪映「全局设置 → 草稿位置」"
-              "改过目录，请确认该目录（含外接盘）当前可以访问。")
-
 
 # 给 aicut 解析的输出约定（审查修复 1）：成功时最后打印这几行
 REPORT_DRAFT = "草稿位置："
 REPORT_BACKUP = "注册表备份："
 REPORT_WARN_HEADER = "[!] {n} 条警告"
 REPORT_WARN_ITEM = "  - "
-
-
-class InstallError(RuntimeError):
-    """安装进剪映失败；已回滚，剪映草稿库保持原样。"""
 
 
 # ------------------------------------------------------------------ 警告汇总
@@ -472,18 +468,12 @@ def resolve_draft_root(env=None, home: Path | None = None) -> Path:
     return _custom_draft_path(home, env) or plat.jianying_draft_root(env=env, home=home)
 
 
-def load_registry(root: Path) -> dict:
-    """读剪映草稿注册表；剪映没装 / 目录不可访问 / 格式不认识都给出可读的 InstallError。"""
-    meta = root / ROOT_META_NAME
-    if not root.is_dir() or not meta.is_file():
-        raise InstallError(JY_MISSING.format(meta=meta))
-    try:
-        reg = json.loads(meta.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise InstallError(f"剪映草稿注册表读不了（{exc}）：{meta}；未做任何改动") from exc
-    if not isinstance(reg, dict) or not isinstance(reg.get("all_draft_store"), list):
-        raise InstallError(f"剪映草稿注册表格式不认识：{meta}；未做任何改动")
-    return reg
+def load_registry(root: Path, env=None, home: Path | None = None) -> tuple[Path, dict]:
+    """读注册表 → (路径, 内容)；用到根外的全局注册表时记一条警告（同一句只记一次）。"""
+    def note(msg: str) -> None:
+        if msg not in _WARNINGS:
+            warn(msg)
+    return jy_registry.load_registry(root, env, home, notify=note)
 
 
 def _jianying_running_win() -> bool:
@@ -541,17 +531,7 @@ def build_entry(info: dict, name: str, root: Path, materials_size: int = 0) -> d
     }
 
 
-def with_entry(registry: dict, entry: dict) -> dict:
-    """返回新注册表：同名旧条目去掉，新条目放最前（不改入参）。"""
-    rest = [e for e in registry["all_draft_store"] if e.get("draft_name") != entry["draft_name"]]
-    return {**registry, "all_draft_store": [entry, *rest]}
-
-
 # ------------------------------------------------------------------ 安装事务
-def _is_registered(registry: dict, target: Path) -> bool:
-    return any(e.get("draft_fold_path") == str(target) for e in registry["all_draft_store"])
-
-
 def _is_own_orphan(target: Path, registry: dict) -> bool:
     """上次安装被强杀留下的目录：带安装中标记且未注册。"""
     return (target / INSTALL_MARKER).exists() and not _is_registered(registry, target)
@@ -590,33 +570,6 @@ def _validate_or_raise(draft: Path, expect: dict | None, *, relocate=None,
 def _ensure_not_running() -> None:
     if jianying_running():
         raise InstallError(running_message())
-
-
-def _backup_registry(meta: Path) -> Path:
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    bak = meta.with_name(f"{meta.name}.{stamp}.bak")
-    i = 2
-    while bak.exists():
-        bak = meta.with_name(f"{meta.name}.{stamp}-{i}.bak")
-        i += 1
-    shutil.copy2(meta, bak)
-    return bak
-
-
-def _restore_registry(bak: Path, meta: Path) -> None:
-    """用备份还原注册表：先写同目录临时文件再 os.replace，还原过程中断也不会留下半个注册表。"""
-    tmp = meta.with_name(f".{meta.name}.{uuid.uuid4().hex}.restore")
-    try:
-        shutil.copy2(bak, tmp)
-        schema.atomic_replace(tmp, meta)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
-def _prune_backups(root: Path) -> None:
-    baks = sorted(root.glob(BACKUP_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
-    for old in baks[BACKUP_KEEP:]:
-        old.unlink(missing_ok=True)
 
 
 def _place_in_root(draft_dir: Path, tmp: Path, name: str) -> bool:
@@ -666,18 +619,18 @@ def _rollback(steps: list, original: BaseException) -> None:
 
 
 def install(draft_dir: Path, root: Path, name: str, info: dict, size: int,
-            expect: dict | None = None) -> tuple[Path, Path]:
+            expect: dict | None = None, env=None,
+            home: Path | None = None) -> tuple[Path, Path]:
     """放入草稿根 → 校验 → 注册，任何一步失败都回滚到安装前（GL-13 / GL-11）。
 
     返回 (草稿目录, 注册表备份)。
     """
-    registry = load_registry(root)
+    meta, registry = load_registry(root, env, home)
     target, tmp = root / name, root / f".{name}{TMP_SUFFIX}"
     _clear_own_orphan(target, registry)
     _clear_own_orphan(tmp, registry)
     _ensure_name_free(root, name, registry)
     _ensure_not_running()
-    meta = root / ROOT_META_NAME
     bak = _backup_registry(meta)
     state = {"renamed": False, "placed": tmp, "registering": False}
     try:
@@ -701,7 +654,7 @@ def install(draft_dir: Path, root: Path, name: str, info: dict, size: int,
         raise
     if not state["renamed"]:
         shutil.rmtree(draft_dir, ignore_errors=True)  # 跨卷拷贝成功：暂存原件不再需要
-    _prune_backups(root)
+    _prune_backups(meta.parent)
     print(f"已注册；注册表备份：{bak}")
     return target, bak
 
@@ -713,14 +666,14 @@ def _require_template(template: Path) -> None:
                                                    path=template))
 
 
-def _prepare_root(dry_run: bool, name: str) -> Path:
+def _prepare_root(dry_run: bool, name: str, env=None, home: Path | None = None) -> Path:
     """花几分钟拷媒体之前先把能提前发现的问题都报出来：模板缺失（dry-run 也查）、
     剪映在跑、草稿库不可用、同名草稿（KI-59）；本机剪映跨大版本只进警告汇总（KI-17）。"""
-    root = resolve_draft_root()  # 每次现算：冻结版同进程多次调用、测试隔离都依赖这一点
+    root = resolve_draft_root(env, home)  # 每次现算：冻结版同进程多次调用、测试隔离都依赖这一点
     _require_template(TEMPLATE)
     if not dry_run:
         _ensure_not_running()
-        _ensure_name_free(root, name, load_registry(root))
+        _ensure_name_free(root, name, load_registry(root, env, home)[1])
         if note := jy_version.compat_warning(jy_version.installed_version()):
             warn(note)
     return root
@@ -758,7 +711,9 @@ def main() -> None:
             return
         target, bak = install(draft_dir, root, name, info, size, expect)
     except InstallError as exc:
-        sys.exit(str(exc))
+        # 逐行带 [x] 前缀：任务日志只收这类行，失败原因才进得了诊断包（路径由 strip_paths 抹掉）
+        print("\n".join(f"[x] {line}" for line in str(exc).splitlines() or [""]))
+        sys.exit(1)
     print(f"完成。打开剪映 → 本地草稿 → {name}")
     print_report(target, bak)
 
